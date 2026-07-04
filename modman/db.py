@@ -34,18 +34,36 @@ def init_db():
             """
         )
         conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+        # install-order state is per *mod*, one row per mod_id (a mod has many
+        # file rows in `mods`); survives file redownloads/updates untouched.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mod_sort (
+                mod_id INTEGER PRIMARY KEY,
+                bucket INTEGER,
+                rank INTEGER,
+                flags TEXT,
+                expected_bucket INTEGER,
+                locked INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
         cols = [r[1] for r in conn.execute("PRAGMA table_info(mods)")]
         if "status" not in cols:
             conn.execute("ALTER TABLE mods ADD COLUMN status TEXT DEFAULT 'ok'")
         if "mod_url" not in cols:
             conn.execute("ALTER TABLE mods ADD COLUMN mod_url TEXT")
-        for col, typ in (
-            ("sort_bucket", "INTEGER"), ("sort_rank", "INTEGER"), ("sort_flags", "TEXT"),
-            ("expected_bucket", "INTEGER"),
-        ):
-            if col not in cols:
-                conn.execute(f"ALTER TABLE mods ADD COLUMN {col} {typ}")
-        conn.execute("UPDATE mods SET expected_bucket = sort_bucket WHERE expected_bucket IS NULL")
+        # migrate sort state that used to live denormalized on the file rows
+        if "sort_bucket" in cols:
+            conn.execute(
+                "INSERT OR IGNORE INTO mod_sort (mod_id, bucket, rank, flags, expected_bucket, locked)"
+                " SELECT mod_id, sort_bucket, sort_rank, sort_flags, expected_bucket,"
+                "        COALESCE(MAX(sort_locked), 0)"
+                " FROM mods WHERE sort_rank IS NOT NULL GROUP BY mod_id"
+            )
+            for col in ("sort_bucket", "sort_rank", "sort_flags", "expected_bucket", "sort_locked"):
+                if col in cols:
+                    conn.execute(f"ALTER TABLE mods DROP COLUMN {col}")
         conn.execute(
             "UPDATE mods SET mod_url = 'https://www.nexusmods.com/' || game || '/mods/' || mod_id WHERE mod_url IS NULL"
         )
@@ -66,7 +84,8 @@ def record_downloads(entries):
     """Persist finished progress entries: 'done' as ok, 'failed' flagged missing.
 
     Missing rows keep the mod visible in the library but are excluded from the
-    diff, so the next import retries them."""
+    diff, so the next import retries them. Sort state lives in mod_sort keyed
+    by mod_id, so writing file rows never touches it."""
     ondisk = {os.path.splitext(f)[0]: f for f in os.listdir(DOWNLOADS_DIR)}
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     with connect() as conn:

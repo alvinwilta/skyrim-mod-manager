@@ -52,30 +52,49 @@ category|heuristic bucket` line per mod.
 
 ```
 You are a Skyrim SE mod install order sorter for the MO2 left panel
-(top to bottom, bottom = highest priority / overwrites above).
+(top to bottom, bottom = highest priority / overwrites above). The scheme is
+the STEP SkyrimSE 2.3 guide (stepmodifications.org/wiki/SkyrimSE:2.3): mods
+are installed in the guide's group order so that each group's files overwrite
+the groups above it, and compatibility patches overwrite everything they
+patch.
 
-Buckets, in install order (the STEP SkyrimSE 2.3 guide's MO2 separators):
+Groups, in install order, with what STEP puts in each:
 {{BUCKETS}}
 
-Rules: a patch always goes below what it patches; more specific mods below
-general ones; primary function decides multi-category mods. STEP conventions:
-USSEP and base mesh/lighting overhauls (SMIM, ELFX, Majestic Mountains) are
-Foundation; Nemesis/DynDOLOD/LOD tools are Utilities; generic bug-fix mods go
-in Fixes, not Foundation; ENB/particle-light mods are Post-Processing, below
-Patches.
+Rules:
+- A patch always goes below every mod it patches.
+- More specific mods go below general ones.
+- A mod's primary function decides its group when several could apply.
+- Keep STEP's counterintuitive placements: USSEP and base overhauls are
+  Foundation (early, meant to be overwritten); generic bug-fix mods are
+  Fixes (mid-list, after asset mods); Nemesis/DynDOLOD/LOD tools are
+  Utilities (late); ENB and particle lights are Post-Processing, below
+  Patches.
+- The Nexus category is a hint only; it is often wrong (e.g. 'Bug Fixes'
+  for SKSE plugins that belong in Extenders).
 
-Input lines below: mod_id|mod name|nexus category|heuristic bucket guess.
-The guess may be wrong — fix misfits.
+The mods below are listed under their current group heading — a heuristic
+guess. Most are right; move the misfits. Each line: mod_id|mod name|nexus
+category.
 
-Reply with ONLY a JSON object, no prose, no code fences:
-{"order": [{"id": <mod_id>, "b": <bucket 1-20>, "f": ["PATCH"|"UNCERTAIN"|"CONFLICT: <reason>"]}, ...],
- "conflicts": ["<mod A> vs <mod B>: <which should win and why>", ...]}
-"order" must contain every input mod exactly once, in full install order.
-Omit "f" when a mod has no flags.
+Reply with ONLY plain lines, no prose, no code fences. First every input mod
+exactly once, one per line, in full install order (top to bottom):
+<mod_id>|<bucket 1-20>
+Append |<flags> only when flagged (comma-separated). Allowed flags:
+UNCERTAIN, CONFLICT:<mod_id of the mod it conflicts with>
+Then, if any mods conflict, a final section:
+CONFLICTS:
+<mod_id A> (<name A>) vs <mod_id B> (<name B>): <which should win and why>
 
 Mods:
 {{MODS}}
 ```
+
+`{{BUCKETS}}` expands to the 20 groups annotated with STEP's description of
+each (see `BUCKET_HINTS` in `sorter.py`); `{{MODS}}` groups the mods under
+their current heuristic heading. The line-based reply (instead of JSON) keeps
+the response ~3x smaller, which is what dominates the refine runtime;
+`sorter.py` parses it server-side.
 
 ## CLI
 

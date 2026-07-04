@@ -8,7 +8,7 @@ The optional LLM pass shells out to the Claude Code CLI (`claude -p`,
 uses the local login, no API key) to re-rank, move misfits and emit
 conflict notes; it runs in a background thread with progress in `state`,
 mirroring the download engine. Results persist in the mods table
-(sort_bucket / sort_rank / sort_flags) and the meta table (conflict
+(one row per mod: bucket/rank/flags/lock) and the meta table (conflict
 notes), so sorting is a one-time cost per library change."""
 
 import json
@@ -48,6 +48,31 @@ BUCKETS = {
     18: "Utilities",
     19: "Patches",
     20: "Post-Processing",
+}
+
+# What belongs in each bucket, per the STEP guide — fed into the LLM prompt
+# so it sorts by STEP's intent instead of guessing from the label alone.
+BUCKET_HINTS = {
+    1: "SKSE64 itself and DLL-level engine plugins: Address Library, Engine Fixes, Crash Logger, PapyrusUtil, Display Tweaks",
+    2: "shared frameworks other mods depend on: SPID, KID, Base Object Swapper, MCM Helper, JContainers, papyrus script libraries",
+    3: "USSEP and wide-reach base overhauls installed early so later groups override them: SMIM, Majestic Mountains, ELFX, Cathedral Landscapes, Particle Patch, DynDOLOD Resources",
+    4: "skeletons, animation replacers and physics: XP32/XPMSSE, OAR/DAR animations, HDT-SMP, behavior fixes",
+    5: "standalone model/texture replacers that override Foundation assets",
+    6: "sound, music, voice and footstep replacers or additions",
+    7: "hair, brows, eyes, skin, bodies and NPC appearance overhauls",
+    8: "targeted bug-fix mods (Bug Fixes SSE, Scrambled Bugs, po3's Tweaks) — after asset mods so fixes win",
+    9: "general gameplay mechanics: crafting, alchemy, item/loot behavior, camera",
+    10: "AI behavior and combat changes",
+    11: "trade, barter, gold and economy changes",
+    12: "immersion tweaks: dialogue, equipment display, movement, small QoL",
+    13: "quest changes and quest-flow tweaks",
+    14: "skills, perks, magic and leveling: Vokrii, Odin, uncappers, custom skill frameworks",
+    15: "all UI: SkyUI, RaceMenu, HUD, map, menus, fonts, console",
+    16: "worldspace/location edits: Cutting Room Floor, landscape fixes, city/building changes",
+    17: "weather and lighting overhauls: Cathedral Weathers, Relighting, volumetrics",
+    18: "tools and late-loading runtime patchers: Nemesis/Pandora, DynDOLOD, BodySlide, SSEEdit, SkyPatcher, No Grass In Objects",
+    19: "compatibility patches between other mods — must overwrite everything they patch",
+    20: "ENB/ReShade helpers and particle lights — the very bottom, below Patches",
 }
 
 # Nexus category name -> (bucket, confidence). Confidence < .5 gets [UNCERTAIN].
@@ -116,31 +141,78 @@ def classify(name, category):
     if bucket is None:
         bucket, conf = CATEGORY_BUCKET.get(category or "", (8, 0.2))
     flags = []
-    if "patch" in lname and bucket not in (1, 3):
-        flags.append("PATCH")
     if conf < 0.5:
         flags.append("UNCERTAIN")
     return bucket, flags
 
 
+def _write_ranks(conn, unlocked_ids):
+    """Assign global ranks: locked mods stay pinned at their saved rank,
+    unlocked mods (already ordered) fill the remaining slots around them."""
+    locked = conn.execute(
+        "SELECT mod_id, rank FROM mod_sort WHERE locked = 1"
+        " AND mod_id IN (SELECT mod_id FROM mods WHERE status = 'ok') ORDER BY rank"
+    ).fetchall()
+    total = len(unlocked_ids) + len(locked)
+    slots = [None] * total
+    for r in locked:
+        i = min(r["rank"] or 0, total - 1)
+        while slots[i] is not None:  # collision: next free slot downward
+            i = (i + 1) % total
+        slots[i] = r["mod_id"]
+    it = iter(unlocked_ids)
+    for i in range(total):
+        if slots[i] is None:
+            slots[i] = next(it)
+    for rank, mod_id in enumerate(slots):
+        conn.execute(
+            "INSERT INTO mod_sort (mod_id, rank) VALUES (?, ?)"
+            " ON CONFLICT(mod_id) DO UPDATE SET rank = excluded.rank",
+            (mod_id, rank),
+        )
+
+
+def _upsert_sort(conn, mod_id, bucket=None, flags=None, expected=True):
+    conn.execute(
+        "INSERT INTO mod_sort (mod_id, bucket, flags, expected_bucket) VALUES (?, ?, ?, ?)"
+        " ON CONFLICT(mod_id) DO UPDATE SET bucket = excluded.bucket, flags = excluded.flags"
+        + (", expected_bucket = excluded.expected_bucket" if expected else ""),
+        (mod_id, bucket, flags, bucket if expected else None),
+    )
+
+
 def heuristic_sort():
-    """Bucket every ok mod and rank alphabetically within buckets."""
+    """Bucket every unlocked ok mod and rank alphabetically within buckets;
+    locked mods keep their bucket and pinned position."""
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT mod_id, mod_name, category FROM mods WHERE status = 'ok' GROUP BY mod_id"
+            "SELECT m.mod_id, m.mod_name, m.category FROM mods m"
+            " LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
+            " WHERE m.status = 'ok' AND COALESCE(s.locked, 0) = 0 GROUP BY m.mod_id"
         ).fetchall()
         results = []
         for r in rows:
             bucket, flags = classify(r["mod_name"], r["category"])
             results.append((bucket, (r["mod_name"] or "").lower(), r["mod_id"], flags))
         results.sort()
-        for rank, (bucket, _, mod_id, flags) in enumerate(results):
-            conn.execute(
-                "UPDATE mods SET sort_bucket = ?, expected_bucket = ?, sort_rank = ?,"
-                " sort_flags = ? WHERE mod_id = ?",
-                (bucket, bucket, rank, ",".join(flags), mod_id),
-            )
+        for bucket, _, mod_id, flags in results:
+            _upsert_sort(conn, mod_id, bucket, ",".join(flags))
+        _write_ranks(conn, [mod_id for _, _, mod_id, _ in results])
     return len(results)
+
+
+def set_lock(mod_id, locked):
+    """Pin/unpin a mod at its current position. Returns error string or None."""
+    with db.connect() as conn:
+        known = conn.execute("SELECT 1 FROM mods WHERE mod_id = ?", (mod_id,)).fetchone()
+        if not known:
+            return "unknown mod"
+        conn.execute(
+            "INSERT INTO mod_sort (mod_id, locked) VALUES (?, ?)"
+            " ON CONFLICT(mod_id) DO UPDATE SET locked = excluded.locked",
+            (mod_id, 1 if locked else 0),
+        )
+    return None
 
 
 def load_order():
@@ -148,10 +220,12 @@ def load_order():
     as installed when any of its archives is installed in MO2."""
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT mod_id, mod_name, category, mod_url, sort_bucket, sort_rank, sort_flags,"
-            " json_group_array(filename) AS fns"
-            " FROM mods WHERE status = 'ok' GROUP BY mod_id"
-            " ORDER BY sort_bucket IS NULL, sort_bucket, sort_rank, mod_name COLLATE NOCASE"
+            "SELECT m.mod_id, m.mod_name, m.category, m.mod_url, s.bucket AS sort_bucket,"
+            " s.rank AS sort_rank, s.flags AS sort_flags, s.locked AS sort_locked,"
+            " json_group_array(m.filename) AS fns"
+            " FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
+            " WHERE m.status = 'ok' GROUP BY m.mod_id"
+            " ORDER BY s.rank IS NULL, s.rank, s.bucket, m.mod_name COLLATE NOCASE"
         ).fetchall()
         note_row = conn.execute("SELECT value FROM meta WHERE key = 'conflict_notes'").fetchone()
     mods = [
@@ -162,6 +236,7 @@ def load_order():
             "mod_url": r["mod_url"],
             "bucket": r["sort_bucket"],
             "flags": [f for f in (r["sort_flags"] or "").split(",") if f],
+            "locked": bool(r["sort_locked"]),
             "installed": any(mo2.is_installed(f) for f in json.loads(r["fns"]) if f),
         }
         for r in rows
@@ -170,29 +245,36 @@ def load_order():
     return {"buckets": BUCKETS, "mods": mods, "notes": notes}
 
 
-def move(mod_id, position):
-    """Move a mod to a 1-based position in the global order, shifting the rest.
-    The mod adopts the bucket of its new neighbor above (below when moved to
-    the top) so the grouped view stays coherent; expected_bucket is untouched,
+def move(mod_ids, position):
+    """Move one or several mods (as a block, keeping their relative order) to
+    a 1-based position in the global order, shifting the rest. Moved mods
+    adopt the bucket of their new neighbor above (below when moved to the
+    top) so the grouped view stays coherent; expected_bucket is untouched,
     which is what check_order compares against."""
+    if isinstance(mod_ids, int):
+        mod_ids = [mod_ids]
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT mod_id, sort_bucket FROM mods WHERE status = 'ok' GROUP BY mod_id"
-            " ORDER BY sort_bucket IS NULL, sort_bucket, sort_rank, mod_name COLLATE NOCASE"
+            "SELECT m.mod_id, s.bucket FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
+            " WHERE m.status = 'ok' GROUP BY m.mod_id"
+            " ORDER BY s.rank IS NULL, s.rank, s.bucket, m.mod_name COLLATE NOCASE"
         ).fetchall()
         ids = [r["mod_id"] for r in rows]
-        if mod_id not in ids:
+        moving = [i for i in ids if i in set(mod_ids)]  # keep current relative order
+        if len(moving) != len(set(mod_ids)):
             return "unknown mod"
-        buckets = {r["mod_id"]: r["sort_bucket"] for r in rows}
-        ids.remove(mod_id)
+        buckets = {r["mod_id"]: r["bucket"] for r in rows}
+        ids = [i for i in ids if i not in set(moving)]
         pos = max(0, min(len(ids), int(position) - 1))
-        ids.insert(pos, mod_id)
-        neighbor = ids[pos - 1] if pos > 0 else (ids[pos + 1] if len(ids) > 1 else mod_id)
-        buckets[mod_id] = buckets[neighbor]
+        ids[pos:pos] = moving
+        neighbor = ids[pos - 1] if pos > 0 else (ids[pos + len(moving)] if len(ids) > len(moving) else moving[0])
+        for mid in moving:
+            buckets[mid] = buckets[neighbor]
         for rank, mid in enumerate(ids):
             conn.execute(
-                "UPDATE mods SET sort_rank = ?, sort_bucket = ? WHERE mod_id = ?",
-                (rank, buckets[mid], mid),
+                "INSERT INTO mod_sort (mod_id, rank, bucket) VALUES (?, ?, ?)"
+                " ON CONFLICT(mod_id) DO UPDATE SET rank = excluded.rank, bucket = excluded.bucket",
+                (mid, rank, buckets[mid]),
             )
     return None
 
@@ -202,14 +284,15 @@ def check_order():
     (heuristic or LLM) — i.e. likely misplaced after manual moves."""
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT mod_id, sort_bucket, expected_bucket FROM mods WHERE status = 'ok'"
-            " AND expected_bucket IS NOT NULL GROUP BY mod_id"
+            "SELECT s.mod_id, s.bucket, s.expected_bucket FROM mod_sort s"
+            " WHERE s.expected_bucket IS NOT NULL AND s.locked = 0"
+            " AND s.mod_id IN (SELECT mod_id FROM mods WHERE status = 'ok')"
         ).fetchall()
     return {
         "mismatches": [
-            {"mod_id": r["mod_id"], "actual": r["sort_bucket"], "expected": r["expected_bucket"]}
+            {"mod_id": r["mod_id"], "actual": r["bucket"], "expected": r["expected_bucket"]}
             for r in rows
-            if r["sort_bucket"] != r["expected_bucket"]
+            if r["bucket"] != r["expected_bucket"]
         ]
     }
 
@@ -217,29 +300,70 @@ def check_order():
 # {{BUCKETS}} and {{MODS}} are replaced before the call; the edited copy
 # lives in the meta table (key 'sort_prompt') when the user changes it.
 DEFAULT_PROMPT = """You are a Skyrim SE mod install order sorter for the MO2 left panel
-(top to bottom, bottom = highest priority / overwrites above).
+(top to bottom, bottom = highest priority / overwrites above). The scheme is
+the STEP SkyrimSE 2.3 guide (stepmodifications.org/wiki/SkyrimSE:2.3): mods
+are installed in the guide's group order so that each group's files overwrite
+the groups above it, and compatibility patches overwrite everything they
+patch.
 
-Buckets, in install order (the STEP SkyrimSE 2.3 guide's MO2 separators):
+Groups, in install order, with what STEP puts in each:
 {{BUCKETS}}
 
-Rules: a patch always goes below what it patches; more specific mods below
-general ones; primary function decides multi-category mods. STEP conventions:
-USSEP and base mesh/lighting overhauls (SMIM, ELFX, Majestic Mountains) are
-Foundation; Nemesis/DynDOLOD/LOD tools are Utilities; generic bug-fix mods go
-in Fixes, not Foundation; ENB/particle-light mods are Post-Processing, below
-Patches.
+Rules:
+- A patch always goes below every mod it patches.
+- More specific mods go below general ones.
+- A mod's primary function decides its group when several could apply.
+- Keep STEP's counterintuitive placements: USSEP and base overhauls are
+  Foundation (early, meant to be overwritten); generic bug-fix mods are
+  Fixes (mid-list, after asset mods); Nemesis/DynDOLOD/LOD tools are
+  Utilities (late); ENB and particle lights are Post-Processing, below
+  Patches.
+- The Nexus category is a hint only; it is often wrong (e.g. 'Bug Fixes'
+  for SKSE plugins that belong in Extenders).
 
-Input lines below: mod_id|mod name|nexus category|heuristic bucket guess.
-The guess may be wrong — fix misfits.
+The mods below are listed under their current group heading — a heuristic
+guess. Most are right; move the misfits. Each line: mod_id|mod name|nexus
+category.
 
-Reply with ONLY a JSON object, no prose, no code fences:
-{"order": [{"id": <mod_id>, "b": <bucket 1-20>, "f": ["PATCH"|"UNCERTAIN"|"CONFLICT: <reason>"]}, ...],
- "conflicts": ["<mod A> vs <mod B>: <which should win and why>", ...]}
-"order" must contain every input mod exactly once, in full install order.
-Omit "f" when a mod has no flags.
+Reply with ONLY plain lines, no prose, no code fences. First every input mod
+exactly once, one per line, in full install order (top to bottom):
+<mod_id>|<bucket 1-20>
+Append |<flags> only when flagged (comma-separated). Allowed flags:
+UNCERTAIN, CONFLICT:<mod_id of the mod it conflicts with>
+Then, if any mods conflict, a final section:
+CONFLICTS:
+<mod_id A> (<name A>) vs <mod_id B> (<name B>): <which should win and why>
 
 Mods:
 {{MODS}}"""
+
+
+def _parse_reply(text):
+    """Parse the line-based reply: 'id|bucket[|flags]' rows, then an optional
+    CONFLICTS: section. Line format keeps the reply ~3x smaller than JSON,
+    which is what dominates the runtime. Non-matching lines are skipped."""
+    text = re.sub(r"^```\w*|```$", "", text.strip(), flags=re.M).strip()
+    order, conflicts, in_conflicts = [], [], False
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.upper().rstrip(":").endswith("CONFLICTS"):
+            in_conflicts = True
+            continue
+        if in_conflicts:
+            conflicts.append(line)
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if not parts[0].isdigit():
+            continue
+        item = {"id": int(parts[0])}
+        if len(parts) > 1 and parts[1].isdigit():
+            item["b"] = int(parts[1])
+        if len(parts) > 2:
+            item["f"] = [f.strip() for f in parts[2].split(",") if f.strip()]
+        order.append(item)
+    return {"order": order, "conflicts": conflicts}
 
 
 def get_prompt():
@@ -262,38 +386,69 @@ def set_prompt(text):
     return None
 
 
+_proc = None  # running claude subprocess, for the force-stop endpoint
+
+
 def _run_claude(mods):
-    lines = "\n".join(
-        f"{m['mod_id']}|{m['mod_name']}|{m['category'] or ''}|{m['bucket'] or ''}" for m in mods
-    )
-    buckets = "\n".join(f"{n}. {label}" for n, label in BUCKETS.items())
+    global _proc
+    sections, last = [], object()
+    for m in mods:  # mods arrive ordered, so buckets form contiguous runs
+        if m["bucket"] != last:
+            last = m["bucket"]
+            sections.append(f"\n# {last}. {BUCKETS.get(last, 'Unsorted')}")
+        sections.append(f"{m['mod_id']}|{m['mod_name']}|{m['category'] or ''}")
+    lines = "\n".join(sections).strip()
+    buckets = "\n".join(f"{n}. {label} — {BUCKET_HINTS[n]}" for n, label in BUCKETS.items())
     prompt = get_prompt().replace("{{BUCKETS}}", buckets).replace("{{MODS}}", lines)
-    proc = subprocess.run(
+    _proc = subprocess.Popen(
         ["claude", "-p", prompt, "--model", "haiku", "--output-format", "json"],
-        capture_output=True, text=True, timeout=600,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
-    if proc.returncode != 0:
-        raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr.strip()[:200]}")
-    text = json.loads(proc.stdout).get("result", "")
-    text = re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.M).strip()
-    return json.loads(text)
+    try:
+        out, err = _proc.communicate(timeout=600)
+        code = _proc.returncode
+    finally:
+        _proc = None
+    if code != 0:
+        if code < 0:
+            raise RuntimeError("stopped by user")
+        raise RuntimeError(f"claude exited {code}: {err.strip()[:200]}")
+    text = json.loads(out).get("result", "")
+    return _parse_reply(text)
+
+
+def stop():
+    """Kill a running claude refine. Returns error string or None."""
+    proc = _proc
+    if proc is None:
+        return "no claude process running"
+    proc.kill()
+    return None
 
 
 def _refine_job():
-    order = load_order()["mods"]
+    order = [m for m in load_order()["mods"] if not m["locked"]]  # locked mods stay pinned
     state["phase"] = f"Asking Claude to sort {len(order)} mods (may take a few minutes)"
     result = _run_claude(order)
+    if len(result["order"]) < len(order) // 2:
+        raise RuntimeError(f"reply only contained {len(result['order'])}/{len(order)} mods — order kept")
     known = {m["mod_id"] for m in order}
+    before = {m["mod_id"]: m["bucket"] for m in order}
     state["phase"] = "Saving"
     with db.connect() as conn:
-        for rank, item in enumerate(result["order"]):
-            if item.get("id") not in known:
+        ordered_ids = []
+        for item in result["order"]:
+            if item.get("id") not in known or item["id"] in ordered_ids:
                 continue
-            conn.execute(
-                "UPDATE mods SET sort_bucket = ?, expected_bucket = ?, sort_rank = ?,"
-                " sort_flags = ? WHERE mod_id = ?",
-                (item.get("b"), item.get("b"), rank, ",".join(item.get("f") or []), item["id"]),
-            )
+            ordered_ids.append(item["id"])
+            flags = [f for f in (item.get("f") or []) if f != "PATCH"]
+            if item.get("b") != before[item["id"]]:
+                # record the from->to buckets so the UI can label the change
+                flags.append(f"MOVED:{before[item['id']]}>{item.get('b')}")
+            _upsert_sort(conn, item["id"], item.get("b"), ",".join(flags))
+        # mods claude dropped from the reply keep their relative order at the end
+        ordered_ids += [m["mod_id"] for m in order if m["mod_id"] not in ordered_ids]
+        _write_ranks(conn, ordered_ids)
         conn.execute(
             "INSERT OR REPLACE INTO meta VALUES ('conflict_notes', ?)",
             (json.dumps(result.get("conflicts") or []),),

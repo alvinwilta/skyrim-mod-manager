@@ -1,5 +1,5 @@
 # local state / artifacts
-mods.db
+mods.db*
 *.log
 
 # python

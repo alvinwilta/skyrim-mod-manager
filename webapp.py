@@ -137,17 +137,40 @@ def sort_state():
     return sorter.state
 
 
+@app.post("/api/sort-stop")
+def sort_stop():
+    err = sorter.stop()
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"stopped": True}
+
+
 @app.post("/api/order/move")
 async def order_move(request: Request):
     body = await request.json()
     try:
-        mod_id, position = int(body["mod_id"]), int(body["position"])
+        raw = body.get("mod_ids") or [body["mod_id"]]
+        mod_ids = [int(i) for i in raw]
+        position = int(body["position"])
     except (KeyError, TypeError, ValueError):
-        return JSONResponse({"error": "expected {mod_id, position}"}, status_code=400)
-    err = sorter.move(mod_id, position)
+        return JSONResponse({"error": "expected {mod_id | mod_ids, position}"}, status_code=400)
+    err = sorter.move(mod_ids, position)
     if err:
         return JSONResponse({"error": err}, status_code=400)
-    return {"moved": mod_id, "position": position}
+    return {"moved": mod_ids, "position": position}
+
+
+@app.post("/api/order/lock")
+async def order_lock(request: Request):
+    body = await request.json()
+    try:
+        mod_id, locked = int(body["mod_id"]), bool(body["locked"])
+    except (KeyError, TypeError, ValueError):
+        return JSONResponse({"error": "expected {mod_id, locked}"}, status_code=400)
+    err = sorter.set_lock(mod_id, locked)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    return {"mod_id": mod_id, "locked": locked}
 
 
 @app.get("/api/order/check")

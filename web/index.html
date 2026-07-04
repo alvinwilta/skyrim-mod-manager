@@ -23,10 +23,12 @@
     padding: 5px 14px; border-radius: 6px; font-size: 13px; cursor: pointer;
   }
   nav button.on { border-color: var(--blue); color: var(--blue); }
-  #runbadge {
-    margin-left: auto; font-size: 12px; padding: 2px 10px; border-radius: 99px;
+  #badges { margin-left: auto; display: flex; gap: 8px; }
+  #runbadge, #sortbadge {
+    font-size: 12px; padding: 2px 10px; border-radius: 99px;
     background: #1e3a5f; color: var(--blue); display: none; cursor: pointer;
   }
+  #sortbadge { background: #3a2b12; color: var(--amber); }
   main { padding: 18px 24px 60px; max-width: 1200px; margin: 0 auto; }
   .tab { display: none; }
   .tab.on { display: block; }
@@ -70,6 +72,14 @@
   tr.r-wrong:hover td { background: #341a1d; }
   tr.r-wrong td:first-child { border-left: 3px solid var(--red); border-radius: 4px 0 0 4px; }
   tr.ordrow { cursor: grab; }
+  tr.ordrow[draggable="false"] { cursor: default; }
+  .lockbtn { background: none; border: none; cursor: pointer; font-size: 13px;
+    opacity: .25; padding: 0 4px; }
+  .lockbtn:hover { opacity: .8; }
+  .lockbtn.on { opacity: 1; }
+  tr.r-locked td { background: #1d2a45; }
+  tr.r-sel td { background: #101720 !important; }
+  tr.r-sel td:first-child { border-left: 3px solid var(--blue); border-radius: 4px 0 0 4px; }
   tr.dropmark td { border-top: 2px solid var(--blue); }
   .posnum { color: var(--dim); text-decoration: none; }
   .posnum:hover { color: var(--blue); text-decoration: underline; }
@@ -113,7 +123,10 @@
     <button data-tab="import">Import</button>
     <button data-tab="progress">Progress</button>
   </nav>
-  <span id="runbadge">downloading…</span>
+  <span id="badges">
+    <span id="runbadge">downloading…</span>
+    <span id="sortbadge">Claude sorting…</span>
+  </span>
 </header>
 <main>
 
@@ -215,6 +228,16 @@
     if (t === 'order') { loadOrder(); loadPrompt(); }
   }
   $('runbadge').onclick = () => showTab('progress');
+  $('sortbadge').onclick = () => showTab('order');
+
+  /* header badge + reorder lock for the sort job, from any tab */
+  setInterval(async () => {
+    try {
+      const s = await (await fetch('/api/sort-state')).json();
+      $('sortbadge').style.display = s.running ? '' : 'none';
+      if (s.running && !refining) { setRefining(true); loadOrder(); }
+    } catch {}
+  }, 3000);
 
   /* keep search bar pinned right below the (wrappable) header */
   function setSticky() {
@@ -302,32 +325,61 @@
   /* ---- install order ---- */
   function flagBadge(f) {
     const style = f.startsWith('CONFLICT') || f === 'WRONG SPOT' ? 'background:#3a1214;color:var(--red)'
-      : f === 'PATCH' ? 'background:#3a2b12;color:var(--amber)'
+      : f.startsWith('MOVED') ? 'background:#3a2b12;color:var(--amber)'
       : 'background:#232833;color:var(--dim)';
-    return `<span class="badge" style="${style}" title="${esc(f)}">${esc(f.split(':')[0])}</span>`;
+    // CONFLICT:<mod_id> — show the target (and its name in the tooltip) so
+    // it's clear what it conflicts with
+    let label = f.split(':')[0], hint = f;
+    const conflictId = f.startsWith('CONFLICT') && parseInt(f.split(':')[1], 10);
+    if (conflictId) {
+      const other = orderNames.get(conflictId);
+      label = `CONFLICT ↔ ${other ? other.slice(0, 30) : conflictId}`;
+      hint = `conflicts with ${other || 'mod'} (${conflictId})`;
+    }
+    // MOVED:<from>><to> — show which group Claude moved it from/to
+    const mv = f.startsWith('MOVED:') && f.slice(6).match(/^(\d+|None)>(\d+)$/);
+    if (mv) {
+      const from = orderBuckets[mv[1]], to = orderBuckets[mv[2]];
+      label = `MOVED ${from || mv[1]} → ${to || mv[2]}`;
+      hint = `Claude moved this from ${mv[1]} · ${from || 'unsorted'} to ${mv[2]} · ${to || '?'}`;
+    }
+    return `<span class="badge" style="${style}" title="${esc(hint)}">${esc(label)}</span>`;
+  }
+  function groupBadge(bucket, buckets) {
+    if (bucket == null) return '<span class="badge b-same">? · Unsorted</span>';
+    const hue = Math.round(bucket * 137.508 % 360);  // golden-angle spread, stable per group
+    return `<span class="badge" style="background:hsl(${hue} 45% 22%);color:hsl(${hue} 65% 72%)">${bucket} · ${esc(buckets[bucket] || '?')}</span>`;
   }
   let wrongById = new Map();  // mod_id -> expected bucket, filled by Check order
   let orderBuckets = {};
+  let orderNames = new Map(); // mod_id -> mod_name, for conflict badge labels
+  let refining = false;       // true while a Claude refine runs — reordering locked
   async function loadOrder() {
-    const d = await (await fetch('/api/installorder')).json();
+    const [d, s] = await Promise.all([
+      (await fetch('/api/installorder')).json(),
+      (await fetch('/api/sort-state')).json(),
+    ]);
+    setRefining(s.running);
     orderBuckets = d.buckets;
-    let html = '', lastB, n = 0;
+    orderNames = new Map(d.mods.map(m => [m.mod_id, m.mod_name]));
+    let html = '', n = 0;
     for (const m of d.mods) {
-      if (m.bucket !== lastB) {
-        html += `<tr><td colspan="3" style="border:none;padding:16px 0 4px">
-          <span class="badge b-same">${m.bucket ?? '?'} · ${esc(d.buckets[m.bucket] || 'Unsorted — hit Sort')}</span></td></tr>`;
-        lastB = m.bucket;
-      }
       n++;
       const wrong = wrongById.has(m.mod_id);
       const hint = wrong ? `expected: ${wrongById.get(m.mod_id) ?? '?'} · ${orderBuckets[wrongById.get(m.mod_id)] || 'unsorted'}` : '';
-      html += `<tr class="ordrow${wrong ? ' r-wrong' : ''}" draggable="true" data-mid="${m.mod_id}" data-pos="${n}" ${wrong ? `title="${esc(hint)}"` : ''}>
-        <td class="num" style="width:44px"><a href="#" class="posnum" title="click to move">${n}</a></td>
-        <td>${m.installed ? '<span class="badge b-new">installed</span> ' : ''}${esc(m.mod_name)} ${(m.flags || []).map(flagBadge).join(' ')}${wrong ? ' ' + flagBadge('WRONG SPOT') : ''}</td>
+      const flags = (m.flags || []).filter(f => f !== 'PATCH');
+      const moved = flags.some(f => f.startsWith('MOVED'));
+      html += `<tr class="ordrow${wrong ? ' r-wrong' : moved ? ' r-upd' : m.locked ? ' r-locked' : ''}" draggable="${!refining}" data-mid="${m.mod_id}" data-pos="${n}" ${wrong ? `title="${esc(hint)}"` : ''}>
+        <td class="num" style="width:70px;white-space:nowrap"><button class="lockbtn${m.locked ? ' on' : ''}" data-locked="${m.locked ? 1 : 0}" title="${m.locked ? 'pinned — sorts will not move this; click to unpin' : 'pin at this position'}">${m.locked ? '🔒' : '🔓'}</button>${refining ? `<span class="dim">${n}</span>` : `<a href="#" class="posnum" title="click to move">${n}</a>`}</td>
+        <td>${m.installed ? '<span class="badge b-new">installed</span> ' : ''}${esc(m.mod_name)} ${flags.map(flagBadge).join(' ')}${wrong ? ' ' + flagBadge('WRONG SPOT') : ''}</td>
+        <td class="num"><a href="${esc(m.mod_url)}" target="_blank" class="dim">${m.mod_id}</a></td>
         <td class="hide-sm dim">${esc(m.category || '')}</td>
+        <td class="num">${groupBadge(m.bucket, d.buckets)}</td>
       </tr>`;
     }
-    $('orderout').innerHTML = html ? `<table><tbody id="orderbody">${html}</tbody></table>`
+    $('orderout').innerHTML = html ? `<table>
+      <thead><tr><th style="width:70px">#</th><th>Mod</th><th class="num">Mod ID</th><th class="hide-sm">Category</th><th class="num">Group</th></tr></thead>
+      <tbody id="orderbody">${html}</tbody></table>`
       : '<p class="dim" style="margin-top:14px">Library empty.</p>';
     bindOrderRows();
     $('conflictnotes').innerHTML = d.notes.length
@@ -336,36 +388,127 @@
       : '';
   }
 
-  async function moveMod(mid, pos) {
-    const r = await (await fetch('/api/order/move', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({mod_id: mid, position: pos})})).json();
-    if (r.error) { $('sortmsg').textContent = r.error; return; }
-    $('sortmsg').textContent = `moved to #${r.position}`;
-    if (wrongById.size) await checkOrder(true);
+  function setRefining(on) {
+    refining = on;
+    $('sortbtn').disabled = $('checkbtn').disabled = on;
+    const b = $('llmbtn');
+    b.textContent = on ? 'Force Stop Claude' : 'Refine with Claude';
+    b.style.background = on ? '#7f1d1d' : '';
+    if (on) watchRefine();
+  }
+  let watching = false;
+  async function watchRefine() {
+    if (watching) return;
+    watching = true;
+    while (true) {
+      const s = await (await fetch('/api/sort-state')).json();
+      $('sortmsg').textContent = s.phase + (s.error ? ' — ' + s.error : '');
+      if (!s.running) break;
+      await new Promise(res => setTimeout(res, 2000));
+    }
+    watching = false;
+    setRefining(false);
     loadOrder();
   }
 
-  let dragMid = null;
+  async function moveMod(mids, pos) {
+    if (refining) return;
+    if (!Array.isArray(mids)) mids = [mids];
+    const r = await (await fetch('/api/order/move', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mod_ids: mids, position: pos})})).json();
+    if (r.error) { $('sortmsg').textContent = r.error; return; }
+    $('sortmsg').textContent = `moved ${mids.length > 1 ? mids.length + ' mods' : ''} to #${r.position}`;
+    if (wrongById.size) await checkOrder(true);
+    loadOrder();  // selection kept: loadOrder re-applies r-sel from orderSel
+  }
+
+  let dragMid = null, dragging = false, lastDrag = 0, lastSelIdx = null;
+  const orderSel = new Set();  // multi-select: ctrl/shift+click, drag moves the block
+  // a drag can leak a click onto the re-rendered table; suppress by time window
+  const recentDrag = () => dragging || performance.now() - lastDrag < 500;
+
+  // auto-scroll the page while dragging near the viewport edges
+  let dragY = -1;
+  document.addEventListener('dragover', e => { if (dragging) dragY = e.clientY; });
+  (function edgeScroll() {
+    if (dragging && dragY >= 0) {
+      const EDGE = 80, MAX = 22, h = innerHeight;
+      if (dragY < EDGE) scrollBy(0, -MAX * (1 - dragY / EDGE));
+      else if (dragY > h - EDGE) scrollBy(0, MAX * (1 - (h - dragY) / EDGE));
+    }
+    requestAnimationFrame(edgeScroll);
+  })();
   function bindOrderRows() {
     document.querySelectorAll('.ordrow').forEach(tr => {
+      if (orderSel.has(+tr.dataset.mid)) tr.classList.add('r-sel');
       tr.addEventListener('dragstart', e => {
         dragMid = +tr.dataset.mid;
+        dragging = true;
         e.dataTransfer.effectAllowed = 'move';
+        if (orderSel.has(dragMid) && orderSel.size > 1)
+          e.dataTransfer.setDragImage(tr, 10, 10);  // block drag
       });
+      tr.addEventListener('dragend', () => { dragging = false; lastDrag = performance.now(); });
       tr.addEventListener('dragover', e => { e.preventDefault(); tr.classList.add('dropmark'); });
       tr.addEventListener('dragleave', () => tr.classList.remove('dropmark'));
       tr.addEventListener('drop', e => {
         e.preventDefault();
         tr.classList.remove('dropmark');
-        if (dragMid && dragMid !== +tr.dataset.mid) moveMod(dragMid, +tr.dataset.pos);
+        if (dragMid && dragMid !== +tr.dataset.mid) {
+          const block = orderSel.has(dragMid) && orderSel.size > 1 ? [...orderSel] : dragMid;
+          moveMod(block, +tr.dataset.pos);
+        }
         dragMid = null;
       });
-      tr.querySelector('.posnum').onclick = e => {
+      const lock = tr.querySelector('.lockbtn');
+      const toggleLock = async () => {
+        const r = await (await fetch('/api/order/lock', {method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({mod_id: +tr.dataset.mid, locked: lock.dataset.locked !== '1'})})).json();
+        if (r.error) { $('sortmsg').textContent = r.error; return; }
+        loadOrder();
+      };
+      if (lock) lock.onclick = e => { e.preventDefault(); toggleLock(); };
+      // plain click toggles the lock; ctrl/cmd+click toggles selection and
+      // shift+click range-selects (for block drag). Not right after a drag,
+      // not on the position link, not on text selection.
+      tr.addEventListener('click', e => {
+        if (recentDrag() || refining) return;
+        if (e.target.closest('.posnum, .lockbtn, a, button')) return;
+        if (getSelection().toString()) return;
+        const rows = [...document.querySelectorAll('.ordrow')];
+        const idx = rows.indexOf(tr);
+        if (e.shiftKey) {
+          // no anchor yet: shift+click starts the selection instead of locking
+          const [a, b] = lastSelIdx === null ? [idx, idx]
+            : [Math.min(idx, lastSelIdx), Math.max(idx, lastSelIdx)];
+          rows.slice(a, b + 1).forEach(r => orderSel.add(+r.dataset.mid));
+        } else if (e.ctrlKey || e.metaKey) {
+          const mid = +tr.dataset.mid;
+          orderSel.has(mid) ? orderSel.delete(mid) : orderSel.add(mid);
+        } else {
+          if (orderSel.size) { orderSel.clear(); paintSelection(); return; }  // click-off clears selection
+          toggleLock();
+          return;
+        }
+        lastSelIdx = idx;
+        paintSelection();
+      });
+      const num = tr.querySelector('.posnum');
+      if (num) num.onclick = e => {
         e.preventDefault();
-        const pos = parseInt(prompt('Move to position:', tr.dataset.pos), 10);
-        if (pos) moveMod(+tr.dataset.mid, pos);
+        const mid = +tr.dataset.mid;
+        const block = orderSel.has(mid) && orderSel.size > 1 ? [...orderSel] : mid;
+        const label = Array.isArray(block) ? `Move ${block.length} selected mods to position:` : 'Move to position:';
+        const pos = parseInt(prompt(label, tr.dataset.pos), 10);
+        if (pos) moveMod(block, pos);
       };
     });
+  }
+
+  function paintSelection() {
+    document.querySelectorAll('.ordrow').forEach(tr =>
+      tr.classList.toggle('r-sel', orderSel.has(+tr.dataset.mid)));
+    $('sortmsg').textContent = orderSel.size ? `${orderSel.size} selected — drag any selected row to move the block` : '';
   }
 
   async function checkOrder(silent) {
@@ -400,25 +543,20 @@
     $('promptmsg').textContent = 'reset to default';
   };
   async function runSort(llm) {
-    $('sortbtn').disabled = $('llmbtn').disabled = true;
     $('sortmsg').textContent = 'sorting…';
-    try {
-      const r = await (await fetch('/api/sort', {method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({llm})})).json();
-      if (r.error) { $('sortmsg').textContent = r.error; return; }
-      await loadOrder();
-      if (!llm) { $('sortmsg').textContent = `${r.sorted} mods sorted`; return; }
-      while (true) {
-        const s = await (await fetch('/api/sort-state')).json();
-        $('sortmsg').textContent = s.phase + (s.error ? ' — ' + s.error : '');
-        if (!s.running) break;
-        await new Promise(res => setTimeout(res, 2000));
-      }
-      loadOrder();
-    } finally { $('sortbtn').disabled = $('llmbtn').disabled = false; }
+    const r = await (await fetch('/api/sort', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({llm})})).json();
+    if (r.error) { $('sortmsg').textContent = r.error; return; }
+    if (llm) setRefining(true);  // watchRefine unlocks + reloads when done
+    else $('sortmsg').textContent = `${r.sorted} mods sorted`;
+    loadOrder();
   }
   $('sortbtn').onclick = () => runSort(false);
-  $('llmbtn').onclick = () => runSort(true);
+  $('llmbtn').onclick = async () => {
+    if (!refining) return runSort(true);
+    const r = await (await fetch('/api/sort-stop', {method: 'POST'})).json();
+    $('sortmsg').textContent = r.error || 'stopping…';  // watcher unlocks on state flip
+  };
 
   /* ---- import / diff ---- */
   let lastModlist = null;
