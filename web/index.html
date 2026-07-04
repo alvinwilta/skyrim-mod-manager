@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mod Manager</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #262b36; --text: #d7dce4; --dim: #7a8494;
+    --green: #4ade80; --amber: #fbbf24; --blue: #60a5fa; --red: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+  header {
+    position: sticky; top: 0; z-index: 10; background: var(--panel);
+    border-bottom: 1px solid var(--border); padding: 14px 24px;
+    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  }
+  h1 { font-size: 17px; font-weight: 600; margin-right: 8px; }
+  nav { display: flex; gap: 6px; }
+  nav button {
+    background: none; border: 1px solid transparent; color: var(--dim);
+    padding: 5px 14px; border-radius: 6px; font-size: 13px; cursor: pointer;
+  }
+  nav button.on { border-color: var(--blue); color: var(--blue); }
+  #runbadge {
+    margin-left: auto; font-size: 12px; padding: 2px 10px; border-radius: 99px;
+    background: #1e3a5f; color: var(--blue); display: none; cursor: pointer;
+  }
+  main { padding: 18px 24px 60px; max-width: 1200px; margin: 0 auto; }
+  .tab { display: none; }
+  .tab.on { display: block; }
+
+  .searchwrap {
+    position: sticky; z-index: 5; background: var(--bg);
+    padding: 10px 0 6px; margin: -18px 0 0; top: 0;
+  }
+  input[type=text], textarea {
+    background: #12151c; border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 8px 12px; font: inherit; width: 100%;
+  }
+  textarea { height: 120px; font-family: monospace; font-size: 12px; resize: vertical; }
+  .btn {
+    background: #1d4ed8; border: none; color: white; padding: 8px 18px;
+    border-radius: 6px; font: inherit; cursor: pointer;
+  }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn.ghost { background: none; border: 1px solid var(--border); color: var(--dim); }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+  th { text-align: left; color: var(--dim); font-size: 11px; text-transform: uppercase;
+       letter-spacing: .05em; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  td { padding: 6px 10px; border-bottom: 1px solid #1c202a; }
+  tr:hover td { background: #141720; }
+  .dim { color: var(--dim); font-size: 12px; }
+  .num { text-align: right; white-space: nowrap; }
+  .badge { font-size: 11px; padding: 1px 8px; border-radius: 99px; white-space: nowrap; }
+  .b-new { background: #14351f; color: var(--green); }
+  .b-upd { background: #3a2b12; color: var(--amber); }
+  .b-same { background: #232833; color: var(--dim); }
+
+  .grp { margin-top: 20px; }
+  tr.r-new td { background: #10241a; }
+  tr.r-new:hover td { background: #143024; }
+  tr.r-upd td { background: #241d0f; }
+  tr.r-upd:hover td { background: #2e2513; }
+  tr.r-new td:first-child { border-left: 3px solid var(--green); border-radius: 4px 0 0 4px; }
+  tr.r-upd td:first-child { border-left: 3px solid var(--amber); border-radius: 4px 0 0 4px; }
+  .grp h2 { font-size: 14px; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+  #summary { color: var(--dim); font-size: 13px; }
+
+  /* progress view (same look as the old dashboard) */
+  .barwrap { background: #232833; border-radius: 6px; height: 14px; overflow: hidden; margin-top: 12px; }
+  #mainbar { height: 100%; width: 0%; background: linear-gradient(90deg, #2563eb, #4ade80); transition: width .4s; }
+  .stats { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 10px; font-size: 12px; color: var(--dim); }
+  .stats b { color: var(--text); }
+  .row { display: grid; grid-template-columns: 34px 22px 1fr 90px 110px; align-items: center; gap: 10px; padding: 5px 10px; border-radius: 6px; }
+  .row:nth-child(odd) { background: #141720; }
+  .idx { color: var(--dim); font-size: 11px; text-align: right; }
+  .ico { text-align: center; }
+  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .size { color: var(--dim); font-size: 12px; text-align: right; }
+  .mini { background: #232833; border-radius: 4px; height: 8px; overflow: hidden; }
+  .mini div { height: 100%; width: 0%; background: var(--amber); transition: width .3s; }
+  .row.done .mini div, .row.skipped .mini div { background: var(--green); }
+  .row.failed .mini div { background: var(--red); }
+  .c-green{color:var(--green)} .c-amber{color:var(--amber)} .c-blue{color:var(--blue)}
+  .c-red{color:var(--red)} .c-dim{color:var(--dim)}
+  @keyframes pulse { 50% { opacity:.35 } } .pulse { animation: pulse 1.2s infinite; }
+  @media (max-width: 640px) {
+    main { padding: 12px 12px 40px; }
+    .row { grid-template-columns: 22px 1fr 70px; grid-template-rows: auto auto; gap: 4px 8px; }
+    .idx { display: none; } .name { grid-column: 2; } .size { grid-column: 3; }
+    .mini { grid-column: 1 / -1; }
+    .hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mod Manager</h1>
+  <nav>
+    <button data-tab="library" class="on">Library</button>
+    <button data-tab="import">Import</button>
+    <button data-tab="progress">Progress</button>
+  </nav>
+  <span id="runbadge">downloading…</span>
+</header>
+<main>
+
+  <section id="tab-library" class="tab on">
+    <div class="searchwrap">
+      <input type="text" id="q" placeholder="Search name, author, category…">
+      <div class="toolbar" style="margin-top:6px">
+        <span id="libcount" class="dim"></span>
+        <button class="btn ghost" id="valbtn" disabled>Validate selected</button>
+        <button class="btn ghost" id="redlbtn" disabled>Redownload selected</button>
+        <button class="btn ghost" id="delbtn" disabled style="color:var(--red);border-color:#4a2226">Delete selected</button>
+        <span id="libmsg" class="dim"></span>
+      </div>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="width:30px"><input type="checkbox" id="selall"></th>
+        <th>Mod</th><th>File</th><th class="num">Version</th>
+        <th class="hide-sm">Author</th><th class="hide-sm">Category</th>
+        <th class="num">Size</th><th class="num hide-sm">Downloaded</th>
+      </tr></thead>
+      <tbody id="libbody"></tbody>
+    </table>
+  </section>
+
+  <section id="tab-import" class="tab">
+    <p class="dim" style="margin-bottom:8px">Paste a collection URL or a single mod page URL to fetch straight from Nexus — or paste/upload a <code>modlist.json</code> below. Either way it is diffed against the local database; only new and updated files are selected by default.</p>
+    <div class="toolbar" style="margin:0 0 12px">
+      <input type="text" id="urlin" placeholder="…/collections/h2uqa3/mods or …/skyrimspecialedition/mods/32117" style="flex:1;min-width:260px">
+      <button class="btn" id="fetchbtn">Fetch from Nexus</button>
+    </div>
+    <textarea id="jsonin" placeholder='{"data":{"collectionRevision":{"modFiles":[…]}}}'></textarea>
+    <div class="toolbar">
+      <input type="file" id="filein" accept=".json" style="width:auto">
+      <button class="btn ghost" id="diffbtn">Diff against DB</button>
+      <span id="differr" class="c-red"></span>
+    </div>
+    <div id="diffout"></div>
+    <div class="toolbar" id="dlbar" style="display:none">
+      <button class="btn" id="dlbtn">Download selected</button>
+      <span id="summary"></span>
+    </div>
+  </section>
+
+  <section id="tab-progress" class="tab">
+    <div style="display:flex;align-items:center;gap:12px">
+      <h2 style="font-size:15px" id="phase">idle</h2>
+    </div>
+    <div class="barwrap"><div id="mainbar"></div></div>
+    <div class="stats">
+      <span><b id="s-done">0</b> / <b id="s-total">0</b> files</span>
+      <span class="c-red" id="w-fail" style="display:none">failed <b id="s-fail">0</b></span>
+      <span><b id="s-bytes">0 B</b> of <b id="s-totalbytes">0 B</b></span>
+      <span>speed <b id="s-speed">—</b></span>
+      <span>ETA <b id="s-eta">—</b></span>
+    </div>
+    <div id="list" style="margin-top:14px"></div>
+  </section>
+
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  const esc = s => (s ?? '').toString().replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  function human(n) {
+    if (!n) return '0 B';
+    const u = ['B','KB','MB','GB']; let i = 0;
+    while (n >= 1024 && i < 3) { n /= 1024; i++; }
+    return n.toFixed(n >= 100 || i === 0 ? 0 : 1) + ' ' + u[i];
+  }
+
+  /* tabs */
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  function showTab(t) {
+    document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.tab === t));
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.id === 'tab-' + t));
+  }
+  $('runbadge').onclick = () => showTab('progress');
+
+  /* keep search bar pinned right below the (wrappable) header */
+  function setSticky() {
+    document.querySelector('.searchwrap').style.top = document.querySelector('header').offsetHeight + 'px';
+  }
+  addEventListener('resize', setSticky); setSticky();
+
+  /* ---- library ---- */
+  let libTimer;
+  async function loadLib() {
+    const q = $('q').value.trim();
+    const rows = await (await fetch('/api/mods' + (q ? '?q=' + encodeURIComponent(q) : ''))).json();
+    $('libcount').textContent = rows.length + ' files';
+    $('libbody').innerHTML = rows.map(r => `<tr>
+      <td><input type="checkbox" class="libsel" data-fid="${r.file_id}"></td>
+      <td>${r.status === 'missing' ? '<span class="badge" style="background:#3a1214;color:var(--red)">missing</span> ' : ''}${r.installed ? '<span class="badge" style="background:#14351f;color:var(--green)">installed</span> ' : ''}${r.status === 'deleted' ? '<span class="badge" style="background:#232833;color:var(--dim)">deleted</span> ' : ''}<a href="${esc(r.mod_url)}" target="_blank" style="color:inherit">${esc(r.mod_name)}</a></td>
+      <td class="dim">${esc(r.file_name)}</td>
+      <td class="num">${esc(r.file_version)}</td>
+      <td class="hide-sm dim">${esc(r.author)}</td>
+      <td class="hide-sm dim">${esc(r.category)}</td>
+      <td class="num dim">${human(r.size_bytes)}</td>
+      <td class="num hide-sm dim" title="${esc(r.downloaded_at)}">${esc((r.downloaded_at || '').slice(0, 16))}</td>
+    </tr>`).join('');
+    $('selall').checked = false;
+    document.querySelectorAll('.libsel').forEach(b => b.onchange = updateLibButtons);
+    updateLibButtons();
+  }
+
+  /* shift-click range selection for any group of checkboxes */
+  function rangeSelect(container, selector, onchange) {
+    let last = null;
+    container.addEventListener('click', e => {
+      const box = e.target.matches(selector) ? e.target : null;
+      if (!box) return;
+      const boxes = [...container.querySelectorAll(selector)];
+      const i = boxes.indexOf(box);
+      if (e.shiftKey && last !== null) {
+        const [a, b] = [Math.min(i, last), Math.max(i, last)];
+        boxes.slice(a, b + 1).forEach(x => x.checked = box.checked);
+        onchange();
+      }
+      last = i;
+    });
+  }
+  rangeSelect($('libbody'), '.libsel', () => updateLibButtons());
+  rangeSelect($('diffout'), 'input[type=checkbox]', () => updateSummary());
+
+  function libSelected() {
+    return [...document.querySelectorAll('.libsel:checked')].map(b => +b.dataset.fid);
+  }
+  function updateLibButtons() {
+    const n = libSelected().length;
+    $('valbtn').disabled = $('redlbtn').disabled = $('delbtn').disabled = !n;
+    $('valbtn').textContent = n ? `Validate (${n})` : 'Validate selected';
+    $('redlbtn').textContent = n ? `Redownload (${n})` : 'Redownload selected';
+    $('delbtn').textContent = n ? `Delete (${n})` : 'Delete selected';
+  }
+  $('selall').onchange = () => {
+    document.querySelectorAll('.libsel').forEach(b => b.checked = $('selall').checked);
+    updateLibButtons();
+  };
+  $('valbtn').onclick = async () => {
+    const r = await (await fetch('/api/validate', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({file_ids: libSelected()})})).json();
+    $('libmsg').textContent = r.error || `${r.ok.length} ok · ${r.fixed.length} size-fixed · ${r.missing.length} missing`;
+    loadLib();
+  };
+  $('delbtn').onclick = async () => {
+    const ids = libSelected();
+    if (!confirm(`Delete ${ids.length} file(s) from disk? The library keeps the record (marked deleted).`)) return;
+    const r = await (await fetch('/api/delete', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({file_ids: ids})})).json();
+    $('libmsg').textContent = r.error || `${r.deleted} marked deleted · ${r.files_removed} file(s) removed from disk`;
+    loadLib();
+  };
+  $('redlbtn').onclick = async () => {
+    const r = await (await fetch('/api/redownload', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({file_ids: libSelected()})})).json();
+    if (r.error) { $('libmsg').textContent = r.error; return; }
+    showTab('progress');
+  };
+  $('q').oninput = () => { clearTimeout(libTimer); libTimer = setTimeout(loadLib, 250); };
+  loadLib();
+
+  /* ---- import / diff ---- */
+  let lastModlist = null;
+  $('filein').onchange = async e => {
+    if (e.target.files[0]) $('jsonin').value = await e.target.files[0].text();
+  };
+  $('fetchbtn').onclick = async () => {
+    $('differr').textContent = '';
+    const url = $('urlin').value.trim();
+    if (!url) { $('differr').textContent = 'paste a collection url first'; return; }
+    $('fetchbtn').disabled = true; $('fetchbtn').textContent = 'Fetching…';
+    try {
+      const res = await fetch('/api/fetch-collection', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({url})});
+      const d = await res.json();
+      if (d.error) { $('differr').textContent = d.error; return; }
+      lastModlist = d.modlist;
+      $('jsonin').value = '';
+      $('jsonin').placeholder = `fetched ${d.count} files from ${url}`;
+      renderDiff(d.diff);
+    } catch (e) { $('differr').textContent = 'fetch failed: ' + e; }
+    finally { $('fetchbtn').disabled = false; $('fetchbtn').textContent = 'Fetch from Nexus'; }
+  };
+
+  $('diffbtn').onclick = async () => {
+    $('differr').textContent = '';
+    let payload;
+    try { payload = JSON.parse($('jsonin').value); }
+    catch { $('differr').textContent = 'invalid JSON'; return; }
+    const res = await fetch('/api/diff', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+    const d = await res.json();
+    if (d.error) { $('differr').textContent = d.error; return; }
+    lastModlist = payload;
+    renderDiff(d);
+  };
+
+  function grp(title, cls, items, checked, rowcls) {
+    if (!items.length) return '';
+    return `<div class="grp"><h2><span class="badge ${cls}">${title} · ${items.length}</span>
+      <button class="btn ghost" style="padding:2px 10px;font-size:12px" onclick="toggleGrp(this)">toggle</button></h2>
+      <table><thead><tr>
+        <th style="width:30px"></th><th>Mod — File</th><th class="num">Version</th><th class="num">Size</th>
+      </tr></thead><tbody>${items.map(i => `<tr class="${rowcls || ''}">
+        <td style="width:30px"><input type="checkbox" data-fid="${i.file_id}" data-size="${i.size}" ${checked ? 'checked' : ''}></td>
+        <td>${esc(i.mod_name)} <span class="dim">— ${esc(i.name)}</span></td>
+        <td class="num">${i.old_version ? `<span class="dim">${esc(i.old_version)} →</span> ` : ''}${esc(i.version)}</td>
+        <td class="num dim">${human(i.size)}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+  }
+  window.toggleGrp = btn => {
+    const boxes = btn.closest('.grp').querySelectorAll('input[type=checkbox]');
+    const on = [...boxes].some(b => !b.checked);
+    boxes.forEach(b => b.checked = on);
+    updateSummary();
+  };
+  function renderDiff(d) {
+    $('diffout').innerHTML =
+      grp('New', 'b-new', d.new, true, 'r-new') +
+      grp('Updated', 'b-upd', d.updated, true, 'r-upd') +
+      grp('Already downloaded', 'b-same', d.unchanged, false);
+    $('dlbar').style.display = '';
+    $('diffout').querySelectorAll('input[type=checkbox]').forEach(b => b.onchange = updateSummary);
+    updateSummary();
+  }
+  function updateSummary() {
+    const sel = [...$('diffout').querySelectorAll('input:checked')];
+    const bytes = sel.reduce((a, b) => a + (+b.dataset.size), 0);
+    $('summary').textContent = `${sel.length} files · ${human(bytes)}`;
+    $('dlbtn').disabled = !sel.length;
+  }
+  $('dlbtn').onclick = async () => {
+    const ids = [...$('diffout').querySelectorAll('input:checked')].map(b => +b.dataset.fid);
+    const res = await fetch('/api/download', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({modlist: lastModlist, file_ids: ids})});
+    const d = await res.json();
+    if (d.error) { $('differr').textContent = d.error; return; }
+    showTab('progress');
+  };
+
+  /* ---- progress ---- */
+  const ICON = {
+    pending: ['·','c-dim',''], url: ['⇄','c-blue','pulse'], queued: ['…','c-blue',''],
+    downloading: ['↓','c-amber','pulse'], done: ['✓','c-green',''],
+    skipped: ['✓','c-dim',''], failed: ['✗','c-red',''],
+  };
+  const rows = new Map();
+  let prev = null, speed = 0;
+
+  function render(s) {
+    const list = $('list');
+    let done = 0, fail = 0, gotBytes = 0, totalBytes = 0;
+    if (s.files.length && rows.size && rows.size !== s.files.length) { list.innerHTML = ''; rows.clear(); }
+
+    s.files.forEach((f, i) => {
+      let r = rows.get(f.name);
+      if (!r) {
+        const el = document.createElement('div');
+        el.className = 'row';
+        el.innerHTML = `<span class="idx">${i + 1}</span><span class="ico"></span>` +
+          `<span class="name" title="${esc(f.name)}">${esc(f.name)}</span>` +
+          `<span class="size">${human(f.size)}</span><div class="mini"><div></div></div>`;
+        list.appendChild(el);
+        r = {el, ico: el.children[1], bar: el.querySelector('.mini div'), status: ''};
+        rows.set(f.name, r);
+      }
+      if (r.status !== f.status) {
+        r.status = f.status;
+        r.el.className = 'row ' + f.status;
+        const [ch, cls, anim] = ICON[f.status] || ICON.pending;
+        r.ico.textContent = ch;
+        r.ico.className = 'ico ' + cls + ' ' + anim;
+      }
+      const pct = f.size ? Math.min(100, 100 * f.got / f.size) : (f.status === 'done' ? 100 : 0);
+      r.bar.style.width = pct + '%';
+      totalBytes += f.size;
+      if (f.status === 'done') { done++; gotBytes += f.size; }
+      else if (f.status === 'failed') fail++;
+      else gotBytes += Math.min(f.got, f.size || f.got);
+    });
+
+    const total = s.files.length, finished = done + fail;
+    const linkPhase = /generating/i.test(s.phase);
+    const linksDone = s.files.filter(f => f.status !== 'pending' && f.status !== 'url').length;
+    $('phase').textContent = linkPhase ? `${s.phase} — ${linksDone}/${total}` : s.phase + (s.error ? ' — ' + s.error : '');
+    $('mainbar').style.width = total ? (100 * (linkPhase ? linksDone : finished) / total) + '%' : '0%';
+    $('s-done').textContent = done; $('s-total').textContent = total;
+    $('s-fail').textContent = fail; $('w-fail').style.display = fail ? '' : 'none';
+    $('s-bytes').textContent = human(gotBytes); $('s-totalbytes').textContent = human(totalBytes);
+
+    const now = performance.now();
+    if (prev) {
+      const dt = (now - prev.t) / 1000;
+      if (dt > 0.2) {
+        speed = speed ? speed * .7 + Math.max(0, (gotBytes - prev.b) / dt) * .3 : Math.max(0, (gotBytes - prev.b) / dt);
+        prev = {t: now, b: gotBytes};
+      }
+    } else prev = {t: now, b: gotBytes};
+    const rem = totalBytes - gotBytes;
+    $('s-speed').textContent = speed > 1 ? human(speed) + '/s' : '—';
+    $('s-eta').textContent = speed > 1 && rem > 0 ? new Date(1000 * rem / speed).toISOString().substr(11, 8) : '—';
+
+    $('runbadge').style.display = s.running ? '' : 'none';
+    if (s.running || wasRunning) loadLibOnFinish(s.running);
+  }
+
+  let wasRunning = false;
+  function loadLibOnFinish(running) {
+    if (wasRunning && !running) loadLib();  // refresh library when a job completes
+    wasRunning = running;
+  }
+
+  setInterval(async () => {
+    try { render(await (await fetch('/api/state')).json()); } catch {}
+  }, 700);
+</script>
+</body>
+</html>

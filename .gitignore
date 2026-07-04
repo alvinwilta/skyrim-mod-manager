@@ -1,0 +1,12 @@
+# local state / artifacts
+mods.db
+*.log
+
+# python
+.venv/
+__pycache__/
+
+# secrets/local config
+.env
+
+CLAUDE.md
