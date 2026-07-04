@@ -17,9 +17,17 @@ through your own logged-in browser session.
 ```
 
 - **Library** — browse/search everything in `mods.db`
+
+  ![Library tab](img/library.png)
+
 - **Import** — paste a collection URL (fetched via Nexus GraphQL) or a
   `modlist.json`; diffed against the library into new / updated / unchanged
+
+  ![Import tab](img/import.png)
+
 - **Progress** — live download dashboard
+
+  ![Progress tab](img/progress.png)
 
 ## CLI
 
