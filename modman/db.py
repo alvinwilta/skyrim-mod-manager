@@ -33,11 +33,19 @@ def init_db():
             )
             """
         )
+        conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
         cols = [r[1] for r in conn.execute("PRAGMA table_info(mods)")]
         if "status" not in cols:
             conn.execute("ALTER TABLE mods ADD COLUMN status TEXT DEFAULT 'ok'")
         if "mod_url" not in cols:
             conn.execute("ALTER TABLE mods ADD COLUMN mod_url TEXT")
+        for col, typ in (
+            ("sort_bucket", "INTEGER"), ("sort_rank", "INTEGER"), ("sort_flags", "TEXT"),
+            ("expected_bucket", "INTEGER"),
+        ):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE mods ADD COLUMN {col} {typ}")
+        conn.execute("UPDATE mods SET expected_bucket = sort_bucket WHERE expected_bucket IS NULL")
         conn.execute(
             "UPDATE mods SET mod_url = 'https://www.nexusmods.com/' || game || '/mods/' || mod_id WHERE mod_url IS NULL"
         )
@@ -69,7 +77,9 @@ def record_downloads(entries):
             m = entry["meta"]
             game = m.get("game") or GAME
             conn.execute(
-                "INSERT OR REPLACE INTO mods VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO mods (file_id, mod_id, mod_name, file_name,"
+                " mod_version, file_version, category, author, filename, size_bytes,"
+                " game, downloaded_at, status, mod_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     m["file_id"], m["mod_id"], m["mod_name"], m["file_name"],
                     m["mod_version"], m["file_version"], m["category"], m["author"],

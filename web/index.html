@@ -45,7 +45,7 @@
     border-radius: 6px; font: inherit; cursor: pointer;
   }
   .btn:disabled { opacity: .4; cursor: default; }
-  .btn.ghost { background: none; border: 1px solid var(--border); color: var(--dim); }
+  .btn.ghost { background: none; border: 1px solid var(--border); color: var(--text); }
 
   table { width: 100%; border-collapse: collapse; margin-top: 14px; }
   th { text-align: left; color: var(--dim); font-size: 11px; text-transform: uppercase;
@@ -66,6 +66,13 @@
   tr.r-upd:hover td { background: #2e2513; }
   tr.r-new td:first-child { border-left: 3px solid var(--green); border-radius: 4px 0 0 4px; }
   tr.r-upd td:first-child { border-left: 3px solid var(--amber); border-radius: 4px 0 0 4px; }
+  tr.r-wrong td { background: #2a1215; }
+  tr.r-wrong:hover td { background: #341a1d; }
+  tr.r-wrong td:first-child { border-left: 3px solid var(--red); border-radius: 4px 0 0 4px; }
+  tr.ordrow { cursor: grab; }
+  tr.dropmark td { border-top: 2px solid var(--blue); }
+  .posnum { color: var(--dim); text-decoration: none; }
+  .posnum:hover { color: var(--blue); text-decoration: underline; }
   .grp h2 { font-size: 14px; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
   .toolbar { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
   #summary { color: var(--dim); font-size: 13px; }
@@ -102,6 +109,7 @@
   <h1>Mod Manager</h1>
   <nav>
     <button data-tab="library" class="on">Library</button>
+    <button data-tab="order">Install Order</button>
     <button data-tab="import">Import</button>
     <button data-tab="progress">Progress</button>
   </nav>
@@ -129,6 +137,28 @@
       </tr></thead>
       <tbody id="libbody"></tbody>
     </table>
+  </section>
+
+  <section id="tab-order" class="tab">
+    <p class="dim" style="margin-bottom:8px">Loose MO2 left-panel install order (bottom overwrites above). Heuristic sort is instant; Claude refine re-ranks misfits and adds conflict notes (takes a few minutes, needs the <code>claude</code> CLI). Drag rows to reorder, or click a position number to move a mod there.</p>
+    <div class="toolbar" style="margin:0">
+      <button class="btn ghost" id="sortbtn">Sort (heuristic)</button>
+      <button class="btn" id="llmbtn">Refine with Claude</button>
+      <span style="width:1px;height:22px;background:var(--border)"></span>
+      <button class="btn ghost" id="checkbtn">Check order</button>
+      <span id="sortmsg" class="dim"></span>
+    </div>
+    <details style="margin-top:10px">
+      <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
+      <textarea id="promptin" style="height:240px;margin-top:8px"></textarea>
+      <div class="toolbar" style="margin-top:6px">
+        <button class="btn ghost" id="promptsave">Save prompt</button>
+        <button class="btn ghost" id="promptreset">Reset to default</button>
+        <span id="promptmsg" class="dim"></span>
+      </div>
+    </details>
+    <div id="conflictnotes"></div>
+    <div id="orderout"></div>
   </section>
 
   <section id="tab-import" class="tab">
@@ -182,6 +212,7 @@
   function showTab(t) {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.tab === t));
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.id === 'tab-' + t));
+    if (t === 'order') { loadOrder(); loadPrompt(); }
   }
   $('runbadge').onclick = () => showTab('progress');
 
@@ -267,6 +298,127 @@
   };
   $('q').oninput = () => { clearTimeout(libTimer); libTimer = setTimeout(loadLib, 250); };
   loadLib();
+
+  /* ---- install order ---- */
+  function flagBadge(f) {
+    const style = f.startsWith('CONFLICT') || f === 'WRONG SPOT' ? 'background:#3a1214;color:var(--red)'
+      : f === 'PATCH' ? 'background:#3a2b12;color:var(--amber)'
+      : 'background:#232833;color:var(--dim)';
+    return `<span class="badge" style="${style}" title="${esc(f)}">${esc(f.split(':')[0])}</span>`;
+  }
+  let wrongById = new Map();  // mod_id -> expected bucket, filled by Check order
+  let orderBuckets = {};
+  async function loadOrder() {
+    const d = await (await fetch('/api/installorder')).json();
+    orderBuckets = d.buckets;
+    let html = '', lastB, n = 0;
+    for (const m of d.mods) {
+      if (m.bucket !== lastB) {
+        html += `<tr><td colspan="3" style="border:none;padding:16px 0 4px">
+          <span class="badge b-same">${m.bucket ?? '?'} · ${esc(d.buckets[m.bucket] || 'Unsorted — hit Sort')}</span></td></tr>`;
+        lastB = m.bucket;
+      }
+      n++;
+      const wrong = wrongById.has(m.mod_id);
+      const hint = wrong ? `expected: ${wrongById.get(m.mod_id) ?? '?'} · ${orderBuckets[wrongById.get(m.mod_id)] || 'unsorted'}` : '';
+      html += `<tr class="ordrow${wrong ? ' r-wrong' : ''}" draggable="true" data-mid="${m.mod_id}" data-pos="${n}" ${wrong ? `title="${esc(hint)}"` : ''}>
+        <td class="num" style="width:44px"><a href="#" class="posnum" title="click to move">${n}</a></td>
+        <td>${m.installed ? '<span class="badge b-new">installed</span> ' : ''}${esc(m.mod_name)} ${(m.flags || []).map(flagBadge).join(' ')}${wrong ? ' ' + flagBadge('WRONG SPOT') : ''}</td>
+        <td class="hide-sm dim">${esc(m.category || '')}</td>
+      </tr>`;
+    }
+    $('orderout').innerHTML = html ? `<table><tbody id="orderbody">${html}</tbody></table>`
+      : '<p class="dim" style="margin-top:14px">Library empty.</p>';
+    bindOrderRows();
+    $('conflictnotes').innerHTML = d.notes.length
+      ? `<div class="grp"><h2><span class="badge" style="background:#3a1214;color:var(--red)">Conflict notes · ${d.notes.length}</span></h2>
+         <ul style="margin:6px 0 0 20px" class="dim">${d.notes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`
+      : '';
+  }
+
+  async function moveMod(mid, pos) {
+    const r = await (await fetch('/api/order/move', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mod_id: mid, position: pos})})).json();
+    if (r.error) { $('sortmsg').textContent = r.error; return; }
+    $('sortmsg').textContent = `moved to #${r.position}`;
+    if (wrongById.size) await checkOrder(true);
+    loadOrder();
+  }
+
+  let dragMid = null;
+  function bindOrderRows() {
+    document.querySelectorAll('.ordrow').forEach(tr => {
+      tr.addEventListener('dragstart', e => {
+        dragMid = +tr.dataset.mid;
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      tr.addEventListener('dragover', e => { e.preventDefault(); tr.classList.add('dropmark'); });
+      tr.addEventListener('dragleave', () => tr.classList.remove('dropmark'));
+      tr.addEventListener('drop', e => {
+        e.preventDefault();
+        tr.classList.remove('dropmark');
+        if (dragMid && dragMid !== +tr.dataset.mid) moveMod(dragMid, +tr.dataset.pos);
+        dragMid = null;
+      });
+      tr.querySelector('.posnum').onclick = e => {
+        e.preventDefault();
+        const pos = parseInt(prompt('Move to position:', tr.dataset.pos), 10);
+        if (pos) moveMod(+tr.dataset.mid, pos);
+      };
+    });
+  }
+
+  async function checkOrder(silent) {
+    const d = await (await fetch('/api/order/check')).json();
+    wrongById = new Map(d.mismatches.map(m => [m.mod_id, m.expected]));
+    if (!silent) {
+      $('sortmsg').textContent = wrongById.size
+        ? `${wrongById.size} mod(s) in the wrong spot — highlighted red`
+        : 'order matches the sorter — nothing misplaced';
+      loadOrder();
+    }
+  }
+  $('checkbtn').onclick = () => checkOrder(false);
+
+  let promptDefault = '', promptLoaded = false;
+  async function loadPrompt() {
+    if (promptLoaded) return;  // don't clobber unsaved edits on tab re-entry
+    const d = await (await fetch('/api/sort-prompt')).json();
+    $('promptin').value = d.prompt;
+    promptDefault = d.default;
+    promptLoaded = true;
+  }
+  $('promptsave').onclick = async () => {
+    const r = await (await fetch('/api/sort-prompt', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({prompt: $('promptin').value})})).json();
+    $('promptmsg').textContent = r.error || 'saved';
+  };
+  $('promptreset').onclick = async () => {
+    $('promptin').value = promptDefault;
+    await fetch('/api/sort-prompt', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({prompt: ''})});
+    $('promptmsg').textContent = 'reset to default';
+  };
+  async function runSort(llm) {
+    $('sortbtn').disabled = $('llmbtn').disabled = true;
+    $('sortmsg').textContent = 'sorting…';
+    try {
+      const r = await (await fetch('/api/sort', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({llm})})).json();
+      if (r.error) { $('sortmsg').textContent = r.error; return; }
+      await loadOrder();
+      if (!llm) { $('sortmsg').textContent = `${r.sorted} mods sorted`; return; }
+      while (true) {
+        const s = await (await fetch('/api/sort-state')).json();
+        $('sortmsg').textContent = s.phase + (s.error ? ' — ' + s.error : '');
+        if (!s.running) break;
+        await new Promise(res => setTimeout(res, 2000));
+      }
+      loadOrder();
+    } finally { $('sortbtn').disabled = $('llmbtn').disabled = false; }
+  }
+  $('sortbtn').onclick = () => runSort(false);
+  $('llmbtn').onclick = () => runSort(true);
 
   /* ---- import / diff ---- */
   let lastModlist = null;

@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-from modman import config, db, engine, mo2, nexus
+from modman import config, db, engine, mo2, nexus, sorter
 
 app = FastAPI(title="Mod Manager")
 db.init_db()
@@ -114,6 +114,59 @@ async def redownload(request: Request):
     if err:
         return JSONResponse({"error": err}, status_code=409)
     return {"started": len(file_ids)}
+
+
+@app.get("/api/installorder")
+def installorder():
+    return sorter.load_order()
+
+
+@app.post("/api/sort")
+async def sort_mods(request: Request):
+    body = await request.json()
+    n = sorter.heuristic_sort()
+    if (body or {}).get("llm"):
+        err = sorter.start_llm_refine()
+        if err:
+            return JSONResponse({"error": err}, status_code=409)
+    return {"sorted": n, "llm": bool((body or {}).get("llm"))}
+
+
+@app.get("/api/sort-state")
+def sort_state():
+    return sorter.state
+
+
+@app.post("/api/order/move")
+async def order_move(request: Request):
+    body = await request.json()
+    try:
+        mod_id, position = int(body["mod_id"]), int(body["position"])
+    except (KeyError, TypeError, ValueError):
+        return JSONResponse({"error": "expected {mod_id, position}"}, status_code=400)
+    err = sorter.move(mod_id, position)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    return {"moved": mod_id, "position": position}
+
+
+@app.get("/api/order/check")
+def order_check():
+    return sorter.check_order()
+
+
+@app.get("/api/sort-prompt")
+def get_sort_prompt():
+    return {"prompt": sorter.get_prompt(), "default": sorter.DEFAULT_PROMPT}
+
+
+@app.post("/api/sort-prompt")
+async def set_sort_prompt(request: Request):
+    body = await request.json()
+    err = sorter.set_prompt((body or {}).get("prompt", ""))
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    return {"saved": True}
 
 
 if __name__ == "__main__":
