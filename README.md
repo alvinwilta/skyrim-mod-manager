@@ -23,11 +23,24 @@ through your own logged-in browser session.
 
 - **Install Order** — loose MO2 left-panel install order for the library.
   Instant heuristic sort (Nexus category + name keywords → the STEP 2.3
-  guide's 20 groups, Extenders → Post-Processing), plus
-  an optional "Refine with Claude" pass (`claude -p`, uses your Claude Code
-  login) that re-ranks misfits, tags patches and lists conflicts. Drag rows
-  to reorder manually; click a position number to jump a mod there. Mods MO2
-  reports as installed are badged.
+  guide's 20 groups, Extenders → Post-Processing), plus an optional "Refine
+  with Claude" pass (`claude -p`, uses your Claude Code login) that re-ranks
+  misfits, marks what it moved (amber `MOVED from → to` badge) and lists
+  conflicts (`CONFLICT ↔ other mod` badges + a notes block). A header badge
+  shows while the refine runs; the same button turns into a red "Force Stop
+  Claude" to kill it. Reordering:
+  - drag a row, or click its position number to jump it to a place
+    (everything else shifts); dragging auto-scrolls near the screen edges
+  - Ctrl/Cmd+click or Shift+click selects multiple rows, then drag (or click
+    a position number) to move the whole block
+  - plain click on a row locks 🔒 / unlocks it — locked mods are pinned to
+    their position and skipped entirely by both sorts and the Claude pass
+  - "Check order" highlights mods whose group no longer matches the last
+    sorter opinion (e.g. after manual moves)
+
+  Mods MO2 reports as installed are badged; the Mod ID column links to the
+  Nexus page. Everything is persisted per mod in `mods.db` (`mod_sort`
+  table), so order, locks and flags survive restarts and file redownloads.
 
   ![Install Order tab](img/order.png)
 
@@ -46,9 +59,8 @@ through your own logged-in browser session.
 The "Refine with Claude" pass sends the prompt below (the built-in default in
 `modman/sorter.py`, so a fresh installation works out of the box). It is
 editable in the Install Order tab — a custom version is stored in the `meta`
-table and an empty save resets to this default. `{{BUCKETS}}` is replaced with
-the numbered group list and `{{MODS}}` with one `mod_id|name|nexus
-category|heuristic bucket` line per mod.
+table and an empty save resets to this default. Locked mods are excluded from
+the prompt and spliced back at their pinned position afterwards.
 
 ```
 You are a Skyrim SE mod install order sorter for the MO2 left panel
@@ -108,10 +120,11 @@ the response ~3x smaller, which is what dominates the refine runtime;
 ```
 modman/
   config.py   game/paths/constants
-  db.py       sqlite library (mods.db)
+  db.py       sqlite library (mods.db: mods = files, mod_sort = install order)
   nexus.py    GraphQL collection fetch, CDP link generation, file transfer
   engine.py   diff + download pipeline, progress state
-  sorter.py   install-order sort (heuristic buckets + claude -p refine)
+  mo2.py      MO2 .meta interop (installed state)
+  sorter.py   install-order sort (heuristic buckets + claude -p refine, locks)
 webapp.py     FastAPI server + JSON API
 cli.py        command-line downloader
 browser.sh    launches the dedicated Chromium (profile + debug port)
