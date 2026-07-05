@@ -438,7 +438,7 @@
       shown++;
       const wrong = wrongById.has(m.mod_id);
       const hint = wrong ? `expected: ${wrongById.get(m.mod_id) ?? '?'} · ${orderBuckets[wrongById.get(m.mod_id)] || 'unsorted'}` : '';
-      const flags = (m.flags || []).filter(f => f !== 'PATCH');
+      const flags = m.flags || [];
       const moved = flags.some(f => f.startsWith('MOVED'));
       html += `<tr class="ordrow${wrong ? ' r-wrong' : moved ? ' r-upd' : m.locked ? ' r-locked' : ''}" draggable="${!refining}" data-mid="${m.mod_id}" data-pos="${n}" ${wrong ? `title="${esc(hint)}"` : ''}>
         <td class="num" style="width:70px;white-space:nowrap"><button class="lockbtn${m.locked ? ' on' : ''}" data-locked="${m.locked ? 1 : 0}" title="${m.locked ? 'pinned — sorts will not move this; click to unpin' : 'pin at this position'}">${m.locked ? '🔒' : '🔓'}</button>${refining ? `<span class="dim">${n}</span>` : `<a href="#" class="posnum" title="click to move">${n}</a>`}</td>

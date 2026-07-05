@@ -106,7 +106,7 @@ def apply_corrections(conn, corrections):
         bucket = item.get("b")
         if bucket is None:
             continue
-        flags = [f for f in (item.get("f") or []) if f != "PATCH"]
+        flags = item.get("f") or []
         cur = conn.execute("SELECT bucket FROM mod_sort WHERE mod_id = ?", (mod_id,)).fetchone()
         if cur is None or cur["bucket"] != bucket:
             _place_in_bucket(conn, mod_id, bucket)

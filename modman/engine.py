@@ -69,7 +69,6 @@ def diff_modlist(modfiles):
         elif mod["modId"] in by_mod:
             old = by_mod[mod["modId"]]
             item["old_version"] = old["file_version"]
-            item["old_name"] = old["file_name"]
             out["updated"].append(item)
         else:
             out["new"].append(item)

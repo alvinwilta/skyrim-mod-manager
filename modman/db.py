@@ -5,6 +5,12 @@ import time
 
 from .config import DB_PATH, DOWNLOADS_DIR, GAME
 
+# collection_mod_rules types that actually imply an order and get applied by
+# modman/precedence.py's enforce() pass -- conflicts/recommends/provides don't.
+# Shared so list_collections()'s rule_count can't drift from what "Apply
+# collection order rules" actually acts on.
+ORDER_RULE_TYPES = ("before", "after", "requires")
+
 
 def connect():
     conn = sqlite3.connect(DB_PATH)
@@ -109,8 +115,11 @@ def init_db():
         # from a collection's own manifest -- see modman/collection_rules.py
         conn.execute(
             "CREATE TABLE IF NOT EXISTS collection_mod_rules (collection_id INTEGER NOT NULL,"
-            " type TEXT NOT NULL, source_mod_id INTEGER, reference_mod_id INTEGER, notes TEXT)"
+            " type TEXT NOT NULL, source_mod_id INTEGER, reference_mod_id INTEGER)"
         )
+        cols_cmr = [r[1] for r in conn.execute("PRAGMA table_info(collection_mod_rules)")]
+        if "notes" in cols_cmr:
+            conn.execute("ALTER TABLE collection_mod_rules DROP COLUMN notes")  # never written, never read
         # migrate sort state that used to live denormalized on the file rows
         if "sort_bucket" in cols:
             conn.execute(
@@ -173,9 +182,18 @@ def record_downloads(entries):
             m = entry["meta"]
             game = m.get("game") or GAME
             conn.execute(
-                "INSERT OR REPLACE INTO mods (file_id, mod_id, mod_name, file_name,"
+                # ON CONFLICT UPDATE (not INSERT OR REPLACE) so columns omitted here --
+                # files_scanned in particular -- keep their existing value on a
+                # redownload instead of being reset to their column default
+                "INSERT INTO mods (file_id, mod_id, mod_name, file_name,"
                 " mod_version, file_version, category, author, filename, size_bytes,"
-                " game, downloaded_at, status, mod_url, requirements_alert) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " game, downloaded_at, status, mod_url, requirements_alert) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(file_id) DO UPDATE SET mod_id=excluded.mod_id, mod_name=excluded.mod_name,"
+                " file_name=excluded.file_name, mod_version=excluded.mod_version,"
+                " file_version=excluded.file_version, category=excluded.category, author=excluded.author,"
+                " filename=excluded.filename, size_bytes=excluded.size_bytes, game=excluded.game,"
+                " downloaded_at=excluded.downloaded_at, status=excluded.status, mod_url=excluded.mod_url,"
+                " requirements_alert=excluded.requirements_alert",
                 (
                     m["file_id"], m["mod_id"], m["mod_name"], m["file_name"],
                     m["mod_version"], m["file_version"], m["category"], m["author"],
@@ -228,16 +246,18 @@ def list_collections():
     `enabled` controls whether this collection's rules feed the precedence
     enforce pass (see modman/precedence.py) -- toggling it off doesn't touch
     provenance tracking, just whether its ordering rules are applied."""
+    order_placeholders = ",".join("?" * len(ORDER_RULE_TYPES))
     with connect() as conn:
         rows = conn.execute(
             "SELECT c.id, c.slug, c.name, c.revision_number, c.enabled,"
             " COUNT(DISTINCT mc.file_id) AS mod_count,"
             " COUNT(DISTINCT CASE WHEN m.status = 'ok' THEN mc.file_id END) AS downloaded_count,"
-            " COUNT(DISTINCT r.rowid) AS rule_count"
+            f" COUNT(DISTINCT CASE WHEN r.type IN ({order_placeholders}) THEN r.rowid END) AS rule_count"
             " FROM collections c LEFT JOIN mod_collections mc ON mc.collection_id = c.id"
             " LEFT JOIN mods m ON m.file_id = mc.file_id"
             " LEFT JOIN collection_mod_rules r ON r.collection_id = c.id"
-            " GROUP BY c.id ORDER BY c.name COLLATE NOCASE"
+            " GROUP BY c.id ORDER BY c.name COLLATE NOCASE",
+            ORDER_RULE_TYPES,
         ).fetchall()
     return [dict(r) for r in rows]
 

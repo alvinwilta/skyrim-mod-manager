@@ -19,9 +19,6 @@ log = logging.getLogger(__name__)
 state = {"phase": "idle", "running": False, "error": None}
 _lock = threading.Lock()
 
-# conflicts/recommends/provides don't imply an order, only before/after/requires do
-_ORDER_TYPES = ("before", "after", "requires")
-
 
 def _edges():
     """{mod_id: set(mod_ids that must come before it)}, built from every
@@ -32,7 +29,8 @@ def _edges():
         rows = conn.execute(
             "SELECT r.type, r.source_mod_id, r.reference_mod_id FROM collection_mod_rules r"
             " JOIN collections c ON c.id = r.collection_id"
-            f" WHERE c.enabled = 1 AND r.type IN ({','.join('?' * len(_ORDER_TYPES))})", _ORDER_TYPES
+            f" WHERE c.enabled = 1 AND r.type IN ({','.join('?' * len(db.ORDER_RULE_TYPES))})",
+            db.ORDER_RULE_TYPES,
         ).fetchall()
     must_precede = {}
     for r in rows:
