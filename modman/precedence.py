@@ -25,11 +25,14 @@ _ORDER_TYPES = ("before", "after", "requires")
 
 def _edges():
     """{mod_id: set(mod_ids that must come before it)}, built from every
-    synced collection's rules combined."""
+    *enabled* collection's rules combined -- toggling a collection off in
+    the Collections tab excludes its rules here without touching its
+    provenance links or stored rules."""
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT type, source_mod_id, reference_mod_id FROM collection_mod_rules"
-            f" WHERE type IN ({','.join('?' * len(_ORDER_TYPES))})", _ORDER_TYPES
+            "SELECT r.type, r.source_mod_id, r.reference_mod_id FROM collection_mod_rules r"
+            " JOIN collections c ON c.id = r.collection_id"
+            f" WHERE c.enabled = 1 AND r.type IN ({','.join('?' * len(_ORDER_TYPES))})", _ORDER_TYPES
         ).fetchall()
     must_precede = {}
     for r in rows:

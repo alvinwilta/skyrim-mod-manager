@@ -147,6 +147,27 @@ def installorder():
     return order_store.load_order()
 
 
+@app.get("/api/collections")
+def list_collections():
+    return {"collections": db.list_collections()}
+
+
+@app.get("/api/collections/{collection_id}/mods")
+def collection_mods(collection_id: int):
+    return {"mods": db.collection_mods(collection_id), "buckets": order_store.BUCKETS}
+
+
+@app.post("/api/collections/{collection_id}/enabled")
+async def set_collection_enabled(collection_id: int, request: Request):
+    body = await request.json()
+    try:
+        enabled = bool(body["enabled"])
+    except (KeyError, TypeError):
+        return JSONResponse({"error": "expected {enabled}"}, status_code=400)
+    db.set_collection_enabled(collection_id, enabled)
+    return {"id": collection_id, "enabled": enabled}
+
+
 @app.post("/api/scan-conflicts")
 def scan_conflicts():
     err = conflicts.start_scan()

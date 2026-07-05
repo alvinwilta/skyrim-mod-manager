@@ -91,8 +91,11 @@ def init_db():
         conn.execute(
             "CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY AUTOINCREMENT,"
             " slug TEXT NOT NULL UNIQUE, nexus_collection_id INTEGER, revision_number INTEGER,"
-            " name TEXT, updated_at TEXT)"
+            " name TEXT, updated_at TEXT, enabled INTEGER NOT NULL DEFAULT 1)"
         )
+        cols_coll = [r[1] for r in conn.execute("PRAGMA table_info(collections)")]
+        if "enabled" not in cols_coll:
+            conn.execute("ALTER TABLE collections ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mod_collections (file_id INTEGER NOT NULL,"
             " collection_id INTEGER NOT NULL, PRIMARY KEY (file_id, collection_id))"
@@ -213,3 +216,48 @@ def link_collection_files(collection_id, file_ids):
             [(fid, collection_id) for fid in have],
         )
         return len(have)
+
+
+def list_collections():
+    """Every imported collection with how many of its mods are in the
+    library (regardless of file status -- 'ok', 'missing', etc). `enabled`
+    controls whether this collection's rules feed the precedence enforce
+    pass (see modman/precedence.py) -- toggling it off doesn't touch
+    provenance tracking, just whether its ordering rules are applied."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT c.id, c.slug, c.name, c.revision_number, c.enabled,"
+            " COUNT(DISTINCT mc.file_id) AS mod_count,"
+            " COUNT(DISTINCT r.rowid) AS rule_count"
+            " FROM collections c LEFT JOIN mod_collections mc ON mc.collection_id = c.id"
+            " LEFT JOIN collection_mod_rules r ON r.collection_id = c.id"
+            " GROUP BY c.id ORDER BY c.name COLLATE NOCASE"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_collection_enabled(collection_id, enabled):
+    with connect() as conn:
+        conn.execute("UPDATE collections SET enabled = ? WHERE id = ?", (1 if enabled else 0, collection_id))
+
+
+def collection_mods(collection_id):
+    """This collection's mods, in the current global install order (same
+    rank the Install Order tab uses) -- i.e. "what load order will this
+    collection's mods actually end up in."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT m.mod_id, m.mod_name, m.mod_url, s.bucket, s.rank, s.locked"
+            " FROM mod_collections mc JOIN mods m ON m.file_id = mc.file_id AND m.status = 'ok'"
+            " LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
+            " WHERE mc.collection_id = ? GROUP BY m.mod_id"
+            " ORDER BY s.rank IS NULL, s.rank, s.bucket, m.mod_name COLLATE NOCASE",
+            (collection_id,),
+        ).fetchall()
+    return [
+        {
+            "mod_id": r["mod_id"], "mod_name": r["mod_name"], "mod_url": r["mod_url"],
+            "bucket": r["bucket"], "locked": bool(r["locked"]),
+        }
+        for r in rows
+    ]
