@@ -16,7 +16,7 @@ from . import buckets, conflicts, db, nexus, order_store
 
 log = logging.getLogger(__name__)
 
-state = {"phase": "idle", "running": False, "error": None}
+state = {"phase": "idle", "running": False, "error": None, "job": None}  # job: 'bulk' | 'desc'
 _lock = threading.Lock()
 _proc = None  # running claude subprocess, for the force-stop endpoint
 MODELS = ("haiku", "sonnet", "opus")
@@ -254,7 +254,7 @@ def start_llm_refine(model="haiku"):
 
     def runner():
         try:
-            state.update({"error": None, "running": True})
+            state.update({"error": None, "running": True, "job": "bulk"})
             _refine_job(model)
         except Exception as e:
             state.update({"error": str(e), "phase": "Error"})
@@ -327,7 +327,7 @@ def start_desc_refine(model="haiku"):
 
     def runner():
         try:
-            state.update({"error": None, "running": True})
+            state.update({"error": None, "running": True, "job": "desc"})
             _desc_refine_job(model)
         except Exception as e:
             state.update({"error": str(e), "phase": "Error"})

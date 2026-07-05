@@ -43,5 +43,11 @@ NEXUS_API_KEY = _env.get("NEXUS_API_KEY") or os.environ.get("NEXUS_API_KEY")
 DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads", "")
 MODS_DIR = os.path.join(BASE_DIR, "mods", "")
 
-DB_PATH = os.path.join(ROOT_DIR, "mods.db")
+# Override for test isolation (MODMAN_DB_PATH env var) -- must be a real env
+# var read at import time, not a post-import monkeypatch: modman/__init__.py
+# unconditionally imports db, which binds its own DB_PATH from this module at
+# that moment, so anything that patches config.DB_PATH afterward is too late
+# in the same process. A fresh subprocess with this env var set is the only
+# reliable way to point a test server at a throwaway db copy.
+DB_PATH = os.environ.get("MODMAN_DB_PATH") or os.path.join(ROOT_DIR, "mods.db")
 WEB_DIR = os.path.join(ROOT_DIR, "web")

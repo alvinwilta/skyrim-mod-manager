@@ -259,7 +259,10 @@ def list_collections():
             " GROUP BY c.id ORDER BY c.name COLLATE NOCASE",
             ORDER_RULE_TYPES,
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+    for r in out:
+        r["url"] = f"https://www.nexusmods.com/games/{GAME}/collections/{r['slug']}"
+    return out
 
 
 def set_collection_enabled(collection_id, enabled):

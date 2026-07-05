@@ -150,6 +150,7 @@
     <button data-tab="collections">Collections</button>
     <button data-tab="import">Import</button>
     <button data-tab="progress">Progress</button>
+    <button data-tab="guide">Guide</button>
   </nav>
   <span id="badges">
     <span id="runbadge">downloading…</span>
@@ -202,27 +203,39 @@
         <button class="btn ghost" id="enforcebtn" title="Repositions mods that violate a curator-authored before/after/requires rule from an imported collection's own manifest — not a guess">Apply collection order rules</button>
       </div>
 
-      <div class="subtabs" style="margin-top:10px">
+      <details style="margin-top:10px">
+        <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
+        <textarea id="promptin" style="height:220px;margin-top:8px"></textarea>
+        <div class="toolbar" style="margin-top:6px">
+          <button class="btn ghost" id="promptsave">Save prompt</button>
+          <button class="btn ghost" id="promptreset">Reset to default</button>
+          <span id="promptmsg" class="dim"></span>
+        </div>
+      </details>
+
+      <div id="sortmsg" class="dim" style="margin-top:8px"></div>
+
+      <div class="subtabs" style="margin-top:6px">
         <nav class="subtabnav">
-          <button data-subtab="sort" class="on">Refine <span id="cnt-sort" class="dim"></span></button>
+          <button data-subtab="heuristic" class="on">Sort</button>
+          <button data-subtab="bulk">Refine with Claude <span id="cnt-notes" class="dim"></span></button>
+          <button data-subtab="desc">Refine uncertain</button>
           <button data-subtab="rules">Collection rules</button>
         </nav>
         <div class="subtabpanel">
-          <div id="subpanel-sort" class="subpanel on">
-            <div id="sortmsg" class="dim"></div>
+          <div id="subpanel-heuristic" class="subpanel on">
+            <div id="heuristiclog" class="dim">Not run yet this session.</div>
+          </div>
+          <div id="subpanel-bulk" class="subpanel">
+            <div id="bulkmsg" class="dim">Not run yet this session.</div>
             <div id="conflictnotes"></div>
-            <details style="margin-top:6px">
-              <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
-              <textarea id="promptin" style="height:220px;margin-top:8px"></textarea>
-              <div class="toolbar" style="margin-top:6px">
-                <button class="btn ghost" id="promptsave">Save prompt</button>
-                <button class="btn ghost" id="promptreset">Reset to default</button>
-                <span id="promptmsg" class="dim"></span>
-              </div>
-            </details>
+          </div>
+          <div id="subpanel-desc" class="subpanel">
+            <div id="descmsg" class="dim">Not run yet this session.</div>
           </div>
           <div id="subpanel-rules" class="subpanel">
             <div id="enforcemsg" class="dim"></div>
+            <div id="enforcelog"></div>
           </div>
         </div>
       </div>
@@ -309,6 +322,77 @@
     <div id="list" style="margin-top:14px"></div>
   </section>
 
+  <section id="tab-guide" class="tab">
+    <p class="dim" style="margin-bottom:8px">What each tab does, and — for Install Order — how the sorting actually works.</p>
+
+    <div class="grp">
+      <h2>Library</h2>
+      <ul style="margin:0 0 0 20px">
+        <li>Search by name, author, or category.</li>
+        <li>Select rows to <b>Validate</b> (re-checks file size against Nexus, doesn't redownload), <b>Redownload</b>, or <b>Delete</b> (soft-delete — keeps the record, marked <span class="dim">deleted</span>, so it doesn't resurface as "new" on the next import unless you redownload it).</li>
+        <li><b>Show deleted</b> reveals soft-deleted rows again.</li>
+        <li><b>Source</b> column: which collection(s) a mod came from, or <span class="dim">manual</span> if you added it yourself. More than 2 collections collapses to two badges + a <span class="dim">+N</span> badge — hover it for the rest.</li>
+      </ul>
+    </div>
+
+    <div class="grp">
+      <h2>Install Order</h2>
+      <p class="dim">MO2 left-panel <i>install</i> order — which mod's files overwrite which on disk. Not plugin load order (that's LOOT's job). Bottom of the list wins on a shared file.</p>
+
+      <h3 style="font-size:13px;margin-top:14px">Ordering row</h3>
+      <ul style="margin:0 0 0 20px">
+        <li><b>Sort (heuristic)</b> — instant, no AI. Classifies every <i>unlocked</i> mod into one of 20 STEP-guide groups (Extenders, Resources, Foundation, ... Post-Processing) by matching its name against a keyword list first, falling back to its Nexus category, then sorts alphabetically within each group. Result shows in the <b>Sort</b> log tab below.</li>
+        <li><b>Refine with Claude</b> — sends every unlocked mod (under its current group heading) plus any <i>real</i> scanned file conflicts to Claude, and asks for corrections only: a mod not mentioned in the reply stays exactly where it was (sparse diff, not a full reshuffle). If Claude tries to "correct" more than 40% of what it's shown, the whole reply is rejected as a safety valve. Also collects any conflict notes Claude calls out. Result in the <b>Refine with Claude</b> tab.</li>
+        <li><b>Refine uncertain</b> — a second, smaller pass: only re-checks mods still flagged <span class="dim">UNCERTAIN</span> by the pass above, this time with each mod's real Nexus description fetched as extra signal. Same sparse-correction mechanism. Result in the <b>Refine uncertain</b> tab.</li>
+        <li><b>Apply collection order rules</b> — repositions only mods that violate a curator-authored before/after/requires rule pulled from an imported collection's own manifest (real data — see Collections below), reusing the same move as a manual drag. Result in the <b>Collection rules</b> tab, including any locked-mod skips or conflicting-rule drops that would otherwise be invisible.</li>
+        <li><b>Model</b> dropdown picks which Claude model (Haiku/Sonnet/Opus) the two Claude buttons use.</li>
+        <li><b>Claude prompt</b> (collapsible) — the exact prompt <b>Refine with Claude</b> sends; editable and resettable to default.</li>
+      </ul>
+
+      <h3 style="font-size:13px;margin-top:14px">Analysis row — read-only, informational, changes nothing by itself</h3>
+      <ul style="margin:0 0 0 20px">
+        <li><b>Scan archives</b> — lists every downloaded archive's actual file paths (via <code>7z</code>) and finds genuine path overlaps between mods, not a guess. Result in the <b>Conflicts</b> tab; overwrites from Foundation/Patches groups are collapsed separately since those groups exist specifically to be broadly overwritten.</li>
+        <li><b>Sync requirements</b> — pulls each mod's real Nexus "requires" data and flags anything required but missing from your library. Result in the <b>Requirements</b> tab.</li>
+        <li><b>Check for drift</b> — flags mods whose current group disagrees with the last sorter's opinion (usually means a manual drag moved it out of where Sort/Refine put it); highlights those rows red in the table. Result in the <b>Check for drift</b> tab.</li>
+      </ul>
+
+      <h3 style="font-size:13px;margin-top:14px">When signals disagree</h3>
+      <p class="dim" style="margin:0 0 0 20px">Locked position &gt; manual drag/move &gt; collection curated rule &gt; Claude correction &gt; heuristic guess. Higher-priority sources are never overwritten by lower ones.</p>
+
+      <h3 style="font-size:13px;margin-top:14px">The table itself</h3>
+      <ul style="margin:0 0 0 20px">
+        <li>Drag a row to reorder; ctrl/shift+click to select several and drag the block together.</li>
+        <li>Click the position number to type an exact position instead.</li>
+        <li>🔒 lock icon pins a mod — no sort/refine/collection-rule pass will ever move it.</li>
+        <li>Filter by category or group.</li>
+        <li><span class="badge b-bsa">BSA-only</span> — archive has no loose files, just packed BSA/BA2 + a plugin; its exact position barely matters for real file conflicts.</li>
+      </ul>
+    </div>
+
+    <div class="grp">
+      <h2>Collections</h2>
+      <ul style="margin:0 0 0 20px">
+        <li>Every collection you've fetched from Nexus, whether or not you've downloaded everything it lists yet — the count shown is <span class="dim">downloaded / total</span>.</li>
+        <li>The enable checkbox excludes that collection's curated order rules from <b>Apply collection order rules</b> without deleting anything — its provenance links and mod list stay intact either way.</li>
+        <li><b>view order</b> expands that collection's mods in your actual current install order; dimmed rows aren't downloaded yet.</li>
+      </ul>
+    </div>
+
+    <div class="grp">
+      <h2>Import</h2>
+      <ul style="margin:0 0 0 20px">
+        <li>Paste a collection URL or a single mod page URL and click <b>Fetch from Nexus</b> — diffs it against your library (new / updated / unchanged). If it's a collection, its full modlist and curator rules are registered immediately (Collections tab), whether or not you end up downloading anything.</li>
+        <li>Or paste/upload a <code>modlist.json</code> directly and <b>Diff against DB</b>.</li>
+        <li>Select which new/updated files you actually want, then <b>Download selected</b>.</li>
+      </ul>
+    </div>
+
+    <div class="grp">
+      <h2>Progress</h2>
+      <p class="dim" style="margin:0 0 0 20px">Live status of the current download job — phase, per-file progress, transfer speed, ETA, and any failures.</p>
+    </div>
+  </section>
+
 </main>
 <script>
   const $ = id => document.getElementById(id);
@@ -326,7 +410,7 @@
   function showTab(t) {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.tab === t));
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.id === 'tab-' + t));
-    if (t === 'order') { resetSubtabs(); loadOrder(); loadPrompt(); loadConflicts(); loadMissingRequirements(); }
+    if (t === 'order') { resetSubtabs(); loadOrder(); loadPrompt(); loadConflicts(); loadMissingRequirements(); loadEnforceState(); loadRefineState(); }
     if (t === 'collections') { loadCollections(); }
   }
   $('runbadge').onclick = () => showTab('progress');
@@ -358,6 +442,16 @@
   /* ---- library ---- */
   let libTimer;
   let showDeleted = false;
+  function sourceBadges(collections) {
+    if (!collections.length) return 'manual';
+    const shown = collections.slice(0, 2), rest = collections.slice(2);
+    let html = shown.map(c => `<span class="badge b-same" title="${esc(c.slug)}">${esc(c.name || c.slug)}</span>`).join(' ');
+    if (rest.length) {
+      const restNames = rest.map(c => esc(c.name || c.slug)).join(', ');
+      html += ` <span class="badge b-same" title="${restNames}">+${rest.length}</span>`;
+    }
+    return html;
+  }
   async function loadLib() {
     const q = $('q').value.trim();
     let rows = await (await fetch('/api/mods' + (q ? '?q=' + encodeURIComponent(q) : ''))).json();
@@ -372,9 +466,7 @@
       <td class="num">${esc(r.file_version)}</td>
       <td class="hide-sm dim">${esc(r.author)}</td>
       <td class="hide-sm dim">${esc(r.category)}</td>
-      <td class="hide-sm dim">${(r.collections || []).length
-        ? r.collections.map(c => `<span class="badge b-same" title="${esc(c.slug)}">${esc(c.name || c.slug)}</span>`).join(' ')
-        : 'manual'}</td>
+      <td class="hide-sm dim">${sourceBadges(r.collections || [])}</td>
       <td class="num dim">${human(r.size_bytes)}</td>
       <td class="num hide-sm dim" title="${esc(r.downloaded_at)}">${esc((r.downloaded_at || '').slice(0, 16))}</td>
     </tr>`).join('');
@@ -536,12 +628,12 @@
       ? `<div class="grp"><h2><span class="badge" style="background:#3a1214;color:var(--red)">Conflict notes · ${d.notes.length}</span></h2>
          <ul style="margin:6px 0 0 20px" class="dim">${d.notes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`
       : '';
-    $('cnt-sort').textContent = d.notes.length ? `· ${d.notes.length}` : '';
+    $('cnt-notes').textContent = d.notes.length ? `· ${d.notes.length}` : '';
   }
 
   function setRefining(on) {
     refining = on;
-    $('sortbtn').disabled = $('checkbtn').disabled = $('modelsel').disabled = $('descbtn').disabled = on;
+    $('sortbtn').disabled = $('checkbtn').disabled = $('modelsel').disabled = $('descbtn').disabled = $('enforcebtn').disabled = on;
     const b = $('llmbtn');
     b.textContent = on ? 'Force Stop Claude' : 'Refine with Claude';
     b.style.background = on ? '#7f1d1d' : '';
@@ -553,13 +645,20 @@
     watching = true;
     while (true) {
       const s = await (await fetch('/api/sort-state')).json();
-      $('sortmsg').textContent = s.phase + (s.error ? ' — ' + s.error : '');
+      const msg = s.phase + (s.error ? ' — ' + s.error : '');
+      $('sortmsg').textContent = msg;
+      $(s.job === 'desc' ? 'descmsg' : 'bulkmsg').textContent = msg;
       if (!s.running) break;
       await new Promise(res => setTimeout(res, 2000));
     }
     watching = false;
     setRefining(false);
     loadOrder();
+  }
+  async function loadRefineState() {
+    const s = await (await fetch('/api/sort-state')).json();
+    if (s.phase === 'idle' || s.running) return;  // running case: loadOrder()'s setRefining(true) already resumes watchRefine
+    $(s.job === 'desc' ? 'descmsg' : 'bulkmsg').textContent = s.phase + (s.error ? ' — ' + s.error : '');
   }
 
   async function moveMod(mids, pos) {
@@ -696,24 +795,31 @@
   };
   async function runSort(llm) {
     $('sortmsg').textContent = 'sorting…';
+    if (llm) $('bulkmsg').textContent = 'sorting…';
     const r = await (await fetch('/api/sort', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({llm, model: $('modelsel').value})})).json();
-    if (r.error) { $('sortmsg').textContent = r.error; return; }
+    if (r.error) { $('sortmsg').textContent = r.error; if (llm) $('bulkmsg').textContent = r.error; return; }
     if (llm) setRefining(true);  // watchRefine unlocks + reloads when done
-    else $('sortmsg').textContent = `${r.sorted} mods sorted`;
+    else {
+      $('sortmsg').textContent = '';
+      $('heuristiclog').textContent = `${r.sorted} mods sorted (last run)`;
+    }
     loadOrder();
   }
   $('sortbtn').onclick = () => runSort(false);
   $('llmbtn').onclick = async () => {
     if (!refining) return runSort(true);
     const r = await (await fetch('/api/sort-stop', {method: 'POST'})).json();
-    $('sortmsg').textContent = r.error || 'stopping…';  // watcher unlocks on state flip
+    const msg = r.error || 'stopping…';
+    $('sortmsg').textContent = msg;
+    $('bulkmsg').textContent = msg;
   };
   $('descbtn').onclick = async () => {
     $('sortmsg').textContent = 'checking uncertain mods…';
+    $('descmsg').textContent = 'checking uncertain mods…';
     const r = await (await fetch('/api/sort-desc', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({model: $('modelsel').value})})).json();
-    if (r.error) { $('sortmsg').textContent = r.error; return; }
+    if (r.error) { $('sortmsg').textContent = r.error; $('descmsg').textContent = r.error; return; }
     setRefining(true);  // watchRefine unlocks + reloads when done
   };
 
@@ -793,6 +899,16 @@
   };
 
   /* ---- collection order rules (curator before/after/requires, real data) ---- */
+  function renderEnforceLog(entries) {
+    $('enforcelog').innerHTML = entries.length
+      ? `<ul style="margin:6px 0 0 20px" class="dim">${entries.map(e => `<li>${esc(e)}</li>`).join('')}</ul>`
+      : '';
+  }
+  async function loadEnforceState() {
+    const s = await (await fetch('/api/enforce-state')).json();
+    $('enforcemsg').textContent = s.phase === 'idle' ? '' : s.phase + (s.error ? ' — ' + s.error : '');
+    renderEnforceLog(s.log || []);
+  }
   let enforcing = false;
   async function watchEnforce() {
     if (enforcing) return;
@@ -800,6 +916,7 @@
     while (true) {
       const s = await (await fetch('/api/enforce-state')).json();
       $('enforcemsg').textContent = s.phase + (s.error ? ' — ' + s.error : '');
+      renderEnforceLog(s.log || []);
       if (!s.running) break;
       await new Promise(res => setTimeout(res, 1000));
     }

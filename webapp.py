@@ -1,10 +1,12 @@
+import asyncio
+import json
 import logging
 import os
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from modman import collection_rules, config, conflicts, db, engine, llm_refine, mo2, nexus, order_store, precedence, requirements
 
@@ -46,6 +48,27 @@ def mods(q: str = None):
 @app.get("/api/state")
 def get_state():
     return engine.state
+
+
+@app.get("/api/events")
+async def events(request: Request):
+    """SSE push of download + sort-refine state, in place of client polling.
+
+    Replaces two separate 700ms/3s intervals with one connection; the server
+    only writes when a snapshot actually changed, and backs off to a slower
+    check while both jobs are idle."""
+
+    async def gen():
+        last = None
+        while not await request.is_disconnected():
+            busy = engine.state.get("running") or llm_refine.state.get("running")
+            payload = json.dumps({"dl": engine.state, "sort": llm_refine.state})
+            if payload != last:
+                yield f"data: {payload}\n\n"
+                last = payload
+            await asyncio.sleep(0.3 if busy else 1.5)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.post("/api/diff")
