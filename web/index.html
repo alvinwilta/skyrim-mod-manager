@@ -33,6 +33,17 @@
   .tab { display: none; }
   .tab.on { display: block; }
 
+  .subtabs { margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .subtabnav { display: flex; gap: 2px; background: #12151c; border-bottom: 1px solid var(--border); }
+  .subtabnav button {
+    background: none; border: none; color: var(--dim); padding: 7px 14px;
+    font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  .subtabnav button.on { color: var(--blue); border-bottom-color: var(--blue); }
+  .subtabpanel { max-height: 260px; overflow-y: auto; padding: 10px 12px; }
+  .subpanel { display: none; }
+  .subpanel.on { display: block; }
+
   .searchwrap {
     position: sticky; z-index: 5; background: var(--bg);
     padding: 10px 0 6px; margin: -18px 0 0; top: 0;
@@ -164,7 +175,7 @@
   </section>
 
   <section id="tab-order" class="tab">
-    <p class="dim" style="margin-bottom:8px">Loose MO2 left-panel install order (bottom overwrites above). Heuristic sort is instant; Claude refine re-ranks misfits and adds conflict notes (takes a few minutes, needs the <code>claude</code> CLI). Drag rows to reorder, or click a position number to move a mod there.</p>
+    <p class="dim" style="margin-bottom:8px">Loose MO2 left-panel install order (bottom overwrites above). Drag rows to reorder, or click a position number to move a mod there.</p>
     <div class="toolbar" style="margin:0">
       <button class="btn ghost" id="sortbtn">Sort (heuristic)</button>
       <select id="modelsel" title="Claude model used to refine the order">
@@ -175,41 +186,53 @@
       <button class="btn" id="llmbtn">Refine with Claude</button>
       <button class="btn ghost" id="descbtn" title="Re-checks only mods still flagged UNCERTAIN, using a Nexus summary for extra signal">Refine uncertain</button>
       <button class="btn ghost" id="checkbtn">Check order</button>
-      <span id="sortmsg" class="dim"></span>
+      <span style="width:1px;height:22px;background:var(--border)"></span>
+      <button class="btn ghost" id="scanbtn" title="Lists every downloaded archive's actual file paths (via 7z) and finds real overlaps between mods — not a guess">Scan archives</button>
+      <button class="btn ghost" id="reqbtn" title="Checks each mod's own real Nexus requirements — not a guess — and flags any that aren't in your library">Sync requirements</button>
+      <button class="btn ghost" id="enforcebtn" title="Repositions mods that violate a curator-authored before/after/requires rule from an imported collection's own manifest — not a guess">Apply collection order rules</button>
     </div>
-    <div class="toolbar" style="margin-top:8px">
+
+    <div class="subtabs">
+      <nav class="subtabnav">
+        <button data-subtab="sort" class="on">Sort <span id="cnt-sort" class="dim"></span></button>
+        <button data-subtab="conflicts">Conflicts <span id="cnt-conflicts" class="dim"></span></button>
+        <button data-subtab="requirements">Requirements <span id="cnt-requirements" class="dim"></span></button>
+        <button data-subtab="rules">Collection rules</button>
+      </nav>
+      <div class="subtabpanel">
+        <div id="subpanel-sort" class="subpanel on">
+          <div id="sortmsg" class="dim"></div>
+          <div id="conflictnotes"></div>
+          <details style="margin-top:6px">
+            <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
+            <textarea id="promptin" style="height:220px;margin-top:8px"></textarea>
+            <div class="toolbar" style="margin-top:6px">
+              <button class="btn ghost" id="promptsave">Save prompt</button>
+              <button class="btn ghost" id="promptreset">Reset to default</button>
+              <span id="promptmsg" class="dim"></span>
+            </div>
+          </details>
+        </div>
+        <div id="subpanel-conflicts" class="subpanel">
+          <div id="scanmsg" class="dim"></div>
+          <div id="conflictpairs"></div>
+          <div id="conflictpairsexpected"></div>
+        </div>
+        <div id="subpanel-requirements" class="subpanel">
+          <div id="reqmsg" class="dim"></div>
+          <div id="reqmissing"></div>
+        </div>
+        <div id="subpanel-rules" class="subpanel">
+          <div id="enforcemsg" class="dim"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar" style="margin-top:12px">
       <span class="dim" style="font-size:12px">Filter:</span>
       <select id="filtercat"><option value="">All categories</option></select>
       <select id="filtergroup"><option value="">All groups</option></select>
     </div>
-    <div class="toolbar" style="margin-top:8px">
-      <span class="dim" style="font-size:12px">File conflicts:</span>
-      <button class="btn ghost" id="scanbtn" title="Lists every downloaded archive's actual file paths (via 7z) and finds real overlaps between mods — not a guess">Scan archives</button>
-      <span id="scanmsg" class="dim"></span>
-    </div>
-    <div id="conflictpairs"></div>
-    <div id="conflictpairsexpected"></div>
-    <div class="toolbar" style="margin-top:8px">
-      <span class="dim" style="font-size:12px">Requirements:</span>
-      <button class="btn ghost" id="reqbtn" title="Checks each mod's own real Nexus requirements — not a guess — and flags any that aren't in your library">Sync requirements</button>
-      <span id="reqmsg" class="dim"></span>
-    </div>
-    <div id="reqmissing"></div>
-    <div class="toolbar" style="margin-top:8px">
-      <span class="dim" style="font-size:12px">Collection rules:</span>
-      <button class="btn ghost" id="enforcebtn" title="Repositions mods that violate a curator-authored before/after/requires rule from an imported collection's own manifest — not a guess">Apply collection order rules</button>
-      <span id="enforcemsg" class="dim"></span>
-    </div>
-    <details style="margin-top:10px">
-      <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
-      <textarea id="promptin" style="height:240px;margin-top:8px"></textarea>
-      <div class="toolbar" style="margin-top:6px">
-        <button class="btn ghost" id="promptsave">Save prompt</button>
-        <button class="btn ghost" id="promptreset">Reset to default</button>
-        <span id="promptmsg" class="dim"></span>
-      </div>
-    </details>
-    <div id="conflictnotes"></div>
     <div id="orderout"></div>
   </section>
 
@@ -275,14 +298,11 @@
   $('runbadge').onclick = () => showTab('progress');
   $('sortbadge').onclick = () => showTab('order');
 
-  /* header badge + reorder lock for the sort job, from any tab */
-  setInterval(async () => {
-    try {
-      const s = await (await fetch('/api/sort-state')).json();
-      $('sortbadge').style.display = s.running ? '' : 'none';
-      if (s.running && !refining) { setRefining(true); loadOrder(); }
-    } catch {}
-  }, 3000);
+  /* Install Order tab's own log/tool sub-tabs */
+  document.querySelectorAll('.subtabnav button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.subtabnav button').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('.subpanel').forEach(x => x.classList.toggle('on', x.id === 'subpanel-' + b.dataset.subtab));
+  });
 
   /* keep search bar pinned right below the (wrappable) header */
   function setSticky() {
@@ -471,6 +491,7 @@
       ? `<div class="grp"><h2><span class="badge" style="background:#3a1214;color:var(--red)">Conflict notes · ${d.notes.length}</span></h2>
          <ul style="margin:6px 0 0 20px" class="dim">${d.notes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`
       : '';
+    $('cnt-sort').textContent = d.notes.length ? `· ${d.notes.length}` : '';
   }
 
   function setRefining(on) {
@@ -670,6 +691,7 @@
     $('conflictpairsexpected').innerHTML = expected.length
       ? `<details style="margin-top:10px"><summary class="dim" style="cursor:pointer">Expected overwrites (Foundation/Patches) · ${expected.length} pair(s)</summary>${conflictList(expected)}</details>`
       : '';
+    $('cnt-conflicts').textContent = unexpected.length ? `· ${unexpected.length}` : '';
   }
   let scanning = false;
   async function watchScan() {
@@ -701,6 +723,7 @@
            `<li>${esc(m.mod_name)} requires mod ${m.requires_mod_id}${m.notes ? ' — ' + esc(m.notes) : ''} — not in your library</li>`).join('')}
            ${d.missing.length > 30 ? `<li>...and ${d.missing.length - 30} more</li>` : ''}</ul></details>`
       : '';
+    $('cnt-requirements').textContent = d.missing.length ? `· ${d.missing.length}` : '';
   }
   let checkingReqs = false;
   async function watchRequirements() {
@@ -753,10 +776,10 @@
           <h2>
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px">
               <input type="checkbox" class="collenabled" data-cid="${c.id}" ${c.enabled ? 'checked' : ''}>
-              ${esc(c.name || c.slug)}
             </label>
+            <span class="colltitle" data-cid="${c.id}" style="cursor:pointer;font-size:14px">${esc(c.name || c.slug)}</span>
             <span class="dim" style="font-size:12px">${c.downloaded_count}/${c.mod_count} downloaded · ${c.rule_count} order rule(s)</span>
-            <button class="btn ghost" style="padding:2px 10px;font-size:12px" data-cid="${c.id}" data-toggle="1">view order</button>
+            <a class="btn ghost" href="${esc(c.url)}" target="_blank" style="padding:2px 10px;font-size:12px;text-decoration:none">View on Nexus ↗</a>
           </h2>
           <div class="collmods" data-cid="${c.id}" style="display:none"></div>
         </div>`).join('')
@@ -766,14 +789,15 @@
       await fetch(`/api/collections/${cb.dataset.cid}/enabled`, {method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({enabled: cb.checked})});
     });
-    $('collectionslist').querySelectorAll('button[data-toggle]').forEach(btn => btn.onclick = () => toggleCollectionMods(btn));
+    $('collectionslist').querySelectorAll('.colltitle').forEach(el => el.onclick = () => toggleCollectionMods(el));
   }
 
-  async function toggleCollectionMods(btn) {
-    const cid = btn.dataset.cid;
+  async function toggleCollectionMods(el) {
+    const cid = el.dataset.cid;
     const box = $('collectionslist').querySelector(`.collmods[data-cid="${cid}"]`);
-    if (box.style.display !== 'none') { box.style.display = 'none'; btn.textContent = 'view order'; return; }
-    btn.textContent = 'loading…';
+    if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+    box.style.display = '';
+    box.innerHTML = '<p class="dim">loading…</p>';
     const d = await (await fetch(`/api/collections/${cid}/mods`)).json();
     box.innerHTML = d.mods.length
       ? `<table><thead><tr><th style="width:50px">#</th><th>Mod</th><th class="num">Group</th></tr></thead>
@@ -783,8 +807,6 @@
            <td class="num">${groupBadge(m.bucket, d.buckets)}</td>
          </tr>`).join('')}</tbody></table>`
       : '<p class="dim">This collection has no mods.</p>';
-    box.style.display = '';
-    btn.textContent = 'hide order';
   }
 
   /* ---- import / diff ---- */
@@ -940,9 +962,19 @@
     wasRunning = running;
   }
 
-  setInterval(async () => {
-    try { render(await (await fetch('/api/state')).json()); } catch {}
-  }, 700);
+  /* single SSE stream replaces the old dual poll (download state 700ms + sort state 3s) --
+     server pushes only on change, backing off when idle */
+  function connectEvents() {
+    const es = new EventSource('/api/events');
+    es.onmessage = (e) => {
+      const {dl, sort} = JSON.parse(e.data);
+      render(dl);
+      $('sortbadge').style.display = sort.running ? '' : 'none';
+      if (sort.running && !refining) { setRefining(true); loadOrder(); }
+    };
+    es.onerror = () => { es.close(); setTimeout(connectEvents, 2000); };
+  }
+  connectEvents();
 </script>
 </body>
 </html>
