@@ -48,6 +48,10 @@
   }
   .btn:disabled { opacity: .4; cursor: default; }
   .btn.ghost { background: none; border: 1px solid var(--border); color: var(--text); }
+  select {
+    background: #12151c; border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 6px 10px; font: inherit;
+  }
 
   table { width: 100%; border-collapse: collapse; margin-top: 14px; }
   th { text-align: left; color: var(--dim); font-size: 11px; text-transform: uppercase;
@@ -71,6 +75,9 @@
   tr.r-wrong td { background: #2a1215; }
   tr.r-wrong:hover td { background: #341a1d; }
   tr.r-wrong td:first-child { border-left: 3px solid var(--red); border-radius: 4px 0 0 4px; }
+  tr.r-deleted td { background: #2a1215; color: var(--dim); }
+  tr.r-deleted:hover td { background: #341a1d; }
+  tr.r-deleted td:first-child { border-left: 3px solid var(--red); border-radius: 4px 0 0 4px; }
   tr.ordrow { cursor: grab; }
   tr.ordrow[draggable="false"] { cursor: default; }
   .lockbtn { background: none; border: none; cursor: pointer; font-size: 13px;
@@ -138,6 +145,8 @@
         <button class="btn ghost" id="valbtn" disabled>Validate selected</button>
         <button class="btn ghost" id="redlbtn" disabled>Redownload selected</button>
         <button class="btn ghost" id="delbtn" disabled style="color:var(--red);border-color:#4a2226">Delete selected</button>
+        <span style="width:1px;height:22px;background:var(--border)"></span>
+        <button class="btn ghost" id="showdelbtn">Show deleted</button>
         <span id="libmsg" class="dim"></span>
       </div>
     </div>
@@ -156,10 +165,20 @@
     <p class="dim" style="margin-bottom:8px">Loose MO2 left-panel install order (bottom overwrites above). Heuristic sort is instant; Claude refine re-ranks misfits and adds conflict notes (takes a few minutes, needs the <code>claude</code> CLI). Drag rows to reorder, or click a position number to move a mod there.</p>
     <div class="toolbar" style="margin:0">
       <button class="btn ghost" id="sortbtn">Sort (heuristic)</button>
+      <select id="modelsel" title="Claude model used to refine the order">
+        <option value="haiku">Haiku</option>
+        <option value="sonnet">Sonnet</option>
+        <option value="opus">Opus</option>
+      </select>
       <button class="btn" id="llmbtn">Refine with Claude</button>
-      <span style="width:1px;height:22px;background:var(--border)"></span>
+      <button class="btn ghost" id="descbtn" title="Re-checks only mods still flagged UNCERTAIN, using a Nexus summary for extra signal">Refine uncertain</button>
       <button class="btn ghost" id="checkbtn">Check order</button>
       <span id="sortmsg" class="dim"></span>
+    </div>
+    <div class="toolbar" style="margin-top:8px">
+      <span class="dim" style="font-size:12px">Filter:</span>
+      <select id="filtercat"><option value="">All categories</option></select>
+      <select id="filtergroup"><option value="">All groups</option></select>
     </div>
     <details style="margin-top:10px">
       <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
@@ -247,11 +266,15 @@
 
   /* ---- library ---- */
   let libTimer;
+  let showDeleted = false;
   async function loadLib() {
     const q = $('q').value.trim();
-    const rows = await (await fetch('/api/mods' + (q ? '?q=' + encodeURIComponent(q) : ''))).json();
-    $('libcount').textContent = rows.length + ' files';
-    $('libbody').innerHTML = rows.map(r => `<tr>
+    let rows = await (await fetch('/api/mods' + (q ? '?q=' + encodeURIComponent(q) : ''))).json();
+    const nDeleted = rows.filter(r => r.status === 'deleted').length;
+    if (!showDeleted) rows = rows.filter(r => r.status !== 'deleted');
+    $('libcount').textContent = rows.length + ' files' + (!showDeleted && nDeleted ? ` (${nDeleted} deleted hidden)` : '');
+    $('showdelbtn').textContent = showDeleted ? 'Hide deleted' : `Show deleted${nDeleted ? ` (${nDeleted})` : ''}`;
+    $('libbody').innerHTML = rows.map(r => `<tr class="${r.status === 'deleted' ? 'r-deleted' : ''}">
       <td><input type="checkbox" class="libsel" data-fid="${r.file_id}"></td>
       <td>${r.status === 'missing' ? '<span class="badge" style="background:#3a1214;color:var(--red)">missing</span> ' : ''}${r.installed ? '<span class="badge" style="background:#14351f;color:var(--green)">installed</span> ' : ''}${r.status === 'deleted' ? '<span class="badge" style="background:#232833;color:var(--dim)">deleted</span> ' : ''}<a href="${esc(r.mod_url)}" target="_blank" style="color:inherit">${esc(r.mod_name)}</a></td>
       <td class="dim">${esc(r.file_name)}</td>
@@ -320,6 +343,7 @@
     showTab('progress');
   };
   $('q').oninput = () => { clearTimeout(libTimer); libTimer = setTimeout(loadLib, 250); };
+  $('showdelbtn').onclick = () => { showDeleted = !showDeleted; loadLib(); };
   loadLib();
 
   /* ---- install order ---- */
@@ -353,18 +377,36 @@
   let wrongById = new Map();  // mod_id -> expected bucket, filled by Check order
   let orderBuckets = {};
   let orderNames = new Map(); // mod_id -> mod_name, for conflict badge labels
+  let orderMods = [];         // last fetched install order, kept for re-filtering without a refetch
   let refining = false;       // true while a Claude refine runs — reordering locked
-  async function loadOrder() {
-    const [d, s] = await Promise.all([
-      (await fetch('/api/installorder')).json(),
-      (await fetch('/api/sort-state')).json(),
-    ]);
-    setRefining(s.running);
-    orderBuckets = d.buckets;
-    orderNames = new Map(d.mods.map(m => [m.mod_id, m.mod_name]));
-    let html = '', n = 0;
-    for (const m of d.mods) {
+
+  function fillFilterOptions() {
+    const cats = [...new Set(orderMods.map(m => m.category).filter(Boolean))].sort();
+    const cur = $('filtercat').value;
+    $('filtercat').innerHTML = '<option value="">All categories</option>'
+      + cats.map(c => `<option value="${esc(c)}"${c === cur ? ' selected' : ''}>${esc(c)}</option>`).join('');
+    const groupIds = Object.keys(orderBuckets).map(Number).sort((a, b) => a - b);
+    const curG = $('filtergroup').value;
+    $('filtergroup').innerHTML = '<option value="">All groups</option>'
+      + '<option value="none"' + (curG === 'none' ? ' selected' : '') + '>? · Unsorted</option>'
+      + groupIds.map(g => `<option value="${g}"${String(g) === curG ? ' selected' : ''}>${g} · ${esc(orderBuckets[g] || '?')}</option>`).join('');
+  }
+  function matchesFilter(m) {
+    const cat = $('filtercat').value, grp = $('filtergroup').value;
+    if (cat && m.category !== cat) return false;
+    if (grp === 'none' && m.bucket != null) return false;
+    if (grp && grp !== 'none' && String(m.bucket) !== grp) return false;
+    return true;
+  }
+  $('filtercat').onchange = renderOrder;
+  $('filtergroup').onchange = renderOrder;
+
+  function renderOrder() {
+    let html = '', n = 0, shown = 0;
+    for (const m of orderMods) {
       n++;
+      if (!matchesFilter(m)) continue;
+      shown++;
       const wrong = wrongById.has(m.mod_id);
       const hint = wrong ? `expected: ${wrongById.get(m.mod_id) ?? '?'} · ${orderBuckets[wrongById.get(m.mod_id)] || 'unsorted'}` : '';
       const flags = (m.flags || []).filter(f => f !== 'PATCH');
@@ -374,14 +416,28 @@
         <td>${m.installed ? '<span class="badge b-new">installed</span> ' : ''}${esc(m.mod_name)} ${flags.map(flagBadge).join(' ')}${wrong ? ' ' + flagBadge('WRONG SPOT') : ''}</td>
         <td class="num"><a href="${esc(m.mod_url)}" target="_blank" class="dim">${m.mod_id}</a></td>
         <td class="hide-sm dim">${esc(m.category || '')}</td>
-        <td class="num">${groupBadge(m.bucket, d.buckets)}</td>
+        <td class="num">${groupBadge(m.bucket, orderBuckets)}</td>
       </tr>`;
     }
+    const filterNote = shown < orderMods.length ? ` <span class="dim">(${shown} of ${orderMods.length} shown)</span>` : '';
     $('orderout').innerHTML = html ? `<table>
-      <thead><tr><th style="width:70px">#</th><th>Mod</th><th class="num">Mod ID</th><th class="hide-sm">Category</th><th class="num">Group</th></tr></thead>
+      <thead><tr><th style="width:70px">#</th><th>Mod${filterNote}</th><th class="num">Mod ID</th><th class="hide-sm">Category</th><th class="num">Group</th></tr></thead>
       <tbody id="orderbody">${html}</tbody></table>`
-      : '<p class="dim" style="margin-top:14px">Library empty.</p>';
+      : `<p class="dim" style="margin-top:14px">${orderMods.length ? 'No mods match the filter.' : 'Library empty.'}</p>`;
     bindOrderRows();
+  }
+
+  async function loadOrder() {
+    const [d, s] = await Promise.all([
+      (await fetch('/api/installorder')).json(),
+      (await fetch('/api/sort-state')).json(),
+    ]);
+    setRefining(s.running);
+    orderBuckets = d.buckets;
+    orderNames = new Map(d.mods.map(m => [m.mod_id, m.mod_name]));
+    orderMods = d.mods;
+    fillFilterOptions();
+    renderOrder();
     $('conflictnotes').innerHTML = d.notes.length
       ? `<div class="grp"><h2><span class="badge" style="background:#3a1214;color:var(--red)">Conflict notes · ${d.notes.length}</span></h2>
          <ul style="margin:6px 0 0 20px" class="dim">${d.notes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`
@@ -390,7 +446,7 @@
 
   function setRefining(on) {
     refining = on;
-    $('sortbtn').disabled = $('checkbtn').disabled = on;
+    $('sortbtn').disabled = $('checkbtn').disabled = $('modelsel').disabled = $('descbtn').disabled = on;
     const b = $('llmbtn');
     b.textContent = on ? 'Force Stop Claude' : 'Refine with Claude';
     b.style.background = on ? '#7f1d1d' : '';
@@ -545,7 +601,7 @@
   async function runSort(llm) {
     $('sortmsg').textContent = 'sorting…';
     const r = await (await fetch('/api/sort', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({llm})})).json();
+      body: JSON.stringify({llm, model: $('modelsel').value})})).json();
     if (r.error) { $('sortmsg').textContent = r.error; return; }
     if (llm) setRefining(true);  // watchRefine unlocks + reloads when done
     else $('sortmsg').textContent = `${r.sorted} mods sorted`;
@@ -556,6 +612,13 @@
     if (!refining) return runSort(true);
     const r = await (await fetch('/api/sort-stop', {method: 'POST'})).json();
     $('sortmsg').textContent = r.error || 'stopping…';  // watcher unlocks on state flip
+  };
+  $('descbtn').onclick = async () => {
+    $('sortmsg').textContent = 'checking uncertain mods…';
+    const r = await (await fetch('/api/sort-desc', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model: $('modelsel').value})})).json();
+    if (r.error) { $('sortmsg').textContent = r.error; return; }
+    setRefining(true);  // watchRefine unlocks + reloads when done
   };
 
   /* ---- import / diff ---- */

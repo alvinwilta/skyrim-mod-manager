@@ -44,10 +44,17 @@ def init_db():
                 rank INTEGER,
                 flags TEXT,
                 expected_bucket INTEGER,
-                locked INTEGER NOT NULL DEFAULT 0
+                locked INTEGER NOT NULL DEFAULT 0,
+                description TEXT,
+                desc_checked INTEGER NOT NULL DEFAULT 0
             )
             """
         )
+        cols_sort = [r[1] for r in conn.execute("PRAGMA table_info(mod_sort)")]
+        if "description" not in cols_sort:
+            conn.execute("ALTER TABLE mod_sort ADD COLUMN description TEXT")
+        if "desc_checked" not in cols_sort:
+            conn.execute("ALTER TABLE mod_sort ADD COLUMN desc_checked INTEGER NOT NULL DEFAULT 0")
         cols = [r[1] for r in conn.execute("PRAGMA table_info(mods)")]
         if "status" not in cols:
             conn.execute("ALTER TABLE mods ADD COLUMN status TEXT DEFAULT 'ok'")

@@ -112,6 +112,18 @@ def game_id_for(domain):
     return _game_ids[domain]
 
 
+def fetch_summaries(domain, mod_ids):
+    """Batch-fetch short Nexus summaries (not the full description page) for
+    several mods on one domain in a single call -- used to give the sorter's
+    second pass a real signal for mods the heuristic couldn't confidently
+    bucket, without paying a per-mod API round trip."""
+    game_id = game_id_for(domain)
+    ids = ", ".join(f"{{gameId: {game_id}, modId: {mid}}}" for mid in mod_ids)
+    query = "{ legacyMods(ids: [" + ids + "]) { nodes { modId summary } } }"
+    nodes = _graphql(query)["legacyMods"]["nodes"]
+    return {n["modId"]: n.get("summary") or "" for n in nodes}
+
+
 def fetch_mod(url):
     """Fetch a single mod's current files from a mod page URL.
 

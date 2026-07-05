@@ -126,10 +126,19 @@ async def sort_mods(request: Request):
     body = await request.json()
     n = sorter.heuristic_sort()
     if (body or {}).get("llm"):
-        err = sorter.start_llm_refine()
+        err = sorter.start_llm_refine((body or {}).get("model") or "haiku")
         if err:
             return JSONResponse({"error": err}, status_code=409)
     return {"sorted": n, "llm": bool((body or {}).get("llm"))}
+
+
+@app.post("/api/sort-desc")
+async def sort_desc(request: Request):
+    body = await request.json()
+    err = sorter.start_desc_refine((body or {}).get("model") or "haiku")
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"started": True}
 
 
 @app.get("/api/sort-state")

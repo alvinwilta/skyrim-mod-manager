@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import threading
 
-from . import db, mo2
+from . import db, mo2, nexus
 
 log = logging.getLogger(__name__)
 
@@ -197,8 +197,32 @@ def heuristic_sort():
         results.sort()
         for bucket, _, mod_id, flags in results:
             _upsert_sort(conn, mod_id, bucket, ",".join(flags))
+        # a full heuristic re-sort discards any earlier bucket opinion, so
+        # give the description pass a fresh shot at these mods too
+        conn.execute(
+            "UPDATE mod_sort SET desc_checked = 0"
+            " WHERE mod_id IN (SELECT mod_id FROM mods WHERE status = 'ok')"
+            " AND COALESCE(locked, 0) = 0"
+        )
         _write_ranks(conn, [mod_id for _, _, mod_id, _ in results])
     return len(results)
+
+
+def _place_in_bucket(conn, mod_id, bucket):
+    """Reposition a single already-tracked mod so its rank matches a new
+    bucket assignment, without disturbing anyone else's order -- used when a
+    later pass corrects an earlier bucket guess. Reuses _write_ranks so
+    locked mods keep their pinned slots."""
+    rows = conn.execute(
+        "SELECT m.mod_id, s.bucket FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
+        " WHERE m.status = 'ok' AND m.mod_id != ? AND COALESCE(s.locked, 0) = 0"
+        " GROUP BY m.mod_id ORDER BY s.rank IS NULL, s.rank, s.bucket, m.mod_name COLLATE NOCASE",
+        (mod_id,),
+    ).fetchall()
+    ids = [r["mod_id"] for r in rows]
+    pos = sum(1 for r in rows if (r["bucket"] if r["bucket"] is not None else 999) <= bucket)
+    ids.insert(pos, mod_id)
+    _write_ranks(conn, ids)
 
 
 def set_lock(mod_id, locked):
@@ -387,21 +411,13 @@ def set_prompt(text):
 
 
 _proc = None  # running claude subprocess, for the force-stop endpoint
+MODELS = ("haiku", "sonnet", "opus")
 
 
-def _run_claude(mods):
+def _call_claude(prompt, model):
     global _proc
-    sections, last = [], object()
-    for m in mods:  # mods arrive ordered, so buckets form contiguous runs
-        if m["bucket"] != last:
-            last = m["bucket"]
-            sections.append(f"\n# {last}. {BUCKETS.get(last, 'Unsorted')}")
-        sections.append(f"{m['mod_id']}|{m['mod_name']}|{m['category'] or ''}")
-    lines = "\n".join(sections).strip()
-    buckets = "\n".join(f"{n}. {label} — {BUCKET_HINTS[n]}" for n, label in BUCKETS.items())
-    prompt = get_prompt().replace("{{BUCKETS}}", buckets).replace("{{MODS}}", lines)
     _proc = subprocess.Popen(
-        ["claude", "-p", prompt, "--model", "haiku", "--output-format", "json"],
+        ["claude", "-p", prompt, "--model", model, "--output-format", "json"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     try:
@@ -413,8 +429,52 @@ def _run_claude(mods):
         if code < 0:
             raise RuntimeError("stopped by user")
         raise RuntimeError(f"claude exited {code}: {err.strip()[:200]}")
-    text = json.loads(out).get("result", "")
-    return _parse_reply(text)
+    return json.loads(out).get("result", "")
+
+
+def _run_claude(mods, model="haiku"):
+    sections, last = [], object()
+    for m in mods:  # mods arrive ordered, so buckets form contiguous runs
+        if m["bucket"] != last:
+            last = m["bucket"]
+            sections.append(f"\n# {last}. {BUCKETS.get(last, 'Unsorted')}")
+        sections.append(f"{m['mod_id']}|{m['mod_name']}|{m['category'] or ''}")
+    lines = "\n".join(sections).strip()
+    buckets = "\n".join(f"{n}. {label} — {BUCKET_HINTS[n]}" for n, label in BUCKETS.items())
+    prompt = get_prompt().replace("{{BUCKETS}}", buckets).replace("{{MODS}}", lines)
+    return _parse_reply(_call_claude(prompt, model))
+
+
+# Second pass: only the mods the bulk pass flagged UNCERTAIN, with a cached
+# Nexus summary as an extra signal -- kept as a separate, smaller prompt
+# (not user-editable) since it runs on a handful of mods, not the library.
+DESC_PROMPT = """You are placing a small set of Skyrim SE mods into MO2 left-panel
+install-order groups (STEP SkyrimSE 2.3 scheme, top installed first, bottom
+overwrites everything above). These mods could not be confidently classified
+from name + Nexus category alone -- a short Nexus summary is included for
+each; use it to decide.
+
+Groups:
+{{BUCKETS}}
+
+Each line: mod_id|mod name|nexus category|nexus summary
+
+Reply with ONLY plain lines, no prose, no code fences. One line per input mod:
+<mod_id>|<bucket 1-20>
+Append |UNCERTAIN only if the summary still doesn't make the group clear.
+
+Mods:
+{{MODS}}"""
+
+
+def _run_claude_desc(mods, model="haiku"):
+    lines = "\n".join(
+        f"{m['mod_id']}|{m['mod_name']}|{m['category'] or ''}|{(m['description'] or '').strip()[:200]}"
+        for m in mods
+    )
+    buckets = "\n".join(f"{n}. {label} — {BUCKET_HINTS[n]}" for n, label in BUCKETS.items())
+    prompt = DESC_PROMPT.replace("{{BUCKETS}}", buckets).replace("{{MODS}}", lines)
+    return _parse_reply(_call_claude(prompt, model))
 
 
 def stop():
@@ -426,10 +486,10 @@ def stop():
     return None
 
 
-def _refine_job():
+def _refine_job(model):
     order = [m for m in load_order()["mods"] if not m["locked"]]  # locked mods stay pinned
-    state["phase"] = f"Asking Claude to sort {len(order)} mods (may take a few minutes)"
-    result = _run_claude(order)
+    state["phase"] = f"Asking Claude ({model}) to sort {len(order)} mods (may take a few minutes)"
+    result = _run_claude(order, model)
     if len(result["order"]) < len(order) // 2:
         raise RuntimeError(f"reply only contained {len(result['order'])}/{len(order)} mods — order kept")
     known = {m["mod_id"] for m in order}
@@ -456,8 +516,10 @@ def _refine_job():
     state["phase"] = "Finished"
 
 
-def start_llm_refine():
+def start_llm_refine(model="haiku"):
     """Async LLM refinement. Returns error string or None (mirrors start_download)."""
+    if model not in MODELS:
+        return f"unknown model {model!r} — expected one of {MODELS}"
     if shutil.which("claude") is None:
         return "claude CLI not found — heuristic order kept"
     if not _lock.acquire(blocking=False):
@@ -466,7 +528,82 @@ def start_llm_refine():
     def runner():
         try:
             state.update({"error": None, "running": True})
-            _refine_job()
+            _refine_job(model)
+        except Exception as e:
+            state.update({"error": str(e), "phase": "Error"})
+        finally:
+            state["running"] = False
+            _lock.release()
+
+    threading.Thread(target=runner, daemon=True).start()
+    return None
+
+
+def _desc_refine_job(model):
+    with db.connect() as conn:
+        candidates = [dict(r) for r in conn.execute(
+            "SELECT s.mod_id, m.mod_name, m.category, s.description, s.bucket AS cur_bucket,"
+            " (SELECT game FROM mods m2 WHERE m2.mod_id = s.mod_id LIMIT 1) AS game"
+            " FROM mod_sort s JOIN mods m ON m.mod_id = s.mod_id AND m.status = 'ok'"
+            " WHERE s.flags LIKE '%UNCERTAIN%' AND COALESCE(s.desc_checked, 0) = 0"
+            " AND COALESCE(s.locked, 0) = 0 GROUP BY s.mod_id"
+        ).fetchall()]
+    if not candidates:
+        state["phase"] = "No uncertain mods need a description check"
+        return
+
+    missing = [c for c in candidates if not c["description"]]
+    if missing:
+        state["phase"] = f"Fetching Nexus summaries for {len(missing)} mod(s)"
+        by_domain = {}
+        for c in missing:
+            by_domain.setdefault(c["game"], []).append(c)
+        with db.connect() as conn:
+            for domain, items in by_domain.items():
+                if not domain:
+                    continue
+                summaries = nexus.fetch_summaries(domain, [c["mod_id"] for c in items])
+                for c in items:
+                    c["description"] = summaries.get(c["mod_id"]) or ""
+                    conn.execute(
+                        "UPDATE mod_sort SET description = ? WHERE mod_id = ?",
+                        (c["description"], c["mod_id"]),
+                    )
+
+    state["phase"] = f"Asking Claude ({model}) about {len(candidates)} uncertain mod(s)"
+    result = _run_claude_desc(candidates, model)
+    replied = {item["id"]: item for item in result["order"]}
+
+    state["phase"] = "Saving"
+    with db.connect() as conn:
+        for c in candidates:
+            mod_id = c["mod_id"]
+            item = replied.get(mod_id)
+            if item and item.get("b") is not None:
+                flags = [f for f in (item.get("f") or []) if f != "PATCH"]
+                if item["b"] != c["cur_bucket"]:
+                    _place_in_bucket(conn, mod_id, item["b"])
+                _upsert_sort(conn, mod_id, item["b"], ",".join(flags))
+            conn.execute("UPDATE mod_sort SET desc_checked = 1 WHERE mod_id = ?", (mod_id,))
+    state["phase"] = "Finished"
+
+
+def start_desc_refine(model="haiku"):
+    """Second-pass refine: re-classifies only mods the bulk pass flagged
+    UNCERTAIN, using a cached Nexus summary as extra signal. Every processed
+    mod is marked desc_checked, even if it stays UNCERTAIN, so it is never
+    re-sent (and its summary never re-fetched) on a later refine run."""
+    if model not in MODELS:
+        return f"unknown model {model!r} — expected one of {MODELS}"
+    if shutil.which("claude") is None:
+        return "claude CLI not found"
+    if not _lock.acquire(blocking=False):
+        return "a sort job is already running"
+
+    def runner():
+        try:
+            state.update({"error": None, "running": True})
+            _desc_refine_job(model)
         except Exception as e:
             state.update({"error": str(e), "phase": "Error"})
         finally:
