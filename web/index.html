@@ -188,6 +188,12 @@
     </div>
     <div id="conflictpairs"></div>
     <div id="conflictpairsexpected"></div>
+    <div class="toolbar" style="margin-top:8px">
+      <span class="dim" style="font-size:12px">Requirements:</span>
+      <button class="btn ghost" id="reqbtn" title="Checks each mod's own real Nexus requirements — not a guess — and flags any that aren't in your library">Sync requirements</button>
+      <span id="reqmsg" class="dim"></span>
+    </div>
+    <div id="reqmissing"></div>
     <details style="margin-top:10px">
       <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
       <textarea id="promptin" style="height:240px;margin-top:8px"></textarea>
@@ -252,7 +258,7 @@
   function showTab(t) {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.tab === t));
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.id === 'tab-' + t));
-    if (t === 'order') { loadOrder(); loadPrompt(); loadConflicts(); }
+    if (t === 'order') { loadOrder(); loadPrompt(); loadConflicts(); loadMissingRequirements(); }
   }
   $('runbadge').onclick = () => showTab('progress');
   $('sortbadge').onclick = () => showTab('order');
@@ -669,6 +675,37 @@
     if (r.error) { $('scanmsg').textContent = r.error; return; }
     $('scanbtn').disabled = true;
     watchScan();
+  };
+
+  /* ---- missing requirements (real per-mod Nexus "requires" data) ---- */
+  async function loadMissingRequirements() {
+    const d = await (await fetch('/api/requirements-missing')).json();
+    $('reqmissing').innerHTML = d.missing.length
+      ? `<details style="margin-top:10px"><summary class="dim" style="cursor:pointer">Missing requirements · ${d.missing.length}</summary>
+         <ul style="margin:6px 0 0 20px" class="dim">${d.missing.slice(0, 30).map(m =>
+           `<li>${esc(m.mod_name)} requires mod ${m.requires_mod_id}${m.notes ? ' — ' + esc(m.notes) : ''} — not in your library</li>`).join('')}
+           ${d.missing.length > 30 ? `<li>...and ${d.missing.length - 30} more</li>` : ''}</ul></details>`
+      : '';
+  }
+  let checkingReqs = false;
+  async function watchRequirements() {
+    if (checkingReqs) return;
+    checkingReqs = true;
+    while (true) {
+      const s = await (await fetch('/api/requirements-state')).json();
+      $('reqmsg').textContent = s.phase + (s.error ? ' — ' + s.error : '');
+      if (!s.running) break;
+      await new Promise(res => setTimeout(res, 1000));
+    }
+    checkingReqs = false;
+    $('reqbtn').disabled = false;
+    loadMissingRequirements();
+  }
+  $('reqbtn').onclick = async () => {
+    const r = await (await fetch('/api/sync-requirements', {method: 'POST'})).json();
+    if (r.error) { $('reqmsg').textContent = r.error; return; }
+    $('reqbtn').disabled = true;
+    watchRequirements();
   };
 
   /* ---- import / diff ---- */

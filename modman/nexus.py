@@ -19,12 +19,23 @@ log = logging.getLogger(__name__)
 COLLECTION_QUERY = """
 query CollectionRevisionMods($slug: String!, $revision: Int, $viewAdultContent: Boolean = false) {
   collectionRevision(slug: $slug, revision: $revision, viewAdultContent: $viewAdultContent) {
+    collectionId
+    revisionNumber
+    collection { name slug }
     externalResources { id name resourceType resourceUrl }
-    modFiles { fileId optional file { fileId name scanned: scannedV2 size sizeInBytes version
+    modFiles { fileId optional file { fileId name scanned: scannedV2 size sizeInBytes version requirementsAlert
       mod { adultContent author category game { id domainName } modId name pictureUrl summary version
         uploader { avatar memberId name } } } }
   }
 }"""
+
+_COLLECTION_URL_RE = re.compile(r"nexusmods\.com/games/[^/]+/collections/([^/?#]+)")
+
+
+def collection_slug(url):
+    """Extract the collection slug from a nexusmods collection URL, or None."""
+    m = _COLLECTION_URL_RE.search(url)
+    return m.group(1) if m else None
 
 BROWSER_HEADERS = {
     "Origin": "https://www.nexusmods.com",
@@ -61,15 +72,15 @@ def fetch_collection(url):
 
     Returns a payload shaped like the CollectionRevisionMods response
     ({"data": {"collectionRevision": ...}}), or raises ValueError."""
-    m = re.search(r"nexusmods\.com/games/[^/]+/collections/([^/?#]+)", url)
-    if not m:
+    slug = collection_slug(url)
+    if not slug:
         raise ValueError("not a collection url (expected .../games/<game>/collections/<slug>)")
 
     r = requests.post(
         "https://api-router.nexusmods.com/graphql",
         json={
             "query": COLLECTION_QUERY,
-            "variables": {"slug": m.group(1), "viewAdultContent": True},
+            "variables": {"slug": slug, "viewAdultContent": True},
             "operationName": "CollectionRevisionMods",
         },
         headers={**BROWSER_HEADERS, "x-graphql-operationname": "CollectionRevisionMods"},
@@ -124,6 +135,27 @@ def fetch_summaries(domain, mod_ids):
     return {n["modId"]: n.get("summary") or "" for n in nodes}
 
 
+def fetch_requirements(domain, mod_ids):
+    """Batch-fetch each mod's real Nexus-declared requirements (the mod's own
+    'Requirements' section) for several mods on one domain in a single call.
+    Drops external (non-Nexus) links, which carry modId '0' and no name."""
+    game_id = game_id_for(domain)
+    ids = ", ".join(f"{{gameId: {game_id}, modId: {mid}}}" for mid in mod_ids)
+    query = (
+        "{ legacyMods(ids: [" + ids + "]) { nodes { modId"
+        " modRequirements { nexusRequirements { nodes { modId modName notes externalRequirement } } } } } }"
+    )
+    nodes = _graphql(query)["legacyMods"]["nodes"]
+    return {
+        n["modId"]: [
+            {"modId": int(r["modId"]), "modName": r["modName"], "notes": r.get("notes") or ""}
+            for r in n["modRequirements"]["nexusRequirements"]["nodes"]
+            if not r["externalRequirement"] and r["modId"] != "0"
+        ]
+        for n in nodes
+    }
+
+
 def fetch_mod(url):
     """Fetch a single mod's current files from a mod page URL.
 
@@ -149,7 +181,8 @@ def fetch_mod(url):
     info = nodes[0]
 
     files = _graphql(
-        "query($m: ID!, $g: ID!) { modFiles(modId: $m, gameId: $g) { fileId name version sizeInBytes category primary } }",
+        "query($m: ID!, $g: ID!) { modFiles(modId: $m, gameId: $g) {"
+        " fileId name version sizeInBytes category primary requirementsAlert } }",
         {"m": mod_id, "g": game["id"]},
     )["modFiles"]
 
@@ -175,6 +208,7 @@ def fetch_mod(url):
                 "size": 0,
                 "sizeInBytes": f["sizeInBytes"],
                 "version": f["version"],
+                "requirementsAlert": f.get("requirementsAlert"),
                 "mod": mod,
             },
         }

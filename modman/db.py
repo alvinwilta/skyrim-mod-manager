@@ -33,7 +33,8 @@ def init_db():
                 game TEXT,
                 downloaded_at TEXT,
                 status TEXT DEFAULT 'ok',
-                mod_url TEXT
+                mod_url TEXT,
+                requirements_alert INTEGER
             )
             """
         )
@@ -51,7 +52,8 @@ def init_db():
                 locked INTEGER NOT NULL DEFAULT 0,
                 description TEXT,
                 desc_checked INTEGER NOT NULL DEFAULT 0,
-                file_type TEXT
+                file_type TEXT,
+                requirements_checked INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -62,6 +64,8 @@ def init_db():
             conn.execute("ALTER TABLE mod_sort ADD COLUMN desc_checked INTEGER NOT NULL DEFAULT 0")
         if "file_type" not in cols_sort:
             conn.execute("ALTER TABLE mod_sort ADD COLUMN file_type TEXT")
+        if "requirements_checked" not in cols_sort:
+            conn.execute("ALTER TABLE mod_sort ADD COLUMN requirements_checked INTEGER NOT NULL DEFAULT 0")
         # real (not guessed) file-path overlaps between archives -- see modman/conflicts.py
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mod_files (file_id INTEGER NOT NULL, path TEXT NOT NULL,"
@@ -75,6 +79,31 @@ def init_db():
             conn.execute("ALTER TABLE mods ADD COLUMN status TEXT DEFAULT 'ok'")
         if "mod_url" not in cols:
             conn.execute("ALTER TABLE mods ADD COLUMN mod_url TEXT")
+        if "requirements_alert" not in cols:
+            conn.execute("ALTER TABLE mods ADD COLUMN requirements_alert INTEGER")
+        # real per-mod "requires" edges from Nexus's own GraphQL -- see modman/requirements.py
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mod_requirements (mod_id INTEGER NOT NULL,"
+            " requires_mod_id INTEGER NOT NULL, notes TEXT,"
+            " PRIMARY KEY (mod_id, requires_mod_id))"
+        )
+        # which collection(s) a mod came from, if any -- absent = manually installed
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " slug TEXT NOT NULL UNIQUE, nexus_collection_id INTEGER, revision_number INTEGER,"
+            " name TEXT, updated_at TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mod_collections (file_id INTEGER NOT NULL,"
+            " collection_id INTEGER NOT NULL, PRIMARY KEY (file_id, collection_id))"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mod_collections_collection ON mod_collections (collection_id)")
+        # curator-authored before/after/requires/conflicts/recommends/provides rules
+        # from a collection's own manifest -- see modman/collection_rules.py
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS collection_mod_rules (collection_id INTEGER NOT NULL,"
+            " type TEXT NOT NULL, source_mod_id INTEGER, reference_mod_id INTEGER, notes TEXT)"
+        )
         # migrate sort state that used to live denormalized on the file rows
         if "sort_bucket" in cols:
             conn.execute(
@@ -120,12 +149,48 @@ def record_downloads(entries):
             conn.execute(
                 "INSERT OR REPLACE INTO mods (file_id, mod_id, mod_name, file_name,"
                 " mod_version, file_version, category, author, filename, size_bytes,"
-                " game, downloaded_at, status, mod_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " game, downloaded_at, status, mod_url, requirements_alert) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     m["file_id"], m["mod_id"], m["mod_name"], m["file_name"],
                     m["mod_version"], m["file_version"], m["category"], m["author"],
                     ondisk.get(entry["name"]) if status == "ok" else None,
                     entry["size"], game, now, status,
                     f"https://www.nexusmods.com/{game}/mods/{m['mod_id']}",
+                    m.get("requirements_alert"),
                 ),
             )
+
+
+def upsert_collection(slug, nexus_collection_id=None, revision_number=None, name=None):
+    """Register/refresh a collection by slug (a collection can have many
+    revisions over time; slug is the app's own dedup key). Returns collection_id."""
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO collections (slug, nexus_collection_id, revision_number, name, updated_at)"
+            " VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(slug) DO UPDATE SET nexus_collection_id = excluded.nexus_collection_id,"
+            " revision_number = excluded.revision_number, name = excluded.name, updated_at = excluded.updated_at",
+            (slug, nexus_collection_id, revision_number, name, now),
+        )
+        return conn.execute("SELECT id FROM collections WHERE slug = ?", (slug,)).fetchone()["id"]
+
+
+def link_collection_files(collection_id, file_ids):
+    """Link mods already present in the library to a collection that
+    references them -- called both at diff time (mods you already have that
+    this collection also lists) and after a download batch completes (mods
+    freshly downloaded from it). Silently ignores file_ids not yet in `mods`."""
+    if not file_ids:
+        return 0
+    with connect() as conn:
+        have = {
+            r["file_id"] for r in conn.execute(
+                f"SELECT file_id FROM mods WHERE file_id IN ({','.join('?' * len(file_ids))})", file_ids
+            )
+        }
+        conn.executemany(
+            "INSERT OR IGNORE INTO mod_collections (file_id, collection_id) VALUES (?, ?)",
+            [(fid, collection_id) for fid in have],
+        )
+        return len(have)

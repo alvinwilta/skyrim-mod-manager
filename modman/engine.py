@@ -94,6 +94,7 @@ def _progress_entry(modfile):
             "author": mod.get("author"),
             "game": (mod.get("game") or {}).get("domainName"),
             "game_id": (mod.get("game") or {}).get("id"),
+            "requirements_alert": f.get("requirementsAlert"),
         },
     }
 
@@ -226,6 +227,7 @@ def modfiles_from_db(file_ids):
                 "size": 0,
                 "sizeInBytes": r["size_bytes"],
                 "version": r["file_version"],
+                "requirementsAlert": r["requirements_alert"],
                 "mod": {
                     "modId": r["mod_id"],
                     "name": r["mod_name"],

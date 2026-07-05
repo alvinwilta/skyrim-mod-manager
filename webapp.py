@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-from modman import config, conflicts, db, engine, llm_refine, mo2, nexus, order_store
+from modman import config, conflicts, db, engine, llm_refine, mo2, nexus, order_store, requirements
 
 app = FastAPI(title="Mod Manager")
 db.init_db()
@@ -142,6 +142,24 @@ def get_conflicts():
             "SELECT COUNT(*) c FROM mods WHERE status = 'ok' AND COALESCE(files_scanned, 0) = 1"
         ).fetchone()["c"]
     return {"pairs": conflicts.pairs(), "scanned": scanned, "total": total}
+
+
+@app.post("/api/sync-requirements")
+def sync_requirements():
+    err = requirements.start_scan()
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"started": True}
+
+
+@app.get("/api/requirements-state")
+def requirements_state():
+    return requirements.state
+
+
+@app.get("/api/requirements-missing")
+def requirements_missing():
+    return {"missing": requirements.missing()}
 
 
 @app.post("/api/sort")
