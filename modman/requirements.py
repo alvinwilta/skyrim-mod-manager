@@ -98,12 +98,20 @@ def missing():
     'X requires Y, which you don't have.'"""
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT r.mod_id, m.mod_name, r.requires_mod_id, r.notes FROM mod_requirements r"
+            "SELECT r.mod_id, m.mod_name, m.game, r.requires_mod_id, r.notes FROM mod_requirements r"
             " JOIN mods m ON m.mod_id = r.mod_id AND m.status = 'ok'"
             " WHERE r.requires_mod_id NOT IN (SELECT mod_id FROM mods WHERE status = 'ok')"
             " GROUP BY r.mod_id, r.requires_mod_id"
         ).fetchall()
     return [
-        {"mod_id": r["mod_id"], "mod_name": r["mod_name"], "requires_mod_id": r["requires_mod_id"], "notes": r["notes"]}
+        {
+            "mod_id": r["mod_id"], "mod_name": r["mod_name"],
+            "requires_mod_id": r["requires_mod_id"],
+            # requires_mod_id isn't in `mods` (that's the whole point) so it has
+            # no stored mod_url of its own -- build one from the requiring mod's
+            # own game domain, which is virtually always the same game.
+            "requires_url": f"https://www.nexusmods.com/{r['game']}/mods/{r['requires_mod_id']}",
+            "notes": r["notes"],
+        }
         for r in rows
     ]

@@ -90,14 +90,10 @@
   tr.r-new:hover td { background: #143024; }
   tr.r-upd td { background: #241d0f; }
   tr.r-upd:hover td { background: #2e2513; }
-  tr.r-new td:first-child { border-left: 3px solid var(--green); border-radius: 4px 0 0 4px; }
-  tr.r-upd td:first-child { border-left: 3px solid var(--amber); border-radius: 4px 0 0 4px; }
   tr.r-wrong td { background: #2a1215; }
   tr.r-wrong:hover td { background: #341a1d; }
-  tr.r-wrong td:first-child { border-left: 3px solid var(--red); border-radius: 4px 0 0 4px; }
   tr.r-deleted td { background: #2a1215; color: var(--dim); }
   tr.r-deleted:hover td { background: #341a1d; }
-  tr.r-deleted td:first-child { border-left: 3px solid var(--red); border-radius: 4px 0 0 4px; }
   tr.ordrow { cursor: grab; }
   tr.ordrow[draggable="false"] { cursor: default; }
   .lockbtn { background: none; border: none; cursor: pointer; font-size: 13px;
@@ -105,7 +101,6 @@
   .lockbtn:hover { opacity: .8; }
   .lockbtn.on { opacity: 1; }
   tr.r-locked td { background: #1d2a45; }
-  tr.r-sel td { background: #101720 !important; }
   tr.r-sel td:first-child { border-left: 3px solid var(--blue); border-radius: 4px 0 0 4px; }
   tr.dropmark td { border-top: 2px solid var(--blue); }
   .posnum { color: var(--dim); text-decoration: none; }
@@ -534,17 +529,22 @@
 
   /* ---- install order ---- */
   function flagBadge(f) {
-    const style = f.startsWith('CONFLICT') || f === 'WRONG SPOT' ? 'background:#3a1214;color:var(--red)'
-      : f.startsWith('MOVED') ? 'background:#3a2b12;color:var(--amber)'
+    // Red is reserved for things that actually need action: a likely
+    // duplicate install, or a manual move that drifted from the sorter's
+    // opinion. A plain ordering CONFLICT (two different mods that just
+    // share/overwrite files) is a warning, not a problem -- amber.
+    const style = f.startsWith('DUPLICATE') || f === 'WRONG SPOT' ? 'background:#3a1214;color:var(--red)'
+      : f.startsWith('CONFLICT') || f.startsWith('MOVED') ? 'background:#3a2b12;color:var(--amber)'
       : 'background:#232833;color:var(--dim)';
-    // CONFLICT:<mod_id> — show the target (and its name in the tooltip) so
-    // it's clear what it conflicts with
+    // CONFLICT:<mod_id> / DUPLICATE:<mod_id> — show the target (and its name
+    // in the tooltip) so it's clear what it conflicts with / duplicates
     let label = f.split(':')[0], hint = f;
-    const conflictId = f.startsWith('CONFLICT') && parseInt(f.split(':')[1], 10);
-    if (conflictId) {
-      const other = orderNames.get(conflictId);
-      label = `CONFLICT ↔ ${other ? other.slice(0, 30) : conflictId}`;
-      hint = `conflicts with ${other || 'mod'} (${conflictId})`;
+    const refId = (f.startsWith('CONFLICT') || f.startsWith('DUPLICATE')) && parseInt(f.split(':')[1], 10);
+    if (refId) {
+      const other = orderNames.get(refId);
+      const verb = f.startsWith('DUPLICATE') ? 'DUPLICATE' : 'CONFLICT';
+      label = `${verb} ↔ ${other ? other.slice(0, 30) : refId}`;
+      hint = `${verb === 'DUPLICATE' ? 'likely duplicate of' : 'conflicts with'} ${other || 'mod'} (${refId})`;
     }
     // MOVED:<from>><to> — show which group Claude moved it from/to
     const mv = f.startsWith('MOVED:') && f.slice(6).match(/^(\d+|None)>(\d+)$/);
@@ -565,6 +565,22 @@
   let orderNames = new Map(); // mod_id -> mod_name, for conflict badge labels
   let orderMods = [];         // last fetched install order, kept for re-filtering without a refetch
   let refining = false;       // true while a Claude refine runs — reordering locked
+
+  // Per-step "what did the last sorter button actually change" highlight --
+  // snapshot bucket-per-mod right before a sort/refine/enforce action starts,
+  // diff against the fresh order once it finishes. Each new action's diff
+  // replaces the previous one's, so only the most recent step stays highlighted.
+  let preActionBuckets = null;
+  let justChanged = new Set();
+  function snapshotBuckets() {
+    preActionBuckets = new Map(orderMods.map(m => [m.mod_id, m.bucket]));
+  }
+  function diffChanged() {
+    if (!preActionBuckets) return;
+    const before = preActionBuckets;
+    preActionBuckets = null;
+    justChanged = new Set(orderMods.filter(m => before.get(m.mod_id) !== m.bucket).map(m => m.mod_id));
+  }
 
   function fillFilterOptions() {
     const cats = [...new Set(orderMods.map(m => m.category).filter(Boolean))].sort();
@@ -596,7 +612,7 @@
       const wrong = wrongById.has(m.mod_id);
       const hint = wrong ? `expected: ${wrongById.get(m.mod_id) ?? '?'} · ${orderBuckets[wrongById.get(m.mod_id)] || 'unsorted'}` : '';
       const flags = m.flags || [];
-      const moved = flags.some(f => f.startsWith('MOVED'));
+      const moved = flags.some(f => f.startsWith('MOVED')) || justChanged.has(m.mod_id);
       html += `<tr class="ordrow${wrong ? ' r-wrong' : moved ? ' r-upd' : m.locked ? ' r-locked' : ''}" draggable="${!refining}" data-mid="${m.mod_id}" data-pos="${n}" ${wrong ? `title="${esc(hint)}"` : ''}>
         <td class="num" style="width:70px;white-space:nowrap"><button class="lockbtn${m.locked ? ' on' : ''}" data-locked="${m.locked ? 1 : 0}" title="${m.locked ? 'pinned — sorts will not move this; click to unpin' : 'pin at this position'}">${m.locked ? '🔒' : '🔓'}</button>${refining ? `<span class="dim">${n}</span>` : `<a href="#" class="posnum" title="click to move">${n}</a>`}</td>
         <td>${m.installed ? '<span class="badge b-new">installed</span> ' : ''}${m.file_type === 'bsa' ? '<span class="badge b-bsa" title="archive contains only packed BSA/BA2 + plugin files — no loose Data assets, position barely matters for real conflicts">BSA-only</span> ' : ''}${esc(m.mod_name)} ${flags.map(flagBadge).join(' ')}${wrong ? ' ' + flagBadge('WRONG SPOT') : ''}</td>
@@ -624,10 +640,17 @@
     orderMods = d.mods;
     fillFilterOptions();
     renderOrder();
-    $('conflictnotes').innerHTML = d.notes.length
-      ? `<div class="grp"><h2><span class="badge" style="background:#3a1214;color:var(--red)">Conflict notes · ${d.notes.length}</span></h2>
-         <ul style="margin:6px 0 0 20px" class="dim">${d.notes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`
-      : '';
+    const dupes = d.notes.filter(x => x.toUpperCase().startsWith('DUPLICATE:'));
+    const notes = d.notes.filter(x => !x.toUpperCase().startsWith('DUPLICATE:'));
+    $('conflictnotes').innerHTML =
+      (dupes.length
+        ? `<div class="grp"><h2><span class="badge" style="background:#3a1214;color:var(--red)">Possible duplicate mods · ${dupes.length}</span></h2>
+           <ul style="margin:6px 0 0 20px" class="dim">${dupes.map(x => `<li>${esc(x.replace(/^duplicate:\s*/i, ''))}</li>`).join('')}</ul></div>`
+        : '') +
+      (notes.length
+        ? `<div class="grp"><h2><span class="badge" style="background:#3a2b12;color:var(--amber)">Conflict notes · ${notes.length}</span></h2>
+           <ul style="margin:6px 0 0 20px" class="dim">${notes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`
+        : '');
     $('cnt-notes').textContent = d.notes.length ? `· ${d.notes.length}` : '';
   }
 
@@ -653,7 +676,9 @@
     }
     watching = false;
     setRefining(false);
-    loadOrder();
+    await loadOrder();
+    diffChanged();
+    renderOrder();
   }
   async function loadRefineState() {
     const s = await (await fetch('/api/sort-state')).json();
@@ -794,17 +819,20 @@
     $('promptmsg').textContent = 'reset to default';
   };
   async function runSort(llm) {
+    snapshotBuckets();
     $('sortmsg').textContent = 'sorting…';
     if (llm) $('bulkmsg').textContent = 'sorting…';
     const r = await (await fetch('/api/sort', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({llm, model: $('modelsel').value})})).json();
-    if (r.error) { $('sortmsg').textContent = r.error; if (llm) $('bulkmsg').textContent = r.error; return; }
-    if (llm) setRefining(true);  // watchRefine unlocks + reloads when done
+    if (r.error) { $('sortmsg').textContent = r.error; if (llm) $('bulkmsg').textContent = r.error; preActionBuckets = null; return; }
+    if (llm) setRefining(true);  // watchRefine unlocks + reloads (and diffs) when done
     else {
       $('sortmsg').textContent = '';
       $('heuristiclog').textContent = `${r.sorted} mods sorted (last run)`;
+      await loadOrder();
+      diffChanged();
+      renderOrder();
     }
-    loadOrder();
   }
   $('sortbtn').onclick = () => runSort(false);
   $('llmbtn').onclick = async () => {
@@ -815,12 +843,13 @@
     $('bulkmsg').textContent = msg;
   };
   $('descbtn').onclick = async () => {
+    snapshotBuckets();
     $('sortmsg').textContent = 'checking uncertain mods…';
     $('descmsg').textContent = 'checking uncertain mods…';
     const r = await (await fetch('/api/sort-desc', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({model: $('modelsel').value})})).json();
-    if (r.error) { $('sortmsg').textContent = r.error; $('descmsg').textContent = r.error; return; }
-    setRefining(true);  // watchRefine unlocks + reloads when done
+    if (r.error) { $('sortmsg').textContent = r.error; $('descmsg').textContent = r.error; preActionBuckets = null; return; }
+    setRefining(true);  // watchRefine unlocks + reloads (and diffs) when done
   };
 
   /* ---- real file conflicts (archive path overlap, no LLM) ---- */
@@ -838,7 +867,7 @@
     const unexpected = d.pairs.filter(p => !p.expected);
     const expected = d.pairs.filter(p => p.expected);
     $('conflictpairs').innerHTML = unexpected.length
-      ? `<div class="grp"><h2><span class="badge" style="background:#3a1214;color:var(--red)">Real file conflicts · ${unexpected.length} pair(s)</span></h2>${conflictList(unexpected)}</div>`
+      ? `<div class="grp"><h2><span class="badge" style="background:#3a2b12;color:var(--amber)">Real file conflicts · ${unexpected.length} pair(s)</span></h2>${conflictList(unexpected)}</div>`
       : '';
     $('conflictpairsexpected').innerHTML = expected.length
       ? `<details style="margin-top:10px"><summary class="dim" style="cursor:pointer">Expected overwrites (Foundation/Patches) · ${expected.length} pair(s)</summary>${conflictList(expected)}</details>`
@@ -870,10 +899,10 @@
   async function loadMissingRequirements() {
     const d = await (await fetch('/api/requirements-missing')).json();
     $('reqmissing').innerHTML = d.missing.length
-      ? `<details style="margin-top:10px"><summary class="dim" style="cursor:pointer">Missing requirements · ${d.missing.length}</summary>
+      ? `<div class="grp"><h2><span class="badge" style="background:#3a2b12;color:var(--amber)">Missing requirements · ${d.missing.length}</span></h2>
          <ul style="margin:6px 0 0 20px" class="dim">${d.missing.slice(0, 30).map(m =>
-           `<li>${esc(m.mod_name)} requires mod ${m.requires_mod_id}${m.notes ? ' — ' + esc(m.notes) : ''} — not in your library</li>`).join('')}
-           ${d.missing.length > 30 ? `<li>...and ${d.missing.length - 30} more</li>` : ''}</ul></details>`
+           `<li>${esc(m.mod_name)} requires <a href="${esc(m.requires_url)}" target="_blank" style="color:inherit">mod ${m.requires_mod_id}</a>${m.notes ? ' — ' + esc(m.notes) : ''} — not in your library</li>`).join('')}
+           ${d.missing.length > 30 ? `<li>...and ${d.missing.length - 30} more</li>` : ''}</ul></div>`
       : '';
     $('cnt-requirements').textContent = d.missing.length ? `· ${d.missing.length}` : '';
   }
@@ -922,11 +951,14 @@
     }
     enforcing = false;
     $('enforcebtn').disabled = false;
-    loadOrder();
+    await loadOrder();
+    diffChanged();
+    renderOrder();
   }
   $('enforcebtn').onclick = async () => {
+    snapshotBuckets();
     const r = await (await fetch('/api/enforce-order', {method: 'POST'})).json();
-    if (r.error) { $('enforcemsg').textContent = r.error; return; }
+    if (r.error) { $('enforcemsg').textContent = r.error; preActionBuckets = null; return; }
     $('enforcebtn').disabled = true;
     watchEnforce();
   };

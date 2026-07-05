@@ -63,10 +63,18 @@ correctly placed: omitting a mod means "leave it exactly where the
 heading shows it." No prose, no code fences. Format:
 <mod_id>|<correct bucket 1-20>
 Append |<flags> only when flagged (comma-separated). Allowed flags:
-UNCERTAIN, CONFLICT:<mod_id of the mod it conflicts with>
-Then, if any mods conflict, a final section:
+UNCERTAIN, CONFLICT:<mod_id of the mod it conflicts with>,
+DUPLICATE:<mod_id of the mod it's a duplicate of>
+Then, if any mods conflict or duplicate, a final section:
 CONFLICTS:
 <mod_id A> (<name A>) vs <mod_id B> (<name B>): <which should win and why>
+DUPLICATE: <mod_id A> (<name A>) vs <mod_id B> (<name B>): <why they're the same mod, which to keep>
+Use the DUPLICATE flag/line specifically when two entries are likely THE
+SAME mod under a different name or rerelease (e.g. "X" vs "X NG", "X SE" vs
+"X AE", "X Redux", an author's old version next to their replacement) —
+that's a real duplicate-install problem the user should resolve, not an
+install-order conflict. Use plain CONFLICT for mods that merely share files
+or don't play well together but are genuinely different mods.
 If nothing needs correcting, reply with just the CONFLICTS section, or
 nothing at all.
 
