@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import threading
 
-from . import db, mo2, nexus
+from . import conflicts, db, mo2, nexus
 
 log = logging.getLogger(__name__)
 
@@ -345,6 +345,12 @@ Rules:
 - The Nexus category is a hint only; it is often wrong (e.g. 'Bug Fixes'
   for SKSE plugins that belong in Extenders).
 
+Known file conflicts (ground truth: these mods' archives were actually
+inspected and share real file paths — not a guess). Use these instead of
+inventing your own; you may still flag a mod CONFLICT if you're separately
+confident of a real incompatibility, but prefer this list:
+{{CONFLICTS}}
+
 The mods below are listed under their current group heading — a heuristic
 guess. Most are right; move the misfits. Each line: mod_id|mod name|nexus
 category.
@@ -441,7 +447,12 @@ def _run_claude(mods, model="haiku"):
         sections.append(f"{m['mod_id']}|{m['mod_name']}|{m['category'] or ''}")
     lines = "\n".join(sections).strip()
     buckets = "\n".join(f"{n}. {label} — {BUCKET_HINTS[n]}" for n, label in BUCKETS.items())
-    prompt = get_prompt().replace("{{BUCKETS}}", buckets).replace("{{MODS}}", lines)
+    known_conflicts = conflicts.summary_for([m["mod_id"] for m in mods]) or "(none scanned yet)"
+    prompt = (
+        get_prompt().replace("{{BUCKETS}}", buckets)
+        .replace("{{CONFLICTS}}", known_conflicts)
+        .replace("{{MODS}}", lines)
+    )
     return _parse_reply(_call_claude(prompt, model))
 
 

@@ -55,7 +55,15 @@ def init_db():
             conn.execute("ALTER TABLE mod_sort ADD COLUMN description TEXT")
         if "desc_checked" not in cols_sort:
             conn.execute("ALTER TABLE mod_sort ADD COLUMN desc_checked INTEGER NOT NULL DEFAULT 0")
+        # real (not guessed) file-path overlaps between archives -- see modman/conflicts.py
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mod_files (file_id INTEGER NOT NULL, path TEXT NOT NULL,"
+            " PRIMARY KEY (file_id, path))"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mod_files_path ON mod_files (path)")
         cols = [r[1] for r in conn.execute("PRAGMA table_info(mods)")]
+        if "files_scanned" not in cols:
+            conn.execute("ALTER TABLE mods ADD COLUMN files_scanned INTEGER NOT NULL DEFAULT 0")
         if "status" not in cols:
             conn.execute("ALTER TABLE mods ADD COLUMN status TEXT DEFAULT 'ok'")
         if "mod_url" not in cols:

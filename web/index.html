@@ -180,6 +180,12 @@
       <select id="filtercat"><option value="">All categories</option></select>
       <select id="filtergroup"><option value="">All groups</option></select>
     </div>
+    <div class="toolbar" style="margin-top:8px">
+      <span class="dim" style="font-size:12px">File conflicts:</span>
+      <button class="btn ghost" id="scanbtn" title="Lists every downloaded archive's actual file paths (via 7z) and finds real overlaps between mods — not a guess">Scan archives</button>
+      <span id="scanmsg" class="dim"></span>
+    </div>
+    <div id="conflictpairs"></div>
     <details style="margin-top:10px">
       <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
       <textarea id="promptin" style="height:240px;margin-top:8px"></textarea>
@@ -244,7 +250,7 @@
   function showTab(t) {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.tab === t));
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.id === 'tab-' + t));
-    if (t === 'order') { loadOrder(); loadPrompt(); }
+    if (t === 'order') { loadOrder(); loadPrompt(); loadConflicts(); }
   }
   $('runbadge').onclick = () => showTab('progress');
   $('sortbadge').onclick = () => showTab('order');
@@ -619,6 +625,41 @@
       body: JSON.stringify({model: $('modelsel').value})})).json();
     if (r.error) { $('sortmsg').textContent = r.error; return; }
     setRefining(true);  // watchRefine unlocks + reloads when done
+  };
+
+  /* ---- real file conflicts (archive path overlap, no LLM) ---- */
+  async function loadConflicts() {
+    const d = await (await fetch('/api/conflicts')).json();
+    const unscanned = d.total - d.scanned;
+    $('scanmsg').textContent = unscanned
+      ? `${d.scanned}/${d.total} archives scanned — ${unscanned} new`
+      : `${d.scanned}/${d.total} archives scanned`;
+    $('conflictpairs').innerHTML = d.pairs.length
+      ? `<div class="grp"><h2><span class="badge" style="background:#3a1214;color:var(--red)">Real file conflicts · ${d.pairs.length} pair(s)</span></h2>
+         <ul style="margin:6px 0 0 20px" class="dim">${d.pairs.slice(0, 30).map(p =>
+           `<li>${esc(p.a.mod_name)} vs ${esc(p.b.mod_name)}: ${p.paths.length} shared file(s)</li>`).join('')}
+           ${d.pairs.length > 30 ? `<li>...and ${d.pairs.length - 30} more pair(s)</li>` : ''}</ul></div>`
+      : '';
+  }
+  let scanning = false;
+  async function watchScan() {
+    if (scanning) return;
+    scanning = true;
+    while (true) {
+      const s = await (await fetch('/api/scan-state')).json();
+      $('scanmsg').textContent = s.phase + (s.error ? ' — ' + s.error : '');
+      if (!s.running) break;
+      await new Promise(res => setTimeout(res, 1000));
+    }
+    scanning = false;
+    $('scanbtn').disabled = false;
+    loadConflicts();
+  }
+  $('scanbtn').onclick = async () => {
+    const r = await (await fetch('/api/scan-conflicts', {method: 'POST'})).json();
+    if (r.error) { $('scanmsg').textContent = r.error; return; }
+    $('scanbtn').disabled = true;
+    watchScan();
   };
 
   /* ---- import / diff ---- */

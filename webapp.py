@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-from modman import config, db, engine, mo2, nexus, sorter
+from modman import config, conflicts, db, engine, mo2, nexus, sorter
 
 app = FastAPI(title="Mod Manager")
 db.init_db()
@@ -119,6 +119,29 @@ async def redownload(request: Request):
 @app.get("/api/installorder")
 def installorder():
     return sorter.load_order()
+
+
+@app.post("/api/scan-conflicts")
+def scan_conflicts():
+    err = conflicts.start_scan()
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"started": True}
+
+
+@app.get("/api/scan-state")
+def scan_state():
+    return conflicts.state
+
+
+@app.get("/api/conflicts")
+def get_conflicts():
+    with db.connect() as conn:
+        total = conn.execute("SELECT COUNT(*) c FROM mods WHERE status = 'ok'").fetchone()["c"]
+        scanned = conn.execute(
+            "SELECT COUNT(*) c FROM mods WHERE status = 'ok' AND COALESCE(files_scanned, 0) = 1"
+        ).fetchone()["c"]
+    return {"pairs": conflicts.pairs(), "scanned": scanned, "total": total}
 
 
 @app.post("/api/sort")
