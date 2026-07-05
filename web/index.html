@@ -187,7 +187,7 @@
     <div class="toolgroup">
       <div class="toolgroup-h">
         <span class="toolgroup-label">Ordering</span>
-        <span class="dim" style="font-size:12px">Build or check the order itself — heuristic sort, Claude refine, verify against the last sort.</span>
+        <span class="dim" style="font-size:12px">Everything that builds or changes the order — heuristic sort, Claude refine, verify, apply curated collection rules.</span>
       </div>
       <div class="toolbar" style="margin:0">
         <button class="btn ghost" id="sortbtn">Sort (heuristic)</button>
@@ -199,53 +199,60 @@
         <button class="btn" id="llmbtn">Refine with Claude</button>
         <button class="btn ghost" id="descbtn" title="Re-checks only mods still flagged UNCERTAIN, using a Nexus summary for extra signal">Refine uncertain</button>
         <button class="btn ghost" id="checkbtn">Check order</button>
+        <button class="btn ghost" id="enforcebtn" title="Repositions mods that violate a curator-authored before/after/requires rule from an imported collection's own manifest — not a guess">Apply collection order rules</button>
+      </div>
+
+      <div class="subtabs" style="margin-top:10px">
+        <nav class="subtabnav">
+          <button data-subtab="sort" class="on">Sort <span id="cnt-sort" class="dim"></span></button>
+          <button data-subtab="rules">Collection rules</button>
+        </nav>
+        <div class="subtabpanel">
+          <div id="subpanel-sort" class="subpanel on">
+            <div id="sortmsg" class="dim"></div>
+            <div id="conflictnotes"></div>
+            <details style="margin-top:6px">
+              <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
+              <textarea id="promptin" style="height:220px;margin-top:8px"></textarea>
+              <div class="toolbar" style="margin-top:6px">
+                <button class="btn ghost" id="promptsave">Save prompt</button>
+                <button class="btn ghost" id="promptreset">Reset to default</button>
+                <span id="promptmsg" class="dim"></span>
+              </div>
+            </details>
+          </div>
+          <div id="subpanel-rules" class="subpanel">
+            <div id="enforcemsg" class="dim"></div>
+          </div>
+        </div>
       </div>
     </div>
 
     <div class="toolgroup" style="margin-top:10px">
       <div class="toolgroup-h">
         <span class="toolgroup-label">Analysis</span>
-        <span class="dim" style="font-size:12px">Real (not guessed) data pulled in from archives/Nexus to inform ordering — doesn't reorder anything by itself, except the last one.</span>
+        <span class="dim" style="font-size:12px">Real (not guessed) data pulled in from archives/Nexus to inform ordering — read-only, never moves a mod by itself.</span>
       </div>
       <div class="toolbar" style="margin:0">
         <button class="btn ghost" id="scanbtn" title="Lists every downloaded archive's actual file paths (via 7z) and finds real overlaps between mods — not a guess">Scan archives</button>
         <button class="btn ghost" id="reqbtn" title="Checks each mod's own real Nexus requirements — not a guess — and flags any that aren't in your library">Sync requirements</button>
-        <button class="btn ghost" id="enforcebtn" title="Repositions mods that violate a curator-authored before/after/requires rule from an imported collection's own manifest — not a guess">Apply collection order rules</button>
       </div>
-    </div>
 
-    <div class="subtabs">
-      <nav class="subtabnav">
-        <button data-subtab="sort" class="on">Sort <span id="cnt-sort" class="dim"></span></button>
-        <button data-subtab="conflicts">Conflicts <span id="cnt-conflicts" class="dim"></span></button>
-        <button data-subtab="requirements">Requirements <span id="cnt-requirements" class="dim"></span></button>
-        <button data-subtab="rules">Collection rules</button>
-      </nav>
-      <div class="subtabpanel">
-        <div id="subpanel-sort" class="subpanel on">
-          <div id="sortmsg" class="dim"></div>
-          <div id="conflictnotes"></div>
-          <details style="margin-top:6px">
-            <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
-            <textarea id="promptin" style="height:220px;margin-top:8px"></textarea>
-            <div class="toolbar" style="margin-top:6px">
-              <button class="btn ghost" id="promptsave">Save prompt</button>
-              <button class="btn ghost" id="promptreset">Reset to default</button>
-              <span id="promptmsg" class="dim"></span>
-            </div>
-          </details>
-        </div>
-        <div id="subpanel-conflicts" class="subpanel">
-          <div id="scanmsg" class="dim"></div>
-          <div id="conflictpairs"></div>
-          <div id="conflictpairsexpected"></div>
-        </div>
-        <div id="subpanel-requirements" class="subpanel">
-          <div id="reqmsg" class="dim"></div>
-          <div id="reqmissing"></div>
-        </div>
-        <div id="subpanel-rules" class="subpanel">
-          <div id="enforcemsg" class="dim"></div>
+      <div class="subtabs" style="margin-top:10px">
+        <nav class="subtabnav">
+          <button data-subtab="conflicts" class="on">Conflicts <span id="cnt-conflicts" class="dim"></span></button>
+          <button data-subtab="requirements">Requirements <span id="cnt-requirements" class="dim"></span></button>
+        </nav>
+        <div class="subtabpanel">
+          <div id="subpanel-conflicts" class="subpanel on">
+            <div id="scanmsg" class="dim"></div>
+            <div id="conflictpairs"></div>
+            <div id="conflictpairsexpected"></div>
+          </div>
+          <div id="subpanel-requirements" class="subpanel">
+            <div id="reqmsg" class="dim"></div>
+            <div id="reqmissing"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -314,17 +321,28 @@
   function showTab(t) {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.tab === t));
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.id === 'tab-' + t));
-    if (t === 'order') { loadOrder(); loadPrompt(); loadConflicts(); loadMissingRequirements(); }
+    if (t === 'order') { resetSubtabs(); loadOrder(); loadPrompt(); loadConflicts(); loadMissingRequirements(); }
     if (t === 'collections') { loadCollections(); }
   }
   $('runbadge').onclick = () => showTab('progress');
   $('sortbadge').onclick = () => showTab('order');
 
-  /* Install Order tab's own log/tool sub-tabs */
-  document.querySelectorAll('.subtabnav button').forEach(b => b.onclick = () => {
-    document.querySelectorAll('.subtabnav button').forEach(x => x.classList.toggle('on', x === b));
-    document.querySelectorAll('.subpanel').forEach(x => x.classList.toggle('on', x.id === 'subpanel-' + b.dataset.subtab));
-  });
+  /* Install Order tab's own log/tool sub-tabs -- each .subtabs group (Ordering's
+     Sort/Collection-rules, Analysis's Conflicts/Requirements) switches independently;
+     scoped to closest('.subtabs') so picking a tab in one group never hides the
+     other group's currently-shown panel. Always reopens on each group's first tab. */
+  function showSubtab(btn) {
+    const group = btn.closest('.subtabs');
+    group.querySelectorAll('.subtabnav button').forEach(x => x.classList.toggle('on', x === btn));
+    group.querySelectorAll('.subpanel').forEach(x => x.classList.toggle('on', x.id === 'subpanel-' + btn.dataset.subtab));
+  }
+  document.querySelectorAll('.subtabnav button').forEach(b => b.onclick = () => showSubtab(b));
+  function resetSubtabs() {
+    document.querySelectorAll('.subtabs').forEach(group => {
+      const first = group.querySelector('.subtabnav button');
+      if (first) showSubtab(first);
+    });
+  }
 
   /* keep search bar pinned right below the (wrappable) header */
   function setSticky() {
