@@ -34,8 +34,10 @@ def index():
 @app.get("/api/mods")
 def mods(q: str = None):
     rows = db.list_mods(q)
+    collections = db.collections_for_files([r["file_id"] for r in rows])
     for r in rows:
         r["installed"] = mo2.is_installed(r["filename"])
+        r["collections"] = collections.get(r["file_id"], [])
     return rows
 
 
@@ -61,15 +63,29 @@ async def diff(request: Request):
 async def fetch_collection(request: Request):
     body = await request.json()
     url = (body or {}).get("url", "")
+    is_collection = "/collections/" in url
     try:
-        fetch = nexus.fetch_collection if "/collections/" in url else nexus.fetch_mod
+        fetch = nexus.fetch_collection if is_collection else nexus.fetch_mod
         payload = fetch(url)
         modfiles = engine.parse_modlist(payload)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse({"error": f"fetch failed: {e}"}, status_code=502)
-    return {"modlist": payload, "diff": engine.diff_modlist(modfiles), "count": len(modfiles)}
+    collection = None
+    if is_collection:
+        rev = payload["data"]["collectionRevision"]
+        slug = nexus.collection_slug(url)
+        name = (rev.get("collection") or {}).get("name")
+        collection_id = db.upsert_collection(slug, rev.get("collectionId"), rev.get("revisionNumber"), name)
+        # link every mod this collection references that's already in the
+        # library, not just whatever ends up freshly downloaded below
+        db.link_collection_files(collection_id, [m["fileId"] for m in modfiles])
+        collection = {"id": collection_id, "slug": slug, "name": name}
+    return {
+        "modlist": payload, "diff": engine.diff_modlist(modfiles),
+        "count": len(modfiles), "collection": collection,
+    }
 
 
 @app.post("/api/download")
@@ -80,7 +96,8 @@ async def download(request: Request):
         file_ids = body["file_ids"]
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "expected {modlist, file_ids}"}, status_code=400)
-    err = engine.start_download(modfiles, file_ids)
+    collection_id = (body or {}).get("collection_id")
+    err = engine.start_download(modfiles, file_ids, collection_id=collection_id)
     if err:
         return JSONResponse({"error": err}, status_code=409)
     return {"started": len(file_ids)}

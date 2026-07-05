@@ -131,6 +131,25 @@ def list_mods(q=None):
         return [dict(r) for r in conn.execute(sql, args)]
 
 
+def collections_for_files(file_ids):
+    """file_id -> [{slug, name}] for every collection that references it.
+    Empty list means manually installed (or a collection whose import never
+    got recorded)."""
+    by_file = {fid: [] for fid in file_ids}
+    if not file_ids:
+        return by_file
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT mc.file_id, c.slug, c.name FROM mod_collections mc"
+            f" JOIN collections c ON c.id = mc.collection_id"
+            f" WHERE mc.file_id IN ({','.join('?' * len(file_ids))})",
+            file_ids,
+        ).fetchall()
+    for r in rows:
+        by_file.setdefault(r["file_id"], []).append({"slug": r["slug"], "name": r["name"]})
+    return by_file
+
+
 def record_downloads(entries):
     """Persist finished progress entries: 'done' as ok, 'failed' flagged missing.
 

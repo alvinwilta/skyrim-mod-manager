@@ -155,7 +155,7 @@
       <thead><tr>
         <th style="width:30px"><input type="checkbox" id="selall"></th>
         <th>Mod</th><th>File</th><th class="num">Version</th>
-        <th class="hide-sm">Author</th><th class="hide-sm">Category</th>
+        <th class="hide-sm">Author</th><th class="hide-sm">Category</th><th class="hide-sm">Source</th>
         <th class="num">Size</th><th class="num hide-sm">Downloaded</th>
       </tr></thead>
       <tbody id="libbody"></tbody>
@@ -295,6 +295,9 @@
       <td class="num">${esc(r.file_version)}</td>
       <td class="hide-sm dim">${esc(r.author)}</td>
       <td class="hide-sm dim">${esc(r.category)}</td>
+      <td class="hide-sm dim">${(r.collections || []).length
+        ? r.collections.map(c => `<span class="badge b-same" title="${esc(c.slug)}">${esc(c.name || c.slug)}</span>`).join(' ')
+        : 'manual'}</td>
       <td class="num dim">${human(r.size_bytes)}</td>
       <td class="num hide-sm dim" title="${esc(r.downloaded_at)}">${esc((r.downloaded_at || '').slice(0, 16))}</td>
     </tr>`).join('');
@@ -710,6 +713,7 @@
 
   /* ---- import / diff ---- */
   let lastModlist = null;
+  let lastCollection = null;  // {id, slug, name} when the fetch was a collection, else null
   $('filein').onchange = async e => {
     if (e.target.files[0]) $('jsonin').value = await e.target.files[0].text();
   };
@@ -723,6 +727,7 @@
       const d = await res.json();
       if (d.error) { $('differr').textContent = d.error; return; }
       lastModlist = d.modlist;
+      lastCollection = d.collection;
       $('jsonin').value = '';
       $('jsonin').placeholder = `fetched ${d.count} files from ${url}`;
       renderDiff(d.diff);
@@ -739,6 +744,7 @@
     const d = await res.json();
     if (d.error) { $('differr').textContent = d.error; return; }
     lastModlist = payload;
+    lastCollection = null;  // pasted/uploaded JSON has no known collection identity
     renderDiff(d);
   };
 
@@ -779,7 +785,7 @@
   $('dlbtn').onclick = async () => {
     const ids = [...$('diffout').querySelectorAll('input:checked')].map(b => +b.dataset.fid);
     const res = await fetch('/api/download', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({modlist: lastModlist, file_ids: ids})});
+      body: JSON.stringify({modlist: lastModlist, file_ids: ids, collection_id: lastCollection?.id ?? null})});
     const d = await res.json();
     if (d.error) { $('differr').textContent = d.error; return; }
     showTab('progress');

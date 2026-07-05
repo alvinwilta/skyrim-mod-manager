@@ -99,7 +99,7 @@ def _progress_entry(modfile):
     }
 
 
-def run_job(modfiles, file_ids):
+def run_job(modfiles, file_ids, collection_id=None):
     """Synchronous download pipeline. Returns {'done': n, 'failed': n}."""
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
@@ -149,6 +149,10 @@ def run_job(modfiles, file_ids):
         list(ex.map(work, tasks))
 
     db.record_downloads(progress.values())
+
+    if collection_id is not None:
+        done_ids = [e["meta"]["file_id"] for e in progress.values() if e["status"] == "done"]
+        db.link_collection_files(collection_id, done_ids)
 
     # scan the freshly-recorded archives immediately (idempotent, cheap --
     # only touches files_scanned=0 rows) so conflict/BSA metadata is ready
@@ -242,7 +246,7 @@ def modfiles_from_db(file_ids):
     ]
 
 
-def start_download(modfiles, file_ids):
+def start_download(modfiles, file_ids, collection_id=None):
     """Async wrapper around run_job for the web app. Returns error string or None."""
     if not _job_lock.acquire(blocking=False):
         return "a download job is already running"
@@ -250,7 +254,7 @@ def start_download(modfiles, file_ids):
     def runner():
         try:
             state.update({"error": None, "running": True})
-            run_job(modfiles, file_ids)
+            run_job(modfiles, file_ids, collection_id=collection_id)
         except Exception as e:
             state.update({"error": str(e), "phase": "Error"})
         finally:
