@@ -1,8 +1,9 @@
 """Real (not guessed) install-order conflicts: two mods whose archives both
 contain the same Data-relative file path, so one silently overwrites the
 other depending on left-panel install order. This is a fact lookup from
-actual archive contents (via `7z l`), independent of sorter.py's LLM-guessed
-conflict notes -- nothing here is inferred from a mod's name or category.
+actual archive contents (via `7z l`), independent of llm_refine.py's
+LLM-guessed conflict notes -- nothing here is inferred from a mod's name
+or category.
 
 Known limits, both inherent to the approach (MO2's own Conflicts tab shares
 them):
@@ -19,6 +20,7 @@ import subprocess
 import threading
 
 from . import db
+from .buckets import STRUCTURAL_BUCKETS
 from .config import DOWNLOADS_DIR
 
 log = logging.getLogger(__name__)
@@ -114,6 +116,47 @@ def scan():
     return len(rows)
 
 
+def classify_file_types():
+    """Derive bsa/loose/mixed per mod_id from already-scanned mod_files --
+    no new 7z calls, pure re-derivation from data already on disk. Safe to
+    call every scan run: overwrites any stale value, including clearing it
+    back to NULL if a mod's file set ends up with no evidence either way.
+
+    'bsa' = archive(s) contain only packed .bsa/.ba2 (+ plugin files) --
+    left-panel position barely matters, nothing here can lose a real file
+    overwrite. 'loose' = real Data-relative assets present. 'mixed' = both
+    (loose still wins over any bsa per the engine's fixed asset-load
+    priority, so still position-sensitive)."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT m.mod_id,"
+            " SUM(CASE WHEN mf.path IS NOT NULL AND ("
+            "   lower(mf.path) LIKE '%.bsa' OR lower(mf.path) LIKE '%.ba2'"
+            " ) THEN 1 ELSE 0 END) AS packed,"
+            " SUM(CASE WHEN mf.path IS NOT NULL"
+            "   AND lower(mf.path) NOT LIKE '%.bsa' AND lower(mf.path) NOT LIKE '%.ba2'"
+            "   AND lower(mf.path) NOT LIKE '%.esp' AND lower(mf.path) NOT LIKE '%.esl'"
+            "   AND lower(mf.path) NOT LIKE '%.esm'"
+            " THEN 1 ELSE 0 END) AS loose"
+            " FROM mods m LEFT JOIN mod_files mf ON mf.file_id = m.file_id"
+            " WHERE m.status = 'ok' AND m.files_scanned = 1"
+            " GROUP BY m.mod_id"
+        ).fetchall()
+        for r in rows:
+            file_type = (
+                "mixed" if r["packed"] and r["loose"]
+                else "bsa" if r["packed"]
+                else "loose" if r["loose"]
+                else None
+            )
+            conn.execute(
+                "INSERT INTO mod_sort (mod_id, file_type) VALUES (?, ?)"
+                " ON CONFLICT(mod_id) DO UPDATE SET file_type = excluded.file_type",
+                (r["mod_id"], file_type),
+            )
+    return len(rows)
+
+
 def start_scan():
     """Async archive scan. Returns error string or None (mirrors start_download)."""
     if not _lock.acquire(blocking=False):
@@ -123,6 +166,7 @@ def start_scan():
         try:
             state.update({"error": None, "running": True})
             n = scan()
+            classify_file_types()
             state["phase"] = f"Scanned {n} new archive(s)" if n else "Nothing new to scan"
         except Exception as e:
             state.update({"error": str(e), "phase": "Error"})
@@ -136,9 +180,15 @@ def start_scan():
 
 def pairs():
     """Mod pairs that share at least one real Data-relative file path,
-    sorted by how many files they share. Each pair lists the actual paths,
-    so the UI/prompt can say 'A vs B: 14 files' with the receipts, not a
-    prose guess."""
+    sorted unexpected-first then by how many files they share. Each pair
+    lists the actual paths, so the UI/prompt can say 'A vs B: 14 files' with
+    the receipts, not a prose guess.
+
+    'expected' marks a pair where either side is in a bucket designed to be
+    broadly overwritten (Foundation) or to broadly overwrite (Patches) --
+    structurally intended, not a real collision to worry about. Derived
+    live from the current bucket every call, never persisted, so it can't
+    go stale if a mod's bucket changes later."""
     with db.connect() as conn:
         rows = conn.execute(
             "SELECT mf.path, m.mod_id, m.mod_name, s.bucket FROM mod_files mf"
@@ -164,15 +214,23 @@ def pairs():
                     "paths": [],
                 })
                 entry["paths"].append(path)
-    return sorted(found.values(), key=lambda p: -len(p["paths"]))
+    for p in found.values():
+        p["expected"] = p["a"]["bucket"] in STRUCTURAL_BUCKETS or p["b"]["bucket"] in STRUCTURAL_BUCKETS
+    return sorted(found.values(), key=lambda p: (p["expected"], -len(p["paths"])))
 
 
 def summary_for(mod_ids, limit=40):
     """Compact 'ModA vs ModB: N shared files' lines for a set of mod ids --
     meant to be injected into the sorter's LLM prompt as ground truth,
-    replacing a guess with a fact. Returns '' if nothing scanned/overlapping."""
+    replacing a guess with a fact. Excludes 'expected' (Foundation/Patches)
+    pairs so the model's conflict context stays on genuinely uncertain
+    collisions instead of restating the structurally-obvious. Returns ''
+    if nothing scanned/overlapping."""
     ids = set(mod_ids)
-    relevant = [p for p in pairs() if p["a"]["mod_id"] in ids and p["b"]["mod_id"] in ids]
+    relevant = [
+        p for p in pairs()
+        if not p["expected"] and p["a"]["mod_id"] in ids and p["b"]["mod_id"] in ids
+    ]
     lines = [
         f"{p['a']['mod_name']} ({p['a']['mod_id']}) vs {p['b']['mod_name']} ({p['b']['mod_id']}):"
         f" {len(p['paths'])} shared file(s)"

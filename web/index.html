@@ -64,6 +64,7 @@
   .b-new { background: #14351f; color: var(--green); }
   .b-upd { background: #3a2b12; color: var(--amber); }
   .b-same { background: #232833; color: var(--dim); }
+  .b-bsa { background: #12283a; color: var(--blue); }
 
   .grp { margin-top: 20px; }
   tr.r-new td { background: #10241a; }
@@ -186,6 +187,7 @@
       <span id="scanmsg" class="dim"></span>
     </div>
     <div id="conflictpairs"></div>
+    <div id="conflictpairsexpected"></div>
     <details style="margin-top:10px">
       <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
       <textarea id="promptin" style="height:240px;margin-top:8px"></textarea>
@@ -419,7 +421,7 @@
       const moved = flags.some(f => f.startsWith('MOVED'));
       html += `<tr class="ordrow${wrong ? ' r-wrong' : moved ? ' r-upd' : m.locked ? ' r-locked' : ''}" draggable="${!refining}" data-mid="${m.mod_id}" data-pos="${n}" ${wrong ? `title="${esc(hint)}"` : ''}>
         <td class="num" style="width:70px;white-space:nowrap"><button class="lockbtn${m.locked ? ' on' : ''}" data-locked="${m.locked ? 1 : 0}" title="${m.locked ? 'pinned — sorts will not move this; click to unpin' : 'pin at this position'}">${m.locked ? '🔒' : '🔓'}</button>${refining ? `<span class="dim">${n}</span>` : `<a href="#" class="posnum" title="click to move">${n}</a>`}</td>
-        <td>${m.installed ? '<span class="badge b-new">installed</span> ' : ''}${esc(m.mod_name)} ${flags.map(flagBadge).join(' ')}${wrong ? ' ' + flagBadge('WRONG SPOT') : ''}</td>
+        <td>${m.installed ? '<span class="badge b-new">installed</span> ' : ''}${m.file_type === 'bsa' ? '<span class="badge b-bsa" title="archive contains only packed BSA/BA2 + plugin files — no loose Data assets, position barely matters for real conflicts">BSA-only</span> ' : ''}${esc(m.mod_name)} ${flags.map(flagBadge).join(' ')}${wrong ? ' ' + flagBadge('WRONG SPOT') : ''}</td>
         <td class="num"><a href="${esc(m.mod_url)}" target="_blank" class="dim">${m.mod_id}</a></td>
         <td class="hide-sm dim">${esc(m.category || '')}</td>
         <td class="num">${groupBadge(m.bucket, orderBuckets)}</td>
@@ -628,17 +630,24 @@
   };
 
   /* ---- real file conflicts (archive path overlap, no LLM) ---- */
+  function conflictList(ps) {
+    return `<ul style="margin:6px 0 0 20px" class="dim">${ps.slice(0, 30).map(p =>
+      `<li>${esc(p.a.mod_name)} vs ${esc(p.b.mod_name)}: ${p.paths.length} shared file(s)</li>`).join('')}
+      ${ps.length > 30 ? `<li>...and ${ps.length - 30} more pair(s)</li>` : ''}</ul>`;
+  }
   async function loadConflicts() {
     const d = await (await fetch('/api/conflicts')).json();
     const unscanned = d.total - d.scanned;
     $('scanmsg').textContent = unscanned
       ? `${d.scanned}/${d.total} archives scanned — ${unscanned} new`
       : `${d.scanned}/${d.total} archives scanned`;
-    $('conflictpairs').innerHTML = d.pairs.length
-      ? `<div class="grp"><h2><span class="badge" style="background:#3a1214;color:var(--red)">Real file conflicts · ${d.pairs.length} pair(s)</span></h2>
-         <ul style="margin:6px 0 0 20px" class="dim">${d.pairs.slice(0, 30).map(p =>
-           `<li>${esc(p.a.mod_name)} vs ${esc(p.b.mod_name)}: ${p.paths.length} shared file(s)</li>`).join('')}
-           ${d.pairs.length > 30 ? `<li>...and ${d.pairs.length - 30} more pair(s)</li>` : ''}</ul></div>`
+    const unexpected = d.pairs.filter(p => !p.expected);
+    const expected = d.pairs.filter(p => p.expected);
+    $('conflictpairs').innerHTML = unexpected.length
+      ? `<div class="grp"><h2><span class="badge" style="background:#3a1214;color:var(--red)">Real file conflicts · ${unexpected.length} pair(s)</span></h2>${conflictList(unexpected)}</div>`
+      : '';
+    $('conflictpairsexpected').innerHTML = expected.length
+      ? `<details style="margin-top:10px"><summary class="dim" style="cursor:pointer">Expected overwrites (Foundation/Patches) · ${expected.length} pair(s)</summary>${conflictList(expected)}</details>`
       : '';
   }
   let scanning = false;

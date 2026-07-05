@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-from modman import config, conflicts, db, engine, mo2, nexus, sorter
+from modman import config, conflicts, db, engine, llm_refine, mo2, nexus, order_store
 
 app = FastAPI(title="Mod Manager")
 db.init_db()
@@ -118,7 +118,7 @@ async def redownload(request: Request):
 
 @app.get("/api/installorder")
 def installorder():
-    return sorter.load_order()
+    return order_store.load_order()
 
 
 @app.post("/api/scan-conflicts")
@@ -147,9 +147,9 @@ def get_conflicts():
 @app.post("/api/sort")
 async def sort_mods(request: Request):
     body = await request.json()
-    n = sorter.heuristic_sort()
+    n = order_store.heuristic_sort()
     if (body or {}).get("llm"):
-        err = sorter.start_llm_refine((body or {}).get("model") or "haiku")
+        err = llm_refine.start_llm_refine((body or {}).get("model") or "haiku")
         if err:
             return JSONResponse({"error": err}, status_code=409)
     return {"sorted": n, "llm": bool((body or {}).get("llm"))}
@@ -158,7 +158,7 @@ async def sort_mods(request: Request):
 @app.post("/api/sort-desc")
 async def sort_desc(request: Request):
     body = await request.json()
-    err = sorter.start_desc_refine((body or {}).get("model") or "haiku")
+    err = llm_refine.start_desc_refine((body or {}).get("model") or "haiku")
     if err:
         return JSONResponse({"error": err}, status_code=409)
     return {"started": True}
@@ -166,12 +166,12 @@ async def sort_desc(request: Request):
 
 @app.get("/api/sort-state")
 def sort_state():
-    return sorter.state
+    return llm_refine.state
 
 
 @app.post("/api/sort-stop")
 def sort_stop():
-    err = sorter.stop()
+    err = llm_refine.stop()
     if err:
         return JSONResponse({"error": err}, status_code=409)
     return {"stopped": True}
@@ -186,7 +186,7 @@ async def order_move(request: Request):
         position = int(body["position"])
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "expected {mod_id | mod_ids, position}"}, status_code=400)
-    err = sorter.move(mod_ids, position)
+    err = order_store.move(mod_ids, position)
     if err:
         return JSONResponse({"error": err}, status_code=400)
     return {"moved": mod_ids, "position": position}
@@ -199,7 +199,7 @@ async def order_lock(request: Request):
         mod_id, locked = int(body["mod_id"]), bool(body["locked"])
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "expected {mod_id, locked}"}, status_code=400)
-    err = sorter.set_lock(mod_id, locked)
+    err = order_store.set_lock(mod_id, locked)
     if err:
         return JSONResponse({"error": err}, status_code=400)
     return {"mod_id": mod_id, "locked": locked}
@@ -207,18 +207,18 @@ async def order_lock(request: Request):
 
 @app.get("/api/order/check")
 def order_check():
-    return sorter.check_order()
+    return order_store.check_order()
 
 
 @app.get("/api/sort-prompt")
 def get_sort_prompt():
-    return {"prompt": sorter.get_prompt(), "default": sorter.DEFAULT_PROMPT}
+    return {"prompt": llm_refine.get_prompt(), "default": llm_refine.DEFAULT_PROMPT}
 
 
 @app.post("/api/sort-prompt")
 async def set_sort_prompt(request: Request):
     body = await request.json()
-    err = sorter.set_prompt((body or {}).get("prompt", ""))
+    err = llm_refine.set_prompt((body or {}).get("prompt", ""))
     if err:
         return JSONResponse({"error": err}, status_code=400)
     return {"saved": True}

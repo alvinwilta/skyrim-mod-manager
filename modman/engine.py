@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-from . import db, mo2, nexus
+from . import conflicts, db, mo2, nexus
 from .config import DOWNLOADS_DIR, MAX_WORKERS
 
 log = logging.getLogger(__name__)
@@ -148,6 +148,15 @@ def run_job(modfiles, file_ids):
         list(ex.map(work, tasks))
 
     db.record_downloads(progress.values())
+
+    # scan the freshly-recorded archives immediately (idempotent, cheap --
+    # only touches files_scanned=0 rows) so conflict/BSA metadata is ready
+    # without waiting for a manual "Scan archives" click
+    try:
+        conflicts.scan()
+        conflicts.classify_file_types()
+    except Exception as e:
+        log.warning("post-download archive scan failed: %s", e)
 
     failed = sum(1 for e in progress.values() if e["status"] == "failed")
     state["phase"] = f"Finished ({failed} failed)" if failed else "Finished"

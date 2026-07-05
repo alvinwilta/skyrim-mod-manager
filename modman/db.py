@@ -1,4 +1,5 @@
 import os
+import shutil
 import sqlite3
 import time
 
@@ -12,6 +13,9 @@ def connect():
 
 
 def init_db():
+    # one-generation safety net before any migration below touches the schema
+    if os.path.isfile(DB_PATH):
+        shutil.copy2(DB_PATH, DB_PATH + ".bak")
     with connect() as conn:
         conn.execute(
             """
@@ -46,7 +50,8 @@ def init_db():
                 expected_bucket INTEGER,
                 locked INTEGER NOT NULL DEFAULT 0,
                 description TEXT,
-                desc_checked INTEGER NOT NULL DEFAULT 0
+                desc_checked INTEGER NOT NULL DEFAULT 0,
+                file_type TEXT
             )
             """
         )
@@ -55,6 +60,8 @@ def init_db():
             conn.execute("ALTER TABLE mod_sort ADD COLUMN description TEXT")
         if "desc_checked" not in cols_sort:
             conn.execute("ALTER TABLE mod_sort ADD COLUMN desc_checked INTEGER NOT NULL DEFAULT 0")
+        if "file_type" not in cols_sort:
+            conn.execute("ALTER TABLE mod_sort ADD COLUMN file_type TEXT")
         # real (not guessed) file-path overlaps between archives -- see modman/conflicts.py
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mod_files (file_id INTEGER NOT NULL, path TEXT NOT NULL,"
