@@ -101,6 +101,10 @@ def init_db():
             " collection_id INTEGER NOT NULL, PRIMARY KEY (file_id, collection_id))"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mod_collections_collection ON mod_collections (collection_id)")
+        cols_mc = [r[1] for r in conn.execute("PRAGMA table_info(mod_collections)")]
+        for col in ("mod_id", "mod_name", "mod_url"):
+            if col not in cols_mc:
+                conn.execute(f"ALTER TABLE mod_collections ADD COLUMN {col} {'INTEGER' if col == 'mod_id' else 'TEXT'}")
         # curator-authored before/after/requires/conflicts/recommends/provides rules
         # from a collection's own manifest -- see modman/collection_rules.py
         conn.execute(
@@ -198,38 +202,40 @@ def upsert_collection(slug, nexus_collection_id=None, revision_number=None, name
         return conn.execute("SELECT id FROM collections WHERE slug = ?", (slug,)).fetchone()["id"]
 
 
-def link_collection_files(collection_id, file_ids):
-    """Link mods already present in the library to a collection that
-    references them -- called both at diff time (mods you already have that
-    this collection also lists) and after a download batch completes (mods
-    freshly downloaded from it). Silently ignores file_ids not yet in `mods`."""
-    if not file_ids:
+def link_collection_files(collection_id, entries):
+    """Link a collection to every mod it references -- called both at fetch
+    time (the collection's FULL modlist, whether or not any file is actually
+    downloaded yet) and after a download batch completes. Each entry is
+    {file_id, mod_id, mod_name, mod_url}: stored on mod_collections itself
+    (not derived via a join to `mods`) so collection membership/mod list is
+    known immediately on import, before the mod ever exists in `mods`."""
+    if not entries:
         return 0
     with connect() as conn:
-        have = {
-            r["file_id"] for r in conn.execute(
-                f"SELECT file_id FROM mods WHERE file_id IN ({','.join('?' * len(file_ids))})", file_ids
-            )
-        }
         conn.executemany(
-            "INSERT OR IGNORE INTO mod_collections (file_id, collection_id) VALUES (?, ?)",
-            [(fid, collection_id) for fid in have],
+            "INSERT INTO mod_collections (file_id, collection_id, mod_id, mod_name, mod_url)"
+            " VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(file_id, collection_id) DO UPDATE SET mod_id = excluded.mod_id,"
+            " mod_name = excluded.mod_name, mod_url = excluded.mod_url",
+            [(e["file_id"], collection_id, e["mod_id"], e["mod_name"], e["mod_url"]) for e in entries],
         )
-        return len(have)
+        return len(entries)
 
 
 def list_collections():
-    """Every imported collection with how many of its mods are in the
-    library (regardless of file status -- 'ok', 'missing', etc). `enabled`
-    controls whether this collection's rules feed the precedence enforce
-    pass (see modman/precedence.py) -- toggling it off doesn't touch
+    """Every imported collection: how many mods it lists total vs. how many
+    are actually downloaded, and how many curated order rules it has.
+    `enabled` controls whether this collection's rules feed the precedence
+    enforce pass (see modman/precedence.py) -- toggling it off doesn't touch
     provenance tracking, just whether its ordering rules are applied."""
     with connect() as conn:
         rows = conn.execute(
             "SELECT c.id, c.slug, c.name, c.revision_number, c.enabled,"
             " COUNT(DISTINCT mc.file_id) AS mod_count,"
+            " COUNT(DISTINCT CASE WHEN m.status = 'ok' THEN mc.file_id END) AS downloaded_count,"
             " COUNT(DISTINCT r.rowid) AS rule_count"
             " FROM collections c LEFT JOIN mod_collections mc ON mc.collection_id = c.id"
+            " LEFT JOIN mods m ON m.file_id = mc.file_id"
             " LEFT JOIN collection_mod_rules r ON r.collection_id = c.id"
             " GROUP BY c.id ORDER BY c.name COLLATE NOCASE"
         ).fetchall()
@@ -242,21 +248,27 @@ def set_collection_enabled(collection_id, enabled):
 
 
 def collection_mods(collection_id):
-    """This collection's mods, in the current global install order (same
-    rank the Install Order tab uses) -- i.e. "what load order will this
-    collection's mods actually end up in."""
+    """This collection's full mod list -- including mods not yet downloaded
+    -- in the current global install order for whichever ones are (same rank
+    the Install Order tab uses)."""
     with connect() as conn:
         rows = conn.execute(
-            "SELECT m.mod_id, m.mod_name, m.mod_url, s.bucket, s.rank, s.locked"
-            " FROM mod_collections mc JOIN mods m ON m.file_id = mc.file_id AND m.status = 'ok'"
-            " LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
-            " WHERE mc.collection_id = ? GROUP BY m.mod_id"
-            " ORDER BY s.rank IS NULL, s.rank, s.bucket, m.mod_name COLLATE NOCASE",
+            "SELECT COALESCE(m.mod_id, mc.mod_id) AS mod_id,"
+            " COALESCE(m.mod_name, mc.mod_name) AS mod_name,"
+            " COALESCE(m.mod_url, mc.mod_url) AS mod_url,"
+            " MAX(CASE WHEN m.status = 'ok' THEN 1 ELSE 0 END) AS downloaded,"
+            " s.bucket, s.rank, s.locked"
+            " FROM mod_collections mc"
+            " LEFT JOIN mods m ON m.file_id = mc.file_id AND m.status = 'ok'"
+            " LEFT JOIN mod_sort s ON s.mod_id = COALESCE(m.mod_id, mc.mod_id)"
+            " WHERE mc.collection_id = ? GROUP BY COALESCE(m.mod_id, mc.mod_id)"
+            " ORDER BY downloaded DESC, s.rank IS NULL, s.rank, s.bucket, mod_name COLLATE NOCASE",
             (collection_id,),
         ).fetchall()
     return [
         {
             "mod_id": r["mod_id"], "mod_name": r["mod_name"], "mod_url": r["mod_url"],
+            "downloaded": bool(r["downloaded"]),
             "bucket": r["bucket"], "locked": bool(r["locked"]),
         }
         for r in rows

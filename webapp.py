@@ -80,9 +80,17 @@ async def fetch_collection(request: Request):
         slug = nexus.collection_slug(url)
         name = (rev.get("collection") or {}).get("name")
         collection_id = db.upsert_collection(slug, rev.get("collectionId"), rev.get("revisionNumber"), name)
-        # link every mod this collection references that's already in the
-        # library, not just whatever ends up freshly downloaded below
-        db.link_collection_files(collection_id, [m["fileId"] for m in modfiles])
+        # link this collection's FULL modlist now, whether or not any file
+        # is actually downloaded -- import alone should register everything
+        entries = [
+            {
+                "file_id": m["fileId"], "mod_id": m["file"]["mod"]["modId"],
+                "mod_name": m["file"]["mod"]["name"],
+                "mod_url": f"https://www.nexusmods.com/{(m['file']['mod'].get('game') or {}).get('domainName') or 'skyrimspecialedition'}/mods/{m['file']['mod']['modId']}",
+            }
+            for m in modfiles
+        ]
+        db.link_collection_files(collection_id, entries)
         collection = {"id": collection_id, "slug": slug, "name": name}
         # curated ordering rules, if a personal API key is configured --
         # non-fatal, collection provenance above still works without it

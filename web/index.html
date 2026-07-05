@@ -755,7 +755,7 @@
               <input type="checkbox" class="collenabled" data-cid="${c.id}" ${c.enabled ? 'checked' : ''}>
               ${esc(c.name || c.slug)}
             </label>
-            <span class="dim" style="font-size:12px">${c.mod_count} mod(s) in library · ${c.rule_count} order rule(s)</span>
+            <span class="dim" style="font-size:12px">${c.downloaded_count}/${c.mod_count} downloaded · ${c.rule_count} order rule(s)</span>
             <button class="btn ghost" style="padding:2px 10px;font-size:12px" data-cid="${c.id}" data-toggle="1">view order</button>
           </h2>
           <div class="collmods" data-cid="${c.id}" style="display:none"></div>
@@ -777,12 +777,12 @@
     const d = await (await fetch(`/api/collections/${cid}/mods`)).json();
     box.innerHTML = d.mods.length
       ? `<table><thead><tr><th style="width:50px">#</th><th>Mod</th><th class="num">Group</th></tr></thead>
-         <tbody>${d.mods.map((m, i) => `<tr>
+         <tbody>${d.mods.map((m, i) => `<tr${m.downloaded ? '' : ' class="dim"'}>
            <td class="num dim">${i + 1}</td>
-           <td>${m.locked ? '🔒 ' : ''}<a href="${esc(m.mod_url)}" target="_blank" style="color:inherit">${esc(m.mod_name)}</a></td>
+           <td>${m.locked ? '🔒 ' : ''}<a href="${esc(m.mod_url)}" target="_blank" style="color:inherit">${esc(m.mod_name)}</a>${m.downloaded ? '' : ' <span class="dim" style="font-size:11px">(not downloaded)</span>'}</td>
            <td class="num">${groupBadge(m.bucket, d.buckets)}</td>
          </tr>`).join('')}</tbody></table>`
-      : '<p class="dim">No mods from this collection are currently in your library.</p>';
+      : '<p class="dim">This collection has no mods.</p>';
     box.style.display = '';
     btn.textContent = 'hide order';
   }

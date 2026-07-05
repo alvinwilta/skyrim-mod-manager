@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 
 from . import conflicts, db, mo2, nexus
-from .config import DOWNLOADS_DIR, MAX_WORKERS
+from .config import DOWNLOADS_DIR, GAME, MAX_WORKERS
 
 log = logging.getLogger(__name__)
 
@@ -151,8 +151,15 @@ def run_job(modfiles, file_ids, collection_id=None):
     db.record_downloads(progress.values())
 
     if collection_id is not None:
-        done_ids = [e["meta"]["file_id"] for e in progress.values() if e["status"] == "done"]
-        db.link_collection_files(collection_id, done_ids)
+        entries = [
+            {
+                "file_id": e["meta"]["file_id"], "mod_id": e["meta"]["mod_id"],
+                "mod_name": e["meta"]["mod_name"],
+                "mod_url": f"https://www.nexusmods.com/{e['meta']['game'] or GAME}/mods/{e['meta']['mod_id']}",
+            }
+            for e in progress.values() if e["status"] == "done"
+        ]
+        db.link_collection_files(collection_id, entries)
 
     # scan the freshly-recorded archives immediately (idempotent, cheap --
     # only touches files_scanned=0 rows) so conflict/BSA metadata is ready
