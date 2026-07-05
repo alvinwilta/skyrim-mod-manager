@@ -34,6 +34,12 @@ MAX_WORKERS = 10
 
 # MO2 base directory: downloads/mods paths derive from it (.env: MO2_BASE_DIR)
 BASE_DIR = os.path.expanduser(_env.get("MO2_BASE_DIR") or os.environ.get("MO2_BASE_DIR") or "/games/modding")
+
+# Personal Nexus API key (free tier works) -- only needed to fetch a
+# collection's own curated ordering rules (modman/collection_rules.py).
+# Everything else in this app works without it. Get one at
+# https://next.nexusmods.com/settings/api-keys
+NEXUS_API_KEY = _env.get("NEXUS_API_KEY") or os.environ.get("NEXUS_API_KEY")
 DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads", "")
 MODS_DIR = os.path.join(BASE_DIR, "mods", "")
 

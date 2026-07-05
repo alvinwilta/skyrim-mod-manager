@@ -1,3 +1,4 @@
+import logging
 import os
 
 import uvicorn
@@ -5,8 +6,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-from modman import config, conflicts, db, engine, llm_refine, mo2, nexus, order_store, requirements
+from modman import collection_rules, config, conflicts, db, engine, llm_refine, mo2, nexus, order_store, precedence, requirements
 
+log = logging.getLogger(__name__)
 app = FastAPI(title="Mod Manager")
 db.init_db()
 
@@ -82,6 +84,13 @@ async def fetch_collection(request: Request):
         # library, not just whatever ends up freshly downloaded below
         db.link_collection_files(collection_id, [m["fileId"] for m in modfiles])
         collection = {"id": collection_id, "slug": slug, "name": name}
+        # curated ordering rules, if a personal API key is configured --
+        # non-fatal, collection provenance above still works without it
+        try:
+            n_rules = collection_rules.sync(collection_id, rev.get("downloadLink"))
+            collection["rules_synced"] = n_rules
+        except Exception as e:
+            log.warning("collection rules sync failed for %s: %s", slug, e)
     return {
         "modlist": payload, "diff": engine.diff_modlist(modfiles),
         "count": len(modfiles), "collection": collection,
@@ -177,6 +186,19 @@ def requirements_state():
 @app.get("/api/requirements-missing")
 def requirements_missing():
     return {"missing": requirements.missing()}
+
+
+@app.post("/api/enforce-order")
+def enforce_order():
+    err = precedence.start_enforce()
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"started": True}
+
+
+@app.get("/api/enforce-state")
+def enforce_state():
+    return precedence.state
 
 
 @app.post("/api/sort")

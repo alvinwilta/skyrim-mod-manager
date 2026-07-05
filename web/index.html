@@ -194,6 +194,11 @@
       <span id="reqmsg" class="dim"></span>
     </div>
     <div id="reqmissing"></div>
+    <div class="toolbar" style="margin-top:8px">
+      <span class="dim" style="font-size:12px">Collection rules:</span>
+      <button class="btn ghost" id="enforcebtn" title="Repositions mods that violate a curator-authored before/after/requires rule from an imported collection's own manifest — not a guess">Apply collection order rules</button>
+      <span id="enforcemsg" class="dim"></span>
+    </div>
     <details style="margin-top:10px">
       <summary class="dim" style="cursor:pointer">Claude prompt (editable — <code>{{BUCKETS}}</code> and <code>{{MODS}}</code> are filled in per run)</summary>
       <textarea id="promptin" style="height:240px;margin-top:8px"></textarea>
@@ -709,6 +714,28 @@
     if (r.error) { $('reqmsg').textContent = r.error; return; }
     $('reqbtn').disabled = true;
     watchRequirements();
+  };
+
+  /* ---- collection order rules (curator before/after/requires, real data) ---- */
+  let enforcing = false;
+  async function watchEnforce() {
+    if (enforcing) return;
+    enforcing = true;
+    while (true) {
+      const s = await (await fetch('/api/enforce-state')).json();
+      $('enforcemsg').textContent = s.phase + (s.error ? ' — ' + s.error : '');
+      if (!s.running) break;
+      await new Promise(res => setTimeout(res, 1000));
+    }
+    enforcing = false;
+    $('enforcebtn').disabled = false;
+    loadOrder();
+  }
+  $('enforcebtn').onclick = async () => {
+    const r = await (await fetch('/api/enforce-order', {method: 'POST'})).json();
+    if (r.error) { $('enforcemsg').textContent = r.error; return; }
+    $('enforcebtn').disabled = true;
+    watchEnforce();
   };
 
   /* ---- import / diff ---- */

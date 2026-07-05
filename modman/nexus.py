@@ -1,9 +1,11 @@
 """Nexus Mods access: public GraphQL for collections, browser-session link
 generation (CDP), and plain-HTTP file downloads with resume."""
 
+import json
 import logging
 import os
 import re
+import tempfile
 import time
 import urllib.parse
 
@@ -12,7 +14,7 @@ from playwright.sync_api import sync_playwright
 
 import subprocess
 
-from .config import BROWSER_CMD, CDP_URL, DOWNLOADS_DIR, GAME, GAME_ID
+from .config import BROWSER_CMD, CDP_URL, DOWNLOADS_DIR, GAME, GAME_ID, NEXUS_API_KEY
 
 log = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ query CollectionRevisionMods($slug: String!, $revision: Int, $viewAdultContent: 
   collectionRevision(slug: $slug, revision: $revision, viewAdultContent: $viewAdultContent) {
     collectionId
     revisionNumber
+    downloadLink
     collection { name slug }
     externalResources { id name resourceType resourceUrl }
     modFiles { fileId optional file { fileId name scanned: scannedV2 size sizeInBytes version requirementsAlert
@@ -92,6 +95,34 @@ def fetch_collection(url):
     if not rev:
         raise ValueError(f"collection not found: {d.get('errors')}")
     return {"data": {"collectionRevision": rev}}
+
+
+def fetch_collection_manifest(download_link):
+    """Fetch and parse a collection's own manifest (collection.json) --
+    contains the curator's real before/after/requires/conflicts/recommends/
+    provides ordering rules (see modman/collection_rules.py). `download_link`
+    is the CollectionRevision.downloadLink GraphQL field (e.g.
+    '/v2/collections/6246/revisions/698540/download_link'). Needs a personal
+    Nexus API key (config.NEXUS_API_KEY, free tier works) -- returns None if
+    unset, since every other feature in this app works without one."""
+    if not NEXUS_API_KEY:
+        return None
+    r = requests.get(
+        f"https://api.nexusmods.com{download_link}",
+        headers={"apikey": NEXUS_API_KEY, "User-Agent": "modman/1.0"},
+        timeout=30,
+    )
+    r.raise_for_status()
+    uri = r.json()["download_links"][0]["URI"]
+    archive = requests.get(uri, timeout=60).content
+    with tempfile.NamedTemporaryFile(suffix=".7z") as tmp:
+        tmp.write(archive)
+        tmp.flush()
+        out = subprocess.run(
+            ["7z", "e", "-so", tmp.name, "collection.json"],
+            capture_output=True, timeout=30,
+        )
+    return json.loads(out.stdout)
 
 
 def _graphql(query, variables=None):
