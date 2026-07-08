@@ -9,7 +9,6 @@ interface Props {
   onRefine: () => void // toggles to force-stop while refining
   onRefineUncertain: () => void
   onEnforce: () => void
-  msg: string
 }
 
 export function OrderToolbar({
@@ -21,16 +20,9 @@ export function OrderToolbar({
   onRefine,
   onRefineUncertain,
   onEnforce,
-  msg,
 }: Props) {
   return (
-    <div className="toolgroup">
-      <div className="toolgroup-h">
-        <span className="toolgroup-label">Ordering</span>
-        <span className="dim" style={{ fontSize: 12 }}>
-          Everything that builds or changes the order — heuristic sort, Claude refine, apply curated collection rules.
-        </span>
-      </div>
+    <>
       <div className="toolbar" style={{ margin: 0 }}>
         <button className="btn ghost" disabled={refining} onClick={onSort}>
           Sort (heuristic)
@@ -67,9 +59,6 @@ export function OrderToolbar({
         </button>
       </div>
       <PromptEditor />
-      <div className="dim" style={{ marginTop: 8 }}>
-        {msg}
-      </div>
-    </div>
+    </>
   )
 }

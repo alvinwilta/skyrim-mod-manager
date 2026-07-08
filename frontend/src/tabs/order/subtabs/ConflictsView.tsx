@@ -3,12 +3,12 @@ import type { ConflictPair } from '../../../api/types'
 function ConflictList({ pairs }: { pairs: ConflictPair[] }) {
   return (
     <ul style={{ margin: '6px 0 0 20px' }} className="dim">
-      {pairs.slice(0, 30).map((p, i) => (
+      {pairs.map((p, i) => (
         <li key={i}>
-          {p.a.mod_name} vs {p.b.mod_name}: {p.paths.length} shared file(s)
+          <span style={{ color: 'var(--text)' }}>{p.a.mod_name}</span> vs{' '}
+          <span style={{ color: 'var(--text)' }}>{p.b.mod_name}</span>: {p.paths.length} shared file(s)
         </li>
       ))}
-      {pairs.length > 30 && <li>...and {pairs.length - 30} more pair(s)</li>}
     </ul>
   )
 }
@@ -20,14 +20,14 @@ export function ConflictsView({ msg, pairs }: { msg: string; pairs: ConflictPair
     <div>
       <div className="dim">{msg}</div>
       {unexpected.length > 0 && (
-        <div className="grp">
-          <h2>
+        <details style={{ marginTop: 10 }} open>
+          <summary style={{ cursor: 'pointer' }}>
             <span className="badge" style={{ background: '#3a2b12', color: 'var(--amber)' }}>
               Real file conflicts · {unexpected.length} pair(s)
             </span>
-          </h2>
+          </summary>
           <ConflictList pairs={unexpected} />
-        </div>
+        </details>
       )}
       {expected.length > 0 && (
         <details style={{ marginTop: 10 }}>

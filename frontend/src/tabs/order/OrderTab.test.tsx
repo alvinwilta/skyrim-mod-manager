@@ -340,7 +340,11 @@ describe('OrderTab sort machinery', () => {
     expect(await screen.findByText('SkyUI')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Scan archives' }))
-    expect(await screen.findByText(/SkyUI vs MoreHUD: 1 shared file/)).toBeInTheDocument()
+    expect(
+      await screen.findByText(
+        (_, el) => el?.tagName === 'LI' && /SkyUI vs MoreHUD: 1 shared file/.test(el.textContent || ''),
+      ),
+    ).toBeInTheDocument()
     expect(screen.getByText(/3\/3 archives scanned/)).toBeInTheDocument()
   })
 })

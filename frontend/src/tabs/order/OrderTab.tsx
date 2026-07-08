@@ -137,51 +137,59 @@ export function OrderTab() {
 
       {data.error && <p className="c-red">{data.error}</p>}
 
-      <OrderToolbar
-        model={jobs.model}
-        onModel={jobs.setModel}
-        refining={data.refining}
-        enforcing={jobs.enforcing}
-        onSort={() => void jobs.runSort(false)}
-        onRefine={() => void jobs.refineOrStop()}
-        onRefineUncertain={() => void jobs.runDesc()}
-        onEnforce={() => void jobs.runEnforce()}
-        msg={jobs.msg}
-      />
+      <div className="toolgroup">
+        <div className="toolgroup-h">
+          <span className="toolgroup-label">Ordering</span>
+          <span className="dim" style={{ fontSize: 12 }}>
+            Places mods into STEP groups and orders them — heuristic first, Claude refine + collection rules on top.
+            These actually move mods.
+          </span>
+        </div>
+        <OrderToolbar
+          model={jobs.model}
+          onModel={jobs.setModel}
+          refining={data.refining}
+          enforcing={jobs.enforcing}
+          onSort={() => void jobs.runSort(false)}
+          onRefine={() => void jobs.refineOrStop()}
+          onRefineUncertain={() => void jobs.runDesc()}
+          onEnforce={() => void jobs.runEnforce()}
+        />
 
-      <Subtabs
-        tabs={[
-          { id: 'heuristic', label: 'Sort' },
-          { id: 'bulk', label: 'Refine with Claude', count: data.notes.length || undefined },
-          { id: 'desc', label: 'Refine uncertain' },
-          { id: 'rules', label: 'Collection rules' },
-        ]}
-      >
-        {(active) => (
-          <>
-            {active === 'heuristic' && <div className="dim">{jobs.heuristicLog}</div>}
-            {active === 'bulk' && (
-              <div>
-                <div className="dim">{jobs.bulkMsg}</div>
-                <NotesList notes={data.notes} />
-              </div>
-            )}
-            {active === 'desc' && <div className="dim">{jobs.descMsg}</div>}
-            {active === 'rules' && (
-              <div>
-                <div className="dim">{jobs.enforceMsg}</div>
-                {jobs.enforceLog.length > 0 && (
-                  <ul style={{ margin: '6px 0 0 20px' }} className="dim">
-                    {jobs.enforceLog.map((e, i) => (
-                      <li key={i}>{e}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </Subtabs>
+        <Subtabs
+          tabs={[
+            { id: 'heuristic', label: 'Sort' },
+            { id: 'bulk', label: 'Refine with Claude', count: data.notes.length || undefined },
+            { id: 'desc', label: 'Refine uncertain' },
+            { id: 'rules', label: 'Collection rules' },
+          ]}
+        >
+          {(active) => (
+            <>
+              {active === 'heuristic' && <div className="dim">{jobs.heuristicLog}</div>}
+              {active === 'bulk' && (
+                <div>
+                  <div className="dim">{jobs.bulkMsg}</div>
+                  <NotesList notes={data.notes} />
+                </div>
+              )}
+              {active === 'desc' && <div className="dim">{jobs.descMsg}</div>}
+              {active === 'rules' && (
+                <div>
+                  <div className="dim">{jobs.enforceMsg}</div>
+                  {jobs.enforceLog.length > 0 && (
+                    <ul style={{ margin: '6px 0 0 20px' }} className="dim">
+                      {jobs.enforceLog.map((e, i) => (
+                        <li key={i}>{e}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </Subtabs>
+      </div>
 
       <div className="toolgroup" style={{ marginTop: 10 }}>
         <div className="toolgroup-h">
@@ -271,6 +279,12 @@ export function OrderTab() {
         onMoveTo={(p) => void doMove([...sel.selected], p)}
         onClear={sel.clear}
       />
+
+      {jobs.msg && (
+        <div className="dim" style={{ marginTop: 8 }}>
+          {jobs.msg}
+        </div>
+      )}
 
       {visible.length ? (
         <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
