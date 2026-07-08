@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useRef, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { OrderMod } from '../../api/types'
@@ -180,6 +180,10 @@ export function OrderRow({
     id: mod.mod_id,
     disabled,
   })
+  // whole-row drag: after a drop, the browser still fires a click on the row —
+  // remember the drag so that click doesn't toggle selection
+  const wasDragged = useRef(false)
+  if (isDragging) wasDragged.current = true
 
   const wrong = wrongExpected !== undefined
   const moved = hl.moved && ((mod.flags?.some((f) => f.startsWith('MOVED')) ?? false) || justChanged)
@@ -195,9 +199,21 @@ export function OrderRow({
       ref={setNodeRef}
       className={rowCls}
       title={hint}
-      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : undefined }}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : undefined, touchAction: 'none' }}
       data-mid={mod.mod_id}
+      {...attributes}
+      {...listeners}
+      onKeyDown={(e) => {
+        // keyboard-drag only when the row itself is focused — Enter/Space on inner
+        // links, buttons and the position input must keep their native behavior
+        if (e.target !== e.currentTarget) return
+        listeners?.onKeyDown?.(e)
+      }}
       onClick={(e) => {
+        if (wasDragged.current) {
+          wasDragged.current = false
+          return
+        }
         // interactive elements keep their own behavior; text selection wins
         if ((e.target as Element).closest('input, button, a, select, .posnum, .draghandle')) return
         if (window.getSelection()?.toString()) return
@@ -205,12 +221,7 @@ export function OrderRow({
       }}
     >
       <td style={{ width: 30 }}>
-        <span
-          className="draghandle"
-          title={disabled ? 'reordering locked while Claude refines' : 'drag to reorder'}
-          {...attributes}
-          {...listeners}
-        >
+        <span className="draghandle" title={disabled ? 'reordering locked while Claude refines' : 'drag anywhere on the row to reorder'}>
           ≡
         </span>
       </td>
