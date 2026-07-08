@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -14,10 +14,8 @@ import { api } from '../../api/endpoints'
 import { useRowSelection } from '../library/useRowSelection'
 import { useOrderData, matchesFilter, errText } from './hooks/useOrderData'
 import { useOrderJobs } from './hooks/useOrderJobs'
-import { useMarquee } from './hooks/useMarquee'
 import { resolveMove } from './lib/moveIntent'
-import { segmentRuns, type VisibleRow } from './lib/runs'
-import { GroupBadge } from './GroupBadge'
+import { type VisibleRow } from './lib/runs'
 import { OrderRow } from './OrderRow'
 import { OrderToolbar } from './OrderToolbar'
 import { SelectionToolbar } from './SelectionToolbar'
@@ -67,7 +65,6 @@ export function OrderTab() {
   const jobs = useOrderJobs(data)
   const [cat, setCat] = useState('')
   const [grp, setGrp] = useState('')
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [dragId, setDragId] = useState<number | null>(null)
 
   // Rank positions are absolute over the full list; filters only hide rows.
@@ -78,13 +75,8 @@ export function OrderTab() {
         .filter((r) => matchesFilter(r.mod, cat, grp)),
     [data.mods, cat, grp],
   )
-  const runs = useMemo(() => segmentRuns(visible), [visible])
   const sel = useRowSelection(visible.map((r) => r.mod.mod_id))
 
-  const openRows = useMemo(
-    () => runs.filter((r) => !collapsed.has(r.key)).flatMap((r) => r.rows),
-    [runs, collapsed],
-  )
   const visibleIndex = useMemo(() => new Map(visible.map((r, i) => [r.mod.mod_id, i])), [visible])
 
   const sensors = useSensors(
@@ -113,22 +105,11 @@ export function OrderTab() {
     }
   }
 
-  // Rubber-band selection: drag on non-interactive row space draws a box;
-  // intersecting rows select live. Ctrl-drag adds to the current selection.
-  const marqueeBase = useRef<number[]>([])
-  const marquee = useMarquee({
-    onStart: () => {
-      marqueeBase.current = [...sel.selected]
-    },
-    onHit: (mids, additive) => sel.replace(additive ? [...marqueeBase.current, ...mids] : mids),
-  })
-
-  // Row click = select (plain: just this row; ctrl: toggle; shift: range).
+  // Row click = checkbox toggle (accumulates); shift = range. Click outside
+  // any row clears. Selection only shrinks on a row re-click or outside-click.
   const onRowClick = (mid: number, e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => {
     const idx = visibleIndex.get(mid) ?? 0
-    if (e.shiftKey) sel.toggle(mid, idx, true)
-    else if (e.ctrlKey || e.metaKey) sel.toggle(mid, idx, false)
-    else sel.replace([mid], idx)
+    sel.toggle(mid, idx, e.shiftKey)
   }
 
   const onDragStart = (e: DragStartEvent) => setDragId(Number(e.active.id))
@@ -142,14 +123,6 @@ export function OrderTab() {
   const blockDrag = dragId !== null && sel.selected.has(dragId) && sel.selected.size > 1
   const dragName = dragId !== null ? data.names.get(dragId) : ''
 
-  const toggleRun = (key: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-
   const groupIds = Object.keys(data.buckets)
     .map(Number)
     .sort((a, b) => a - b)
@@ -158,8 +131,8 @@ export function OrderTab() {
     <section>
       <p className="dim" style={{ marginBottom: 8 }}>
         Loose MO2 left-panel install order (bottom overwrites above). Drag the ≡ handle to reorder — dragging a
-        selected row moves the whole selection. Click a row (or drag a box across rows) to select; ctrl toggles,
-        shift ranges. Click a position number to type an exact position.
+        selected row moves the whole selection. Click rows to toggle them into the selection, shift ranges, click
+        empty space to clear. Click a position number to type an exact position.
       </p>
 
       {data.error && <p className="c-red">{data.error}</p>}
@@ -301,19 +274,13 @@ export function OrderTab() {
 
       {visible.length ? (
         <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-          <SortableContext items={openRows.map((r) => r.mod.mod_id)} strategy={verticalListSortingStrategy}>
-            <div onPointerDown={marquee.onPointerDown}>
-            {marquee.box && (
-              <div
-                className="marquee"
-                style={{
-                  left: marquee.box.left,
-                  top: marquee.box.top,
-                  width: marquee.box.width,
-                  height: marquee.box.height,
-                }}
-              />
-            )}
+          <SortableContext items={visible.map((r) => r.mod.mod_id)} strategy={verticalListSortingStrategy}>
+            <div
+              onClick={(e) => {
+                // click on empty space (not a row / interactive el) clears selection
+                if (!(e.target as Element).closest('tr.ordrow, button, a, input, select')) sel.clear()
+              }}
+            >
             <table>
               <thead>
                 <tr>
@@ -325,37 +292,24 @@ export function OrderTab() {
                   <th className="num">Group</th>
                 </tr>
               </thead>
-              {runs.map((run) => (
-                <tbody key={run.key}>
-                  <tr className="runhead" onClick={() => toggleRun(run.key)}>
-                    <td colSpan={6}>
-                      <span className="dim">{collapsed.has(run.key) ? '▸' : '▾'}</span>{' '}
-                      <GroupBadge bucket={run.bucket} buckets={data.buckets} />{' '}
-                      <span className="dim">
-                        {run.rows.length} mod{run.rows.length === 1 ? '' : 's'} · #{run.rows[0].pos}
-                        {run.rows.length > 1 ? `–${run.rows[run.rows.length - 1].pos}` : ''}
-                      </span>
-                    </td>
-                  </tr>
-                  {!collapsed.has(run.key) &&
-                    run.rows.map((r) => (
-                      <OrderRow
-                        key={r.mod.mod_id}
-                        mod={r.mod}
-                        pos={r.pos}
-                        names={data.names}
-                        buckets={data.buckets}
-                        selected={sel.selected.has(r.mod.mod_id)}
-                        wrongExpected={jobs.wrongById.has(r.mod.mod_id) ? jobs.wrongById.get(r.mod.mod_id) : undefined}
-                        justChanged={jobs.justChanged.has(r.mod.mod_id)}
-                        disabled={data.refining}
-                        onRowClick={(e) => onRowClick(r.mod.mod_id, e)}
-                        onToggleLock={() => void doLock([r.mod.mod_id], !r.mod.locked)}
-                        onMoveTo={(p) => void doMove([r.mod.mod_id], p)}
-                      />
-                    ))}
-                </tbody>
-              ))}
+              <tbody>
+                {visible.map((r) => (
+                  <OrderRow
+                    key={r.mod.mod_id}
+                    mod={r.mod}
+                    pos={r.pos}
+                    names={data.names}
+                    buckets={data.buckets}
+                    selected={sel.selected.has(r.mod.mod_id)}
+                    wrongExpected={jobs.wrongById.has(r.mod.mod_id) ? jobs.wrongById.get(r.mod.mod_id) : undefined}
+                    justChanged={jobs.justChanged.has(r.mod.mod_id)}
+                    disabled={data.refining}
+                    onRowClick={(e) => onRowClick(r.mod.mod_id, e)}
+                    onToggleLock={() => void doLock([r.mod.mod_id], !r.mod.locked)}
+                    onMoveTo={(p) => void doMove([r.mod.mod_id], p)}
+                  />
+                ))}
+              </tbody>
             </table>
             </div>
           </SortableContext>

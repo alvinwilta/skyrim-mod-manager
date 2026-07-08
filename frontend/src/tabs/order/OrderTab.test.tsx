@@ -67,26 +67,16 @@ const subtabBtn = (name: string | RegExp) =>
   screen.getAllByRole('button', { name }).find((b) => !b.className.includes('btn'))!
 
 describe('OrderTab list', () => {
-  it('renders run headers preserving rank order, rows with badges', async () => {
+  it('renders rows in a flat list (no group separators), with badges', async () => {
     mockApi(routes())
     renderTab()
     expect(await screen.findByText('SkyUI')).toBeInTheDocument()
-    // two runs: Interface (2 mods) then Foundation (1 mod)
-    expect(screen.getByText('2 mods · #1–2')).toBeInTheDocument()
-    expect(screen.getByText('1 mod · #3')).toBeInTheDocument()
+    // no run/group header rows anymore
+    expect(screen.queryByText('2 mods · #1–2')).not.toBeInTheDocument()
     // conflict badge resolves target name
     expect(screen.getByText('CONFLICT ↔ SkyUI')).toBeInTheDocument()
     // locked row shows pinned lock
     expect(screen.getByTitle(/pinned — sorts will not move/)).toBeInTheDocument()
-  })
-
-  it('collapsing a run hides its rows without touching others', async () => {
-    mockApi(routes())
-    renderTab()
-    await screen.findByText('SkyUI')
-    await userEvent.click(screen.getByText('2 mods · #1–2'))
-    expect(screen.queryByText('SkyUI')).not.toBeInTheDocument()
-    expect(screen.getByText('USSEP')).toBeInTheDocument()
   })
 
   it('group filter re-renders from cache with zero refetches', async () => {
@@ -104,33 +94,34 @@ describe('OrderTab list', () => {
 })
 
 describe('OrderTab selection + bulk actions', () => {
-  it('row click selects; ctrl-click toggles; shift-click ranges; plain click replaces', async () => {
+  it('checkbox selection: clicks accumulate, re-click removes, shift ranges, outside-click clears', async () => {
     mockApi(routes())
     renderTab()
     await screen.findByText('SkyUI')
     const user = userEvent.setup() // one session so held modifiers apply to clicks
 
+    // plain click selects; a second row click accumulates (does NOT replace)
     await user.click(screen.getByText('SkyUI'))
     expect(screen.getByText('1 selected')).toBeInTheDocument()
+    await user.click(screen.getByText('MoreHUD'))
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
     expect(screen.getByText('SkyUI').closest('tr')).toHaveClass('r-sel')
+    expect(screen.getByText('MoreHUD').closest('tr')).toHaveClass('r-sel')
 
-    // shift-click USSEP → range covers all three rows
+    // re-clicking a selected row removes it (checkbox toggle)
+    await user.click(screen.getByText('SkyUI'))
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText('SkyUI').closest('tr')).not.toHaveClass('r-sel')
+
+    // shift-click ranges from the last-clicked anchor (SkyUI, idx0) to USSEP (idx2)
     await user.keyboard('{Shift>}')
     await user.click(screen.getByText('USSEP'))
     await user.keyboard('{/Shift}')
     expect(screen.getByText('3 selected')).toBeInTheDocument()
 
-    // ctrl-click MoreHUD → drops it from the selection
-    await user.keyboard('{Control>}')
-    await user.click(screen.getByText('MoreHUD'))
-    await user.keyboard('{/Control}')
-    expect(screen.getByText('2 selected')).toBeInTheDocument()
-
-    // plain click replaces everything with just that row
-    await user.click(screen.getByText('MoreHUD'))
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
-    expect(screen.getByText('MoreHUD').closest('tr')).toHaveClass('r-sel')
-    expect(screen.getByText('SkyUI').closest('tr')).not.toHaveClass('r-sel')
+    // clicking empty space (a header cell) clears the whole selection
+    await user.click(screen.getByRole('columnheader', { name: 'Mod' }))
+    expect(screen.queryByRole('toolbar', { name: 'bulk actions' })).not.toBeInTheDocument()
   })
 
   it('clicking a link or lock inside a row does not change the selection', async () => {
