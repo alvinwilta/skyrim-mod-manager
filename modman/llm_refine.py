@@ -283,7 +283,7 @@ def _desc_refine_job(model):
             " (SELECT game FROM mods m2 WHERE m2.mod_id = s.mod_id LIMIT 1) AS game"
             " FROM mod_sort s JOIN mods m ON m.mod_id = s.mod_id AND m.status = 'ok'"
             " WHERE s.flags LIKE '%UNCERTAIN%' AND COALESCE(s.desc_checked, 0) = 0"
-            " AND COALESCE(s.locked, 0) = 0 GROUP BY s.mod_id"
+            " AND COALESCE(s.locked, 0) = 0 AND s.mod_id > 0 GROUP BY s.mod_id"
         ).fetchall()]
     if not candidates:
         state["phase"] = "No uncertain mods need a description check"

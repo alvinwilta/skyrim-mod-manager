@@ -5,6 +5,7 @@ import { ApiError } from '../../api/client'
 import type { CollectionRef, Mod } from '../../api/types'
 import { human } from '../../lib/format'
 import { useDebounce } from '../../hooks/useDebounce'
+import { usePoller } from '../../hooks/usePoller'
 import { useEvents } from '../../events/EventsProvider'
 import { useRowSelection } from './useRowSelection'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
@@ -103,6 +104,40 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
     }
   }
 
+  // Adopt archives sitting in the downloads dir that aren't in the DB yet
+  // (downloaded straight through MO2 or from other sites). Background job +
+  // poller, since the Nexus metadata fetch is network-bound.
+  const [importing, setImporting] = useState(false)
+  const doImport = async () => {
+    setMsg('scanning downloads for new files…')
+    try {
+      await api.importLocal()
+      setImporting(true)
+    } catch (e) {
+      setMsg(errText(e))
+    }
+  }
+  usePoller(
+    async () => {
+      try {
+        const s = await api.importLocalState()
+        setMsg(s.phase + (s.error ? ' — ' + s.error : ''))
+        if (!s.running) {
+          setImporting(false)
+          await load()
+          return false
+        }
+        return true
+      } catch (e) {
+        setMsg(errText(e))
+        setImporting(false)
+        return false
+      }
+    },
+    1000,
+    importing,
+  )
+
   return (
     <section>
       <div className="searchwrap" ref={wrapRef}>
@@ -148,6 +183,18 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
           <span style={{ width: 1, height: 22, background: 'var(--border)' }} />
           <button className="btn ghost" onClick={() => setShowDeleted((v) => !v)}>
             {showDeleted ? 'Hide deleted' : `Show deleted${nDeleted ? ` (${nDeleted})` : ''}`}
+          </button>
+          <button
+            className="btn ghost"
+            disabled={importing || committed}
+            title={
+              committed
+                ? 'Install order is committed to disk — revert it (Install Order tab) first'
+                : 'Add archives already in the downloads folder (downloaded via MO2 or other sites) to the library'
+            }
+            onClick={doImport}
+          >
+            {importing ? 'Importing…' : 'Import from disk'}
           </button>
           <span className="dim">{msg}</span>
         </div>

@@ -34,7 +34,7 @@ def scan():
     with db.connect() as conn:
         candidates = [dict(r) for r in conn.execute(
             "SELECT m.mod_id, m.game FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
-            " WHERE m.status = 'ok' AND COALESCE(m.requirements_alert, 1) != 0"
+            " WHERE m.status = 'ok' AND m.mod_id > 0 AND COALESCE(m.requirements_alert, 1) != 0"
             " AND COALESCE(s.requirements_checked, 0) = 0 GROUP BY m.mod_id"
         ).fetchall()]
     if not candidates:

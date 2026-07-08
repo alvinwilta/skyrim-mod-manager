@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from modman import collection_rules, commit, config, conflicts, db, engine, llm_refine, mo2, mo2_order, nexus, order_store, precedence, requirements
+from modman import collection_rules, commit, config, conflicts, db, engine, importlocal, llm_refine, mo2, mo2_order, nexus, order_store, precedence, requirements
 
 log = logging.getLogger(__name__)
 app = FastAPI(title="Mod Manager")
@@ -228,6 +228,23 @@ async def set_collection_enabled(collection_id: int, request: Request):
         return JSONResponse({"error": "expected {enabled}"}, status_code=400)
     db.set_collection_enabled(collection_id, enabled)
     return {"id": collection_id, "enabled": enabled}
+
+
+@app.post("/api/import-local")
+def import_local():
+    if commit.is_committed():
+        return JSONResponse(
+            {"error": "Install order is committed to disk — revert it before importing new files."}, status_code=409
+        )
+    err = importlocal.start_scan()
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"started": True}
+
+
+@app.get("/api/import-local-state")
+def import_local_state():
+    return importlocal.state
 
 
 @app.post("/api/scan-conflicts")

@@ -158,6 +158,29 @@ describe('LibraryTab', () => {
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/mods').length).toBe(before + 1))
   })
 
+  it('import from disk: starts the job, polls state, then reloads with adopted rows', async () => {
+    let started = false
+    mockLib({
+      'GET /api/mods': () =>
+        started ? [mod({}), mod({ file_id: 2, mod_name: 'LocalMod', file_name: 'localmod.7z' })] : [mod({})],
+      'POST /api/import-local': () => {
+        started = true
+        return { started: true }
+      },
+      'GET /api/import-local-state': () => ({
+        phase: started ? 'Adopted 1 file(s) (1 non-Nexus)' : 'idle',
+        running: false,
+        error: null,
+      }),
+    })
+    renderTab()
+    await screen.findByText('SkyUI')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Import from disk' }))
+    expect(await screen.findByText('LocalMod')).toBeInTheDocument()
+    expect(screen.getByText(/Adopted 1 file/)).toBeInTheDocument()
+  })
+
   it('committed order disables delete + redownload and shows a banner', async () => {
     mockLib({
       'GET /api/mods': [mod({})],
@@ -169,6 +192,7 @@ describe('LibraryTab', () => {
 
     expect(screen.getByRole('button', { name: 'Delete (1)' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Redownload (1)' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Import from disk' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Validate (1)' })).toBeEnabled() // read-only, still allowed
     expect(screen.getByText(/committed to disk/i)).toBeInTheDocument()
   })

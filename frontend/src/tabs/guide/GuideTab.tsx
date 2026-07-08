@@ -20,6 +20,16 @@ export function GuideTab() {
             doesn't resurface as "new" on the next import unless you redownload it).
           </li>
           <li>
+            <b>Import from disk</b> — adopts archives already in the downloads folder that aren't in the library yet:
+            files you downloaded straight through MO2, or from other sites (LoversLab, GitHub, …). It reads each
+            archive's <code>.meta</code> sidecar for identity and enriches from Nexus where it can, then records them
+            like a normal download so they show up in Install Order, conflicts, and commit. Three cases, nothing
+            guessed: a real Nexus <code>.meta</code> gets full metadata + link; a Nexus <code>.meta</code> whose mod is
+            gone keeps its IDs with an empty link; anything else (no <code>.meta</code>, or a non-Nexus one) is adopted
+            with the filename as its name, size from disk, and a blank link — and a minimal truthful <code>.meta</code>{' '}
+            is written for it if it had none. Blocked while the order is committed to disk.
+          </li>
+          <li>
             <b>Show deleted</b> reveals soft-deleted rows again.
           </li>
           <li>

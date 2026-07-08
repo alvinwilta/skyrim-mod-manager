@@ -7,7 +7,7 @@ installs, which we read back to show install state in the library."""
 
 import os
 
-from .config import DOWNLOADS_DIR
+from .config import DOWNLOADS_DIR, GAME
 
 # nexus domain -> MO2 gameName
 GAME_NAMES = {
@@ -16,6 +16,8 @@ GAME_NAMES = {
     "fallout4": "Fallout4",
     "site": "SkyrimSE",  # tools; MO2 has no game for these, keep them visible
 }
+# reverse, for reading an MO2-written .meta back into a nexus domain
+DOMAIN_FOR_GAMENAME = {"SkyrimSE": "skyrimspecialedition", "Skyrim": "skyrim", "Fallout4": "fallout4"}
 
 
 def meta_path(filename):
@@ -69,3 +71,69 @@ def remove_meta(filename):
     path = meta_path(filename)
     if os.path.exists(path):
         os.remove(path)
+
+
+def read_meta(filename):
+    """Parse an archive's `.meta` sidecar (MO2 QSettings ini) into a flat dict of
+    lowercased keys, or None if there's no sidecar. Only the [General] section is
+    read. Used to adopt files MO2 (or another manager) downloaded."""
+    path = meta_path(filename)
+    if not os.path.isfile(path):
+        return None
+    out = {}
+    try:
+        with open(path, errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("[") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                out[k.strip().lower()] = v.strip()
+    except OSError:
+        return None
+    return out
+
+
+def nexus_identity(meta):
+    """(domain, mod_id, file_id) if a .meta describes a real Nexus download,
+    else None. Requires repository=Nexus and positive modID/fileID — a
+    non-Nexus (other-site) or manual .meta has no trustworthy Nexus identity."""
+    if not meta or (meta.get("repository") or "").lower() != "nexus":
+        return None
+    try:
+        mod_id, file_id = int(meta.get("modid") or 0), int(meta.get("fileid") or 0)
+    except ValueError:
+        return None
+    if mod_id <= 0 or file_id <= 0:
+        return None
+    domain = DOMAIN_FOR_GAMENAME.get(meta.get("gamename") or "", GAME)
+    return domain, mod_id, file_id
+
+
+def write_local_meta(filename, mod_name):
+    """Create a MINIMAL, truthful `.meta` for an orphan archive that has none.
+    Nothing is inferred: only the filename, the given mod_name (its own basename)
+    and the configured game. Never overwrites an existing sidecar (MO2 owns it).
+    repository is left blank — we must not claim a Nexus origin we don't have."""
+    path = meta_path(filename)
+    if os.path.exists(path):
+        return
+    game = GAME_NAMES.get(GAME, "SkyrimSE")
+    with open(path, "w") as f:
+        f.write(
+            "[General]\n"
+            f"gameName={game}\n"
+            "modID=0\n"
+            "fileID=0\n"
+            "url=\n"
+            f"name={filename}\n"
+            f"modName={mod_name}\n"
+            "version=\n"
+            "newestVersion=\n"
+            "category=0\n"
+            "repository=\n"
+            "installed=false\n"
+            "uninstalled=false\n"
+            "paused=false\n"
+            "removed=false\n"
+        )
