@@ -387,6 +387,55 @@ describe('OrderTab sort machinery', () => {
   })
 })
 
+describe('OrderTab commit to disk', () => {
+  it('committed state freezes reordering but keeps filters + analysis live', async () => {
+    mockApi(routes({ 'GET /api/installorder': { ...ORDER, committed: true } }))
+    renderTab()
+    await screen.findByText('SkyUI')
+
+    // reordering surfaces frozen
+    expect(toolbarBtn('Sort (heuristic)')).toBeDisabled()
+    expect(toolbarBtn(/Refine with Claude/)).toBeDisabled()
+    screen.getAllByTitle(/pin at this position|pinned/).forEach((b) => expect(b).toBeDisabled())
+
+    // escape hatch + read-only tools stay enabled
+    expect(screen.getByRole('button', { name: /Committed to disk — click to revert/ })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Scan archives' })).toBeEnabled()
+    expect(screen.getByLabelText('filter category')).toBeEnabled()
+  })
+
+  it('commit: confirm → POST commit → poll done → shows committed + freezes', async () => {
+    let committed = false
+    const { calls } = mockApi(
+      routes({
+        'GET /api/installorder': () => ({ ...ORDER, committed }),
+        'POST /api/order/commit': () => {
+          committed = true
+          return { started: true }
+        },
+        'GET /api/order/commit-state': () => ({
+          phase: committed ? 'Committed 3 file(s)' : 'idle',
+          running: false,
+          error: null,
+          committed,
+        }),
+      }),
+    )
+    renderTab()
+    await screen.findByText('SkyUI')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Commit order to disk' }))
+    // confirm dialog's Commit button (class btn, not the toolbar toggle)
+    await userEvent.click(await screen.findByRole('button', { name: 'Commit' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Committed to disk — click to revert/ })).toBeInTheDocument(),
+    )
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/order/commit')).toBe(true)
+    expect(toolbarBtn('Sort (heuristic)')).toBeDisabled()
+  })
+})
+
 describe('PromptEditor', () => {
   it('loads prompt once, save posts content, reset posts empty string', async () => {
     const { calls } = mockApi(routes({ 'POST /api/sort-prompt': { saved: true } }))

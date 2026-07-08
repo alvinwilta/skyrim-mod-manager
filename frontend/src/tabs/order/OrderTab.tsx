@@ -24,6 +24,8 @@ import { SelectionToolbar } from './SelectionToolbar'
 import { Subtabs } from './subtabs/Subtabs'
 import { ConflictsView } from './subtabs/ConflictsView'
 import { RequirementsView } from './subtabs/RequirementsView'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
+import { LoadingOverlay } from '../../components/LoadingOverlay'
 
 function NotesList({ notes }: { notes: string[] }) {
   const dupes = notes.filter((x) => x.toUpperCase().startsWith('DUPLICATE:'))
@@ -70,8 +72,14 @@ export function OrderTab() {
   const [hl, setHl] = useState(ALL_HIGHLIGHTS_ON)
   const [showLocked, setShowLocked] = useState(true)
   const [dragId, setDragId] = useState<number | null>(null)
+  const [confirmCommit, setConfirmCommit] = useState(false)
 
   const toggleHl = (key: HighlightKey) => setHl((h) => ({ ...h, [key]: !h[key] }))
+
+  // Committed = files renamed on disk with install-order prefixes. Freezes every
+  // reordering surface (like refining does) so nothing renumbers under the
+  // committed files; the commit/revert toggle + filters + analysis stay live.
+  const frozen = data.refining || data.committed
 
   // Rank positions are absolute over the full list; filters only hide rows.
   // Hiding locked rows is just another filter: positions stay global (i+1 over
@@ -113,7 +121,7 @@ export function OrderTab() {
   )
 
   const doMove = async (ids: number[], position: number) => {
-    if (data.refining) return
+    if (frozen) return
     try {
       const r = await api.orderMove(ids, position)
       jobs.setMsg(`moved ${ids.length > 1 ? ids.length + ' mods ' : ''}to #${r.position}`)
@@ -125,6 +133,7 @@ export function OrderTab() {
   }
 
   const doLock = async (ids: number[], locked: boolean) => {
+    if (frozen) return
     try {
       await api.orderLock(ids, locked)
       await data.reload()
@@ -178,6 +187,7 @@ export function OrderTab() {
           onModel={jobs.setModel}
           refining={data.refining}
           enforcing={jobs.enforcing}
+          committed={data.committed}
           onSort={() => void jobs.runSort(false)}
           onRefine={() => void jobs.refineOrStop()}
           onRefineUncertain={() => void jobs.runDesc()}
@@ -252,7 +262,26 @@ export function OrderTab() {
           >
             Check for drift
           </button>
+          <span style={{ flex: 1 }} />
+          <button
+            className={`btn${data.committed ? '' : ' ghost'}`}
+            style={data.committed ? { background: '#7f1d1d' } : undefined}
+            disabled={jobs.committing}
+            title={
+              data.committed
+                ? 'Files are renamed on disk with install-order prefixes and reordering is frozen. Click to rename them back to their original names.'
+                : 'Physically rename every downloaded archive on disk with a zero-padded install-order prefix (0001__…) so they sort in install order for MO2. Freezes reordering and blocks downloads until reverted.'
+            }
+            onClick={() => setConfirmCommit(true)}
+          >
+            {data.committed ? '🔒 Committed to disk — click to revert' : 'Commit order to disk'}
+          </button>
         </div>
+        {jobs.commitMsg && (
+          <div className="dim" style={{ marginTop: 8 }}>
+            {jobs.commitMsg}
+          </div>
+        )}
         <Subtabs
           tabs={[
             { id: 'conflicts', label: 'Conflicts', count: jobs.conflicts.pairs.filter((p) => !p.expected).length || undefined },
@@ -311,7 +340,7 @@ export function OrderTab() {
         count={sel.selected.size}
         buckets={data.buckets}
         mods={data.mods}
-        disabled={data.refining}
+        disabled={frozen}
         onLock={(locked) => void doLock([...sel.selected], locked)}
         onMoveTo={(p) => void doMove([...sel.selected], p)}
         onClear={sel.clear}
@@ -357,7 +386,7 @@ export function OrderTab() {
                       hl.drift && jobs.wrongById.has(r.mod.mod_id) ? jobs.wrongById.get(r.mod.mod_id) : undefined
                     }
                     justChanged={jobs.justChanged.has(r.mod.mod_id)}
-                    disabled={data.refining}
+                    disabled={frozen}
                     onRowClick={(e) => onRowClick(r.mod.mod_id, e)}
                     onToggleLock={() => void doLock([r.mod.mod_id], !r.mod.locked)}
                     onMoveTo={(p) => void doMove([r.mod.mod_id], p)}
@@ -377,6 +406,27 @@ export function OrderTab() {
         <p className="dim" style={{ marginTop: 14 }}>
           {data.mods.length ? 'No mods match the filter.' : 'Library empty.'}
         </p>
+      )}
+
+      <ConfirmDialog
+        open={confirmCommit}
+        onOpenChange={setConfirmCommit}
+        title={data.committed ? 'Revert install order on disk?' : 'Commit install order to disk?'}
+        description={
+          data.committed
+            ? 'Renames every archive back to its original filename and unfreezes reordering. Downloads are re-enabled afterward.'
+            : 'Physically renames every downloaded archive (and its MO2 .meta) to add a zero-padded install-order prefix, e.g. 0001__ModName. Reordering is frozen and downloads are blocked until you revert. MO2 tracks downloads by name, so this will rename them in MO2 too.'
+        }
+        confirmLabel={data.committed ? 'Revert' : 'Commit'}
+        danger
+        onConfirm={() => (data.committed ? void jobs.runUncommit() : void jobs.runCommit())}
+      />
+
+      {jobs.committing && (
+        <LoadingOverlay
+          message={data.committed ? 'Restoring original filenames…' : 'Renaming files on disk…'}
+          detail="Do not close this tab until it finishes."
+        />
       )}
     </section>
   )

@@ -2,6 +2,7 @@ import { get, post } from './client'
 import type {
   Collection,
   CollectionMods,
+  CommitState,
   ConflictsResult,
   DeleteResult,
   DiffResult,
@@ -36,6 +37,9 @@ export const api = {
   orderLock: (modIds: number[], locked: boolean) =>
     post<{ mod_ids: number[]; locked: boolean }>('/api/order/lock', { mod_ids: modIds, locked }),
   orderCheck: () => get<OrderCheck>('/api/order/check'),
+  orderCommit: () => post<{ started: boolean }>('/api/order/commit'),
+  orderUncommit: () => post<{ started: boolean }>('/api/order/uncommit'),
+  orderCommitState: () => get<CommitState>('/api/order/commit-state'),
   sort: (llm: boolean, model: string) => post<{ sorted: number; llm: boolean }>('/api/sort', { llm, model }),
   sortDesc: (model: string) => post<{ started: boolean }>('/api/sort-desc', { model }),
   sortStop: () => post<{ stopped: boolean }>('/api/sort-stop'),

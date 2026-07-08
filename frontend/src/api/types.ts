@@ -73,6 +73,13 @@ export interface InstallOrder {
   buckets: Record<string, string>
   mods: OrderMod[]
   notes: string[]
+  /** true when files are renamed on disk with install-order prefixes */
+  committed: boolean
+}
+
+/** GET /api/order/commit-state — JobState plus the persisted committed flag */
+export interface CommitState extends JobState {
+  committed: boolean
 }
 
 /** GET /api/order/check */

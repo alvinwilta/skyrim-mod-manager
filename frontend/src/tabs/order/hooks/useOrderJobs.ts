@@ -31,6 +31,8 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const [syncing, setSyncing] = useState(false)
   const [missing, setMissing] = useState<MissingRequirement[]>([])
   const [driftMsg, setDriftMsg] = useState('')
+  const [commitMsg, setCommitMsg] = useState('')
+  const [committing, setCommitting] = useState(false)
   const [wrongById, setWrongById] = useState<ReadonlyMap<number, number | null>>(new Map())
   const [justChanged, setJustChanged] = useState<ReadonlySet<number>>(new Set())
   const snapshot = useRef<BucketSnapshot | null>(null)
@@ -164,6 +166,47 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     syncing,
   )
 
+  // Commit watcher: 1s. Renames files on disk; blocks all reordering meanwhile.
+  usePoller(
+    async () => {
+      const s = await api.orderCommitState()
+      setCommitMsg(s.phase + (s.error ? ' — ' + s.error : ''))
+      if (!s.running) {
+        setCommitting(false)
+        data.setCommitted(s.committed)
+        await finishAction()
+        return false
+      }
+      return true
+    },
+    1000,
+    committing,
+  )
+
+  const runCommit = async () => {
+    takeSnapshot()
+    setCommitMsg('renaming files…')
+    try {
+      await api.orderCommit()
+      setCommitting(true)
+    } catch (e) {
+      setCommitMsg(errText(e))
+      snapshot.current = null
+    }
+  }
+
+  const runUncommit = async () => {
+    takeSnapshot()
+    setCommitMsg('restoring names…')
+    try {
+      await api.orderUncommit()
+      setCommitting(true)
+    } catch (e) {
+      setCommitMsg(errText(e))
+      snapshot.current = null
+    }
+  }
+
   const runSort = async (llm: boolean) => {
     takeSnapshot()
     setMsg('sorting…')
@@ -281,6 +324,8 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     syncing,
     missing,
     driftMsg,
+    commitMsg,
+    committing,
     wrongById,
     justChanged,
     runSort,
@@ -289,6 +334,8 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     runEnforce,
     runScan,
     runSync,
+    runCommit,
+    runUncommit,
     checkDrift,
   }
 }

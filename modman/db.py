@@ -87,6 +87,10 @@ def init_db():
             conn.execute("ALTER TABLE mods ADD COLUMN mod_url TEXT")
         if "requirements_alert" not in cols:
             conn.execute("ALTER TABLE mods ADD COLUMN requirements_alert INTEGER")
+        # original on-disk name before an install-order "commit" prefixed it; NULL
+        # = file is in its original (uncommitted) name -- see modman/commit.py
+        if "orig_filename" not in cols:
+            conn.execute("ALTER TABLE mods ADD COLUMN orig_filename TEXT")
         # real per-mod "requires" edges from Nexus's own GraphQL -- see modman/requirements.py
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mod_requirements (mod_id INTEGER NOT NULL,"

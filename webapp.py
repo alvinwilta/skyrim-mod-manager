@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from modman import collection_rules, config, conflicts, db, engine, llm_refine, mo2, nexus, order_store, precedence, requirements
+from modman import collection_rules, commit, config, conflicts, db, engine, llm_refine, mo2, nexus, order_store, precedence, requirements
 
 log = logging.getLogger(__name__)
 app = FastAPI(title="Mod Manager")
@@ -155,6 +155,10 @@ async def download(request: Request):
         file_ids = body["file_ids"]
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "expected {modlist, file_ids}"}, status_code=400)
+    if commit.is_committed():
+        return JSONResponse(
+            {"error": "Install order is committed to disk — revert it before downloading."}, status_code=409
+        )
     collection_id = (body or {}).get("collection_id")
     err = engine.start_download(modfiles, file_ids, collection_id=collection_id)
     if err:
@@ -186,6 +190,10 @@ async def redownload(request: Request):
     file_ids = (body or {}).get("file_ids") or []
     if not file_ids:
         return JSONResponse({"error": "no files selected"}, status_code=400)
+    if commit.is_committed():
+        return JSONResponse(
+            {"error": "Install order is committed to disk — revert it before downloading."}, status_code=409
+        )
     err = engine.start_download(engine.modfiles_from_db(file_ids), file_ids)
     if err:
         return JSONResponse({"error": err}, status_code=409)
@@ -194,7 +202,7 @@ async def redownload(request: Request):
 
 @app.get("/api/installorder")
 def installorder():
-    return order_store.load_order()
+    return {**order_store.load_order(), "committed": commit.is_committed()}
 
 
 @app.get("/api/collections")
@@ -314,6 +322,8 @@ async def order_move(request: Request):
         position = int(body["position"])
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "expected {mod_id | mod_ids, position}"}, status_code=400)
+    if commit.is_committed():
+        return JSONResponse({"error": "install order is committed to disk — revert first"}, status_code=409)
     err = order_store.move(mod_ids, position)
     if err:
         return JSONResponse({"error": err}, status_code=400)
@@ -329,6 +339,8 @@ async def order_lock(request: Request):
         locked = bool(body["locked"])
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "expected {mod_id | mod_ids, locked}"}, status_code=400)
+    if commit.is_committed():
+        return JSONResponse({"error": "install order is committed to disk — revert first"}, status_code=409)
     err = order_store.set_lock(mod_ids, locked)
     if err:
         return JSONResponse({"error": err}, status_code=400)
@@ -338,6 +350,27 @@ async def order_lock(request: Request):
 @app.get("/api/order/check")
 def order_check():
     return order_store.check_order()
+
+
+@app.post("/api/order/commit")
+def order_commit():
+    err = commit.start_commit()
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"started": True}
+
+
+@app.post("/api/order/uncommit")
+def order_uncommit():
+    err = commit.start_uncommit()
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"started": True}
+
+
+@app.get("/api/order/commit-state")
+def order_commit_state():
+    return {**commit.state, "committed": commit.is_committed()}
 
 
 @app.get("/api/sort-prompt")
