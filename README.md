@@ -31,7 +31,10 @@ npm run e2e     # Playwright suite (spawns its own backend on 7799 with a DB cop
 
 
 - **Library** — browse/search everything in `mods.db`; validate, redownload,
-  or delete selected files
+  or delete selected files. `Import from disk` adopts archives already in the
+  downloads folder (installed straight through MO2 or from other sites) into
+  the library via their `.meta` sidecars. `Show deleted` switches to a
+  deleted-only view where Delete becomes `Purge` (permanent, unrecoverable).
 
   ![Library tab](img/library.png)
 
@@ -59,8 +62,13 @@ npm run e2e     # Playwright suite (spawns its own backend on 7799 with a DB cop
     mod's real Nexus "requires" data and flags anything required but
     missing from the library. `Check for drift` flags mods whose current
     group disagrees with the last sorter opinion (usually means a manual
-    drag moved it). Results show in Conflicts / Requirements / Check for
-    drift tabs.
+    drag moved it). `Check vs MO2 order` (enabled only after the order is
+    committed to disk) compares the list against what MO2 actually has
+    installed and enabled on disk — reading the active profile's
+    `modlist.txt` and each installed mod's `meta.ini` — and flags mods that
+    are out of order, installed-in-MO2-but-not-listed, or listed-but-not-yet-
+    installed. Results show in Conflicts / Requirements / Check for drift /
+    vs MO2 tabs.
 
   Reordering the table: drag the ≡ handle, or click a position number to
   type an exact position. Select rows by clicking (Ctrl/Cmd toggles,
@@ -191,6 +199,8 @@ modman/
   nexus.py    GraphQL collection fetch, CDP link generation, file transfer
   engine.py   diff + download pipeline, progress state
   mo2.py      MO2 .meta interop (installed state)
+  mo2_order.py      compares the list vs MO2's real installed order (modlist.txt + meta.ini)
+  importlocal.py    adopts on-disk archives into the library via their .meta
   buckets.py  STEP 2.3 group scheme + name/category heuristic classifier
   order_store.py    mod_sort table CRUD, heuristic sort, locks, moves
   llm_refine.py     claude -p bulk + uncertain-only refine passes
