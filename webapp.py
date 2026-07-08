@@ -181,6 +181,10 @@ async def delete(request: Request):
     file_ids = (body or {}).get("file_ids") or []
     if not file_ids:
         return JSONResponse({"error": "no files selected"}, status_code=400)
+    if commit.is_committed():
+        return JSONResponse(
+            {"error": "Install order is committed to disk — revert it before deleting files."}, status_code=409
+        )
     return engine.delete_files(file_ids)
 
 

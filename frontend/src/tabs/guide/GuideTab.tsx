@@ -91,6 +91,41 @@ export function GuideTab() {
             red and get a <b>WRONG SPOT → group</b> badge naming the group the sorter expected; drag them back or re-run
             Sort to re-place. Result in the <b>Check for drift</b> tab.
           </li>
+          <li>
+            <b>Check vs MO2 order</b> — compares your list against what MO2 <i>actually</i> has installed and enabled on
+            disk, read from the active profile's <code>modlist.txt</code> and each installed mod's{' '}
+            <code>meta.ini</code> (real data, not a guess). Flags three things in the <b>vs MO2</b> tab: mods{' '}
+            <b>out of order</b> (a different relative position than MO2 has them — those rows turn red with an{' '}
+            <b>MO2 ORDER</b> badge), mods <b>installed in MO2 but not in your list</b>, and mods <b>in your list but not
+            yet installed</b> in MO2. Enabled-only; disabled mods count as not installed. The button is only available{' '}
+            <b>after you commit the order to disk</b> — MO2 only sees this order once the archives carry their{' '}
+            install-order prefixes, so comparing before then is meaningless.
+          </li>
+        </ul>
+
+        <h3 style={h3Style}>Commit order to disk — the one button that changes real files</h3>
+        <ul style={ulStyle}>
+          <li>
+            <b>Commit order to disk</b> physically renames every downloaded archive to add a zero-padded install-order
+            prefix — <code>0001__</code>, <code>0002__</code>, … — so they sort in install order in any file browser or
+            when you drag them into MO2. The number is padded to the mod count so it sorts correctly (0010 after 0002).
+            Each archive's MO2 <code>.meta</code> sidecar is renamed with it, so install state is preserved.
+          </li>
+          <li>
+            While committed, <b>all reordering is frozen</b> (drag, sort, refine, move, lock) and{' '}
+            <b>downloads/imports are blocked</b> — a redownload would write the un-prefixed name and fight the prefix.
+            Filters and the whole Analysis row stay usable.
+          </li>
+          <li>
+            The button turns into <b>🔒 Committed to disk — click to revert</b>. Reverting renames everything back to
+            the original names and unfreezes everything. This is the escape hatch and is always available, even after a
+            restart — the committed state is stored in the database, not in memory.
+          </li>
+          <li>
+            Renaming runs behind a blocking overlay; don't close the tab until it finishes. If anything fails partway it
+            rolls back automatically, and any error shows in red under the buttons. A mod whose file is missing on disk
+            is skipped, not treated as a failure.
+          </li>
         </ul>
 
         <h3 style={h3Style}>When signals disagree</h3>

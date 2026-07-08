@@ -43,6 +43,12 @@ const mod = (over: Partial<Mod>): Mod => ({
   ...over,
 })
 
+// LibraryTab.load() also fetches commit-state (to disable delete/redownload when
+// the order is committed to disk). Inject an idle default into every route table.
+const COMMIT_IDLE = { running: false, phase: 'idle', error: null, committed: false }
+const mockLib = (routes: Record<string, unknown>) =>
+  mockApi({ 'GET /api/order/commit-state': COMMIT_IDLE, ...routes })
+
 const renderTab = (onGoToProgress = vi.fn()) =>
   render(
     <EventsProvider>
@@ -52,7 +58,7 @@ const renderTab = (onGoToProgress = vi.fn()) =>
 
 describe('LibraryTab', () => {
   it('loads and renders rows; deleted hidden by default with count hint', async () => {
-    mockApi({
+    mockLib({
       'GET /api/mods': [
         mod({ file_id: 1 }),
         mod({ file_id: 2, mod_name: 'USSEP', file_name: 'ussep.7z', status: 'deleted' }),
@@ -69,10 +75,11 @@ describe('LibraryTab', () => {
 
   it('debounces search input into a single query fetch', async () => {
     vi.useFakeTimers()
-    const { calls } = mockApi({ 'GET /api/mods': [mod({})] })
+    const { calls } = mockLib({ 'GET /api/mods': [mod({})] })
     renderTab()
     await act(async () => {}) // initial load
-    const initial = calls.length
+    const modCalls = () => calls.filter((c) => c.path === '/api/mods').length
+    const initial = modCalls()
 
     const input = screen.getByPlaceholderText(/Search name/) as HTMLInputElement
     // type without fake-timer-aware userEvent: fire changes directly
@@ -85,13 +92,13 @@ describe('LibraryTab', () => {
     await act(async () => {
       vi.advanceTimersByTime(250)
     })
-    expect(calls.length).toBe(initial + 1) // one fetch for three keystrokes
-    expect(calls.at(-1)?.path).toBe('/api/mods')
+    expect(modCalls()).toBe(initial + 1) // one fetch for three keystrokes
+    expect(calls.filter((c) => c.path === '/api/mods').at(-1)?.path).toBe('/api/mods')
   })
 
   it('delete: confirm dialog → POST selected ids → message + reload', async () => {
     const rows = [mod({ file_id: 7 }), mod({ file_id: 8, mod_name: 'USSEP', file_name: 'ussep.7z' })]
-    const { calls } = mockApi({
+    const { calls } = mockLib({
       'GET /api/mods': rows,
       'POST /api/delete': { deleted: 2, files_removed: 2 },
     })
@@ -110,7 +117,7 @@ describe('LibraryTab', () => {
   })
 
   it('surfaces {error} responses in the message area', async () => {
-    mockApi({
+    mockLib({
       'GET /api/mods': [mod({})],
       'POST /api/validate': { error: 'browser not reachable' },
     })
@@ -123,7 +130,7 @@ describe('LibraryTab', () => {
 
   it('redownload success jumps to Progress tab', async () => {
     const go = vi.fn()
-    mockApi({
+    mockLib({
       'GET /api/mods': [mod({})],
       'POST /api/redownload': { started: 1 },
     })
@@ -135,7 +142,7 @@ describe('LibraryTab', () => {
   })
 
   it('refreshes when a download job transitions running→finished', async () => {
-    const { calls } = mockApi({ 'GET /api/mods': [mod({})] })
+    const { calls } = mockLib({ 'GET /api/mods': [mod({})] })
     renderTab()
     await screen.findByText('SkyUI')
     const before = calls.filter((c) => c.path === '/api/mods').length
@@ -149,5 +156,20 @@ describe('LibraryTab', () => {
       }),
     )
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/mods').length).toBe(before + 1))
+  })
+
+  it('committed order disables delete + redownload and shows a banner', async () => {
+    mockLib({
+      'GET /api/mods': [mod({})],
+      'GET /api/order/commit-state': { ...COMMIT_IDLE, committed: true },
+    })
+    renderTab()
+    await screen.findByText('SkyUI')
+    await userEvent.click(screen.getByLabelText(/select SkyUI/))
+
+    expect(screen.getByRole('button', { name: 'Delete (1)' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Redownload (1)' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Validate (1)' })).toBeEnabled() // read-only, still allowed
+    expect(screen.getByText(/committed to disk/i)).toBeInTheDocument()
   })
 })

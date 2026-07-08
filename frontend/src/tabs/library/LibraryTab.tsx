@@ -36,6 +36,7 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   const debouncedQ = useDebounce(q, 250)
   const [allRows, setAllRows] = useState<Mod[]>([])
   const [showDeleted, setShowDeleted] = useState(false)
+  const [committed, setCommitted] = useState(false)
   const [msg, setMsg] = useState('')
   const { dl } = useEvents()
 
@@ -45,7 +46,9 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
 
   const load = useCallback(async () => {
     try {
-      setAllRows(await api.mods(debouncedQ.trim() || undefined))
+      const [rowsData, cs] = await Promise.all([api.mods(debouncedQ.trim() || undefined), api.orderCommitState()])
+      setAllRows(rowsData)
+      setCommitted(cs.committed) // delete/redownload rename/remove files — unsafe while committed
     } catch (e) {
       setMsg(errText(e))
     }
@@ -116,12 +119,18 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
           <button className="btn ghost" disabled={!n} onClick={doValidate}>
             {n ? `Validate (${n})` : 'Validate selected'}
           </button>
-          <button className="btn ghost" disabled={!n} onClick={doRedownload}>
+          <button
+            className="btn ghost"
+            disabled={!n || committed}
+            title={committed ? 'Install order is committed to disk — revert it (Install Order tab) first' : undefined}
+            onClick={doRedownload}
+          >
             {n ? `Redownload (${n})` : 'Redownload selected'}
           </button>
           <button
             className="btn ghost"
-            disabled={!n}
+            disabled={!n || committed}
+            title={committed ? 'Install order is committed to disk — revert it (Install Order tab) first' : undefined}
             style={{ color: 'var(--red)', borderColor: '#4a2226' }}
             onClick={() => setConfirmDelete(true)}
           >
@@ -142,6 +151,12 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
           </button>
           <span className="dim">{msg}</span>
         </div>
+        {committed && (
+          <div className="c-amber" style={{ marginTop: 6, fontSize: 12 }}>
+            🔒 Install order is committed to disk — files are renamed with order prefixes. Delete and Redownload are
+            disabled to protect the committed set; revert on the Install Order tab to re-enable them.
+          </div>
+        )}
       </div>
       <table>
         <thead>
