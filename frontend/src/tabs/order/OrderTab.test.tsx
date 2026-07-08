@@ -93,6 +93,44 @@ describe('OrderTab list', () => {
   })
 })
 
+describe('OrderTab highlight + locked toggles', () => {
+  // chip and subtab/toolbar share some labels — pick the .chip variant
+  const chipBtn = (name: string | RegExp) =>
+    screen.getAllByRole('button', { name }).find((b) => b.className.includes('chip'))!
+
+  it('toggling a highlight chip off hides its badge, on re-shows — no refetch', async () => {
+    const { calls } = mockApi(routes())
+    renderTab()
+    await screen.findByText('SkyUI')
+    expect(screen.getByText('CONFLICT ↔ SkyUI')).toBeInTheDocument()
+    // one mod (USSEP) carries a CONFLICT tag → chip shows (1)
+    expect(chipBtn(/Conflicts/)).toHaveTextContent('Conflicts (1)')
+    const fetches = calls.filter((c) => c.path === '/api/installorder').length
+
+    await userEvent.click(chipBtn(/Conflicts/))
+    expect(screen.queryByText('CONFLICT ↔ SkyUI')).not.toBeInTheDocument()
+    await userEvent.click(chipBtn(/Conflicts/))
+    expect(screen.getByText('CONFLICT ↔ SkyUI')).toBeInTheDocument()
+    // pure display toggle — never re-hits the backend
+    expect(calls.filter((c) => c.path === '/api/installorder').length).toBe(fetches)
+  })
+
+  it('locked toggle hides locked rows; others keep their global position', async () => {
+    mockApi(routes())
+    renderTab()
+    await screen.findByText('SkyUI')
+    // MoreHUD is the locked row in the fixture
+    expect(screen.getByText('MoreHUD')).toBeInTheDocument()
+
+    await userEvent.click(chipBtn(/Locked/))
+    expect(screen.queryByText('MoreHUD')).not.toBeInTheDocument()
+    expect(screen.getByText('SkyUI')).toBeInTheDocument()
+    // USSEP keeps its real rank #3 even though the locked row above is hidden
+    expect(screen.getByText('USSEP').closest('tr')).toHaveTextContent('3')
+    expect(screen.getByText('(2 of 3 shown)')).toBeInTheDocument()
+  })
+})
+
 describe('OrderTab selection + bulk actions', () => {
   it('checkbox selection: clicks accumulate, re-click removes, shift ranges, outside-click clears', async () => {
     mockApi(routes())

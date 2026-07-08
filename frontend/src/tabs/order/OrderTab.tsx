@@ -18,6 +18,8 @@ import { resolveMove } from './lib/moveIntent'
 import { type VisibleRow } from './lib/runs'
 import { OrderRow } from './OrderRow'
 import { OrderToolbar } from './OrderToolbar'
+import { HighlightBar } from './HighlightBar'
+import { ALL_HIGHLIGHTS_ON, flagCategory, type HighlightKey } from './lib/highlights'
 import { SelectionToolbar } from './SelectionToolbar'
 import { Subtabs } from './subtabs/Subtabs'
 import { ConflictsView } from './subtabs/ConflictsView'
@@ -65,16 +67,42 @@ export function OrderTab() {
   const jobs = useOrderJobs(data)
   const [cat, setCat] = useState('')
   const [grp, setGrp] = useState('')
+  const [hl, setHl] = useState(ALL_HIGHLIGHTS_ON)
+  const [showLocked, setShowLocked] = useState(true)
   const [dragId, setDragId] = useState<number | null>(null)
 
+  const toggleHl = (key: HighlightKey) => setHl((h) => ({ ...h, [key]: !h[key] }))
+
   // Rank positions are absolute over the full list; filters only hide rows.
+  // Hiding locked rows is just another filter: positions stay global (i+1 over
+  // the full list), so a move onto a visible row still lands at that mod's real
+  // rank — locked rows keep their place relative to the moved block.
   const visible: VisibleRow[] = useMemo(
     () =>
       data.mods
         .map((mod, i) => ({ mod, pos: i + 1 }))
-        .filter((r) => matchesFilter(r.mod, cat, grp)),
-    [data.mods, cat, grp],
+        .filter((r) => matchesFilter(r.mod, cat, grp) && (showLocked || !r.mod.locked)),
+    [data.mods, cat, grp, showLocked],
   )
+
+  const lockedCount = useMemo(() => data.mods.filter((m) => m.locked).length, [data.mods])
+
+  // How many rows each highlight would tag right now — shown on the chips so
+  // an empty pass reads as (0) instead of a chip that does nothing.
+  const hlCounts = useMemo(() => {
+    const c: Record<HighlightKey, number> = { conflict: 0, duplicate: 0, moved: 0, uncertain: 0, drift: 0 }
+    for (const mod of data.mods) {
+      const cats = new Set<HighlightKey>()
+      for (const f of mod.flags || []) {
+        const k = flagCategory(f)
+        if (k) cats.add(k)
+      }
+      if (jobs.justChanged.has(mod.mod_id)) cats.add('moved')
+      for (const k of cats) c[k]++
+    }
+    c.drift = jobs.wrongById.size
+    return c
+  }, [data.mods, jobs.justChanged, jobs.wrongById])
   const sel = useRowSelection(visible.map((r) => r.mod.mod_id))
 
   const visibleIndex = useMemo(() => new Map(visible.map((r, i) => [r.mod.mod_id, i])), [visible])
@@ -270,6 +298,15 @@ export function OrderTab() {
         )}
       </div>
 
+      <HighlightBar
+        hl={hl}
+        counts={hlCounts}
+        onToggle={toggleHl}
+        showLocked={showLocked}
+        onToggleLocked={() => setShowLocked((v) => !v)}
+        lockedCount={lockedCount}
+      />
+
       <SelectionToolbar
         count={sel.selected.size}
         buckets={data.buckets}
@@ -314,8 +351,11 @@ export function OrderTab() {
                     pos={r.pos}
                     names={data.names}
                     buckets={data.buckets}
+                    hl={hl}
                     selected={sel.selected.has(r.mod.mod_id)}
-                    wrongExpected={jobs.wrongById.has(r.mod.mod_id) ? jobs.wrongById.get(r.mod.mod_id) : undefined}
+                    wrongExpected={
+                      hl.drift && jobs.wrongById.has(r.mod.mod_id) ? jobs.wrongById.get(r.mod.mod_id) : undefined
+                    }
                     justChanged={jobs.justChanged.has(r.mod.mod_id)}
                     disabled={data.refining}
                     onRowClick={(e) => onRowClick(r.mod.mod_id, e)}

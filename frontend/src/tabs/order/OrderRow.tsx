@@ -4,12 +4,14 @@ import { CSS } from '@dnd-kit/utilities'
 import type { OrderMod } from '../../api/types'
 import { FlagBadge } from './FlagBadges'
 import { GroupBadge } from './GroupBadge'
+import { flagCategory, type Highlights } from './lib/highlights'
 
 interface Props {
   mod: OrderMod
   pos: number
   names: ReadonlyMap<number, string>
   buckets: Record<string, string>
+  hl: Highlights
   selected: boolean
   wrongExpected: number | null | undefined // bucket id when drift-flagged
   justChanged: boolean
@@ -69,6 +71,7 @@ export function OrderRow({
   pos,
   names,
   buckets,
+  hl,
   selected,
   wrongExpected,
   justChanged,
@@ -83,7 +86,11 @@ export function OrderRow({
   })
 
   const wrong = wrongExpected !== undefined
-  const moved = mod.flags?.some((f) => f.startsWith('MOVED')) || justChanged
+  const moved = hl.moved && ((mod.flags?.some((f) => f.startsWith('MOVED')) ?? false) || justChanged)
+  const shownFlags = (mod.flags || []).filter((f) => {
+    const cat = flagCategory(f)
+    return cat === null || hl[cat]
+  })
   const rowCls = ['ordrow', wrong ? 'r-wrong' : moved ? 'r-upd' : mod.locked ? 'r-locked' : '', selected ? 'r-sel' : '']
     .filter(Boolean)
     .join(' ')
@@ -140,7 +147,7 @@ export function OrderRow({
           </span>
         )}
         {mod.mod_name}{' '}
-        {(mod.flags || []).map((f) => (
+        {shownFlags.map((f) => (
           <FlagBadge key={f} flag={f} names={names} buckets={buckets} />
         ))}
         {wrong && (

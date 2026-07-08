@@ -98,6 +98,15 @@ tr.dropmark td { border-top: 2px solid var(--blue); }
 .posnum:hover { color: var(--blue); text-decoration: underline; }
 .grp h2 { font-size: 14px; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
 .toolbar { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+.hlbar { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.chip {
+  font-size: 11px; padding: 3px 10px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--border); background: none; color: var(--dim);
+  font-family: inherit; user-select: none;
+}
+.chip:not(.on) { text-decoration: line-through; opacity: .6; }
+.chip.on { border-color: transparent; }
+.chip:hover { opacity: 1; }
 #summary { color: var(--dim); font-size: 13px; }
 
 /* progress view (same look as the old dashboard) */
