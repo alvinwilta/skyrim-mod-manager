@@ -9,12 +9,26 @@ through your own logged-in browser session.
 - System Chromium (`pacman -S chromium`) — start it with `./browser.sh`
   (dedicated profile + CDP on port 9223) and log into nexusmods.com once
 - `python -m venv .venv && .venv/bin/pip install -r requirements.txt`
+- Node 20+ for the frontend build:
+  `cd frontend && npm install && npm run build`
 
 ## Web app
 
 ```
-.venv/bin/python webapp.py   # http://127.0.0.1:7788/
+cd frontend && npm run build   # once, and after frontend changes
+.venv/bin/python webapp.py     # http://127.0.0.1:7788/
 ```
+
+Frontend development (Vite dev server with hot reload, proxying `/api` to the
+backend — point it at a throwaway backend with `MODMAN_BACKEND=http://127.0.0.1:7799`):
+
+```
+cd frontend
+npm run dev     # http://localhost:5173
+npm run check   # typecheck + unit tests + build
+npm run e2e     # Playwright suite (spawns its own backend on 7799 with a DB copy)
+```
+
 
 - **Library** — browse/search everything in `mods.db`; validate, redownload,
   or delete selected files
@@ -48,12 +62,16 @@ through your own logged-in browser session.
     drag moved it). Results show in Conflicts / Requirements / Check for
     drift tabs.
 
-  Reordering the table: drag a row, or click its position number to type
-  an exact position; Ctrl/Cmd+click or Shift+click selects multiple rows to
-  drag as a block; plain click locks 🔒/unlocks a row — locked mods are
-  pinned and skipped by every sort/refine pass. When signals disagree,
-  priority is locked position > manual drag/move > collection curated rule
-  > Claude correction > heuristic guess.
+  Reordering the table: drag the ≡ handle, or click a position number to
+  type an exact position. Select rows by clicking (Ctrl/Cmd toggles,
+  Shift ranges) or by dragging a box across rows — a sticky toolbar then
+  locks/unlocks or moves the whole selection (to a position, top, bottom,
+  or the end of a group), and dragging any selected row's handle carries
+  the block. The 🔒 button pins a mod — locked mods are skipped by every
+  sort/refine pass. Rows group under collapsible STEP-bucket headers that
+  always preserve the real rank order. When signals disagree, priority is
+  locked position > manual drag/move > collection curated rule > Claude
+  correction > heuristic guess.
 
   Everything is persisted per mod in `mods.db` (`mod_sort` table), so
   order, locks and flags survive restarts and file redownloads.
@@ -183,7 +201,7 @@ modman/
 webapp.py     FastAPI server + JSON API
 cli.py        command-line downloader
 browser.sh    launches the dedicated Chromium (profile + debug port)
-web/          frontend (single page)
+frontend/     React + TypeScript frontend (Vite; unit tests in src/, Playwright e2e in e2e/)
 ```
 
 Files land in `/games/modding/downloads/`. Downloads resume on re-run;

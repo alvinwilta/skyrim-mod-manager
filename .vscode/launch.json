@@ -2,13 +2,32 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Webapp",
+      "name": "Backend — API + built UI (:7788)",
       "type": "debugpy",
       "request": "launch",
+      "preLaunchTask": "build-frontend",
       "program": "${workspaceFolder}/webapp.py",
       "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}"
+      "justMyCode": true
+    },
+    {
+      "name": "Frontend live-reload — needs backend (:5173)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev",
+      "cwd": "${workspaceFolder}/frontend"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Dev — live-reload UI + backend",
+      "configurations": [
+        "Backend — API + built UI (:7788)",
+        "Frontend live-reload — needs backend (:5173)"
+      ],
+      "stopAll": true
     }
   ]
 }

@@ -1,0 +1,378 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { OrderTab } from './OrderTab'
+import { EventsProvider } from '../../events/EventsProvider'
+import { mockApi } from '../../test/mockApi'
+import { FakeEventSource } from '../../test/FakeEventSource'
+import { __resetPromptCache } from './PromptEditor'
+import type { OrderMod } from '../../api/types'
+
+let uninstall: () => void
+beforeEach(() => {
+  uninstall = FakeEventSource.install()
+  __resetPromptCache()
+})
+afterEach(() => {
+  uninstall()
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
+
+const m = (over: Partial<OrderMod>): OrderMod => ({
+  mod_id: 1,
+  mod_name: 'SkyUI',
+  mod_url: 'https://n/1',
+  category: 'Interface',
+  bucket: 3,
+  locked: false,
+  installed: false,
+  file_type: null,
+  flags: [],
+  ...over,
+})
+
+const ORDER = {
+  buckets: { '3': 'Interface', '5': 'Foundation' },
+  mods: [
+    m({ mod_id: 1, mod_name: 'SkyUI', bucket: 3 }),
+    m({ mod_id: 2, mod_name: 'MoreHUD', bucket: 3, locked: true }),
+    m({ mod_id: 3, mod_name: 'USSEP', bucket: 5, category: 'Patches', flags: ['CONFLICT:1'] }),
+  ],
+  notes: [],
+}
+const IDLE = { phase: 'idle', running: false, error: null }
+
+const routes = (extra: Record<string, unknown> = {}) => ({
+  'GET /api/installorder': ORDER,
+  'GET /api/sort-state': IDLE,
+  'GET /api/enforce-state': IDLE,
+  'GET /api/conflicts': { pairs: [], scanned: 0, total: 0 },
+  'GET /api/requirements-missing': { missing: [] },
+  'GET /api/sort-prompt': { prompt: 'sort {{MODS}} into {{BUCKETS}}', default: 'default prompt' },
+  ...extra,
+})
+
+const renderTab = () =>
+  render(
+    <EventsProvider>
+      <OrderTab />
+    </EventsProvider>,
+  )
+
+// Toolbar buttons share labels with subtab nav buttons — disambiguate by class.
+const toolbarBtn = (name: string | RegExp) =>
+  screen.getAllByRole('button', { name }).find((b) => b.className.includes('btn'))!
+const subtabBtn = (name: string | RegExp) =>
+  screen.getAllByRole('button', { name }).find((b) => !b.className.includes('btn'))!
+
+describe('OrderTab list', () => {
+  it('renders run headers preserving rank order, rows with badges', async () => {
+    mockApi(routes())
+    renderTab()
+    expect(await screen.findByText('SkyUI')).toBeInTheDocument()
+    // two runs: Interface (2 mods) then Foundation (1 mod)
+    expect(screen.getByText('2 mods · #1–2')).toBeInTheDocument()
+    expect(screen.getByText('1 mod · #3')).toBeInTheDocument()
+    // conflict badge resolves target name
+    expect(screen.getByText('CONFLICT ↔ SkyUI')).toBeInTheDocument()
+    // locked row shows pinned lock
+    expect(screen.getByTitle(/pinned — sorts will not move/)).toBeInTheDocument()
+  })
+
+  it('collapsing a run hides its rows without touching others', async () => {
+    mockApi(routes())
+    renderTab()
+    await screen.findByText('SkyUI')
+    await userEvent.click(screen.getByText('2 mods · #1–2'))
+    expect(screen.queryByText('SkyUI')).not.toBeInTheDocument()
+    expect(screen.getByText('USSEP')).toBeInTheDocument()
+  })
+
+  it('group filter re-renders from cache with zero refetches', async () => {
+    const { calls } = mockApi(routes())
+    renderTab()
+    await screen.findByText('SkyUI')
+    const fetches = calls.filter((c) => c.path === '/api/installorder').length
+
+    await userEvent.selectOptions(screen.getByLabelText('filter group'), '5')
+    expect(screen.queryByText('SkyUI')).not.toBeInTheDocument()
+    expect(screen.getByText('USSEP')).toBeInTheDocument()
+    expect(screen.getByText('(1 of 3 shown)')).toBeInTheDocument()
+    expect(calls.filter((c) => c.path === '/api/installorder').length).toBe(fetches)
+  })
+})
+
+describe('OrderTab selection + bulk actions', () => {
+  it('row click selects; ctrl-click toggles; shift-click ranges; plain click replaces', async () => {
+    mockApi(routes())
+    renderTab()
+    await screen.findByText('SkyUI')
+    const user = userEvent.setup() // one session so held modifiers apply to clicks
+
+    await user.click(screen.getByText('SkyUI'))
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText('SkyUI').closest('tr')).toHaveClass('r-sel')
+
+    // shift-click USSEP → range covers all three rows
+    await user.keyboard('{Shift>}')
+    await user.click(screen.getByText('USSEP'))
+    await user.keyboard('{/Shift}')
+    expect(screen.getByText('3 selected')).toBeInTheDocument()
+
+    // ctrl-click MoreHUD → drops it from the selection
+    await user.keyboard('{Control>}')
+    await user.click(screen.getByText('MoreHUD'))
+    await user.keyboard('{/Control}')
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+
+    // plain click replaces everything with just that row
+    await user.click(screen.getByText('MoreHUD'))
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText('MoreHUD').closest('tr')).toHaveClass('r-sel')
+    expect(screen.getByText('SkyUI').closest('tr')).not.toHaveClass('r-sel')
+  })
+
+  it('clicking a link or lock inside a row does not change the selection', async () => {
+    mockApi(routes({ 'POST /api/order/lock': { mod_ids: [1], locked: true } }))
+    renderTab()
+    await screen.findByText('SkyUI')
+    await userEvent.click(screen.getByText('SkyUI'))
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+
+    // lock button click must not collapse the selection to that row
+    await userEvent.click(screen.getAllByTitle('pin at this position')[0])
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+  })
+
+  it('bulk lock: select two rows → Lock posts mod_ids list', async () => {
+    const { calls } = mockApi(routes({ 'POST /api/order/lock': { mod_ids: [1, 2], locked: true } }))
+    renderTab()
+    await screen.findByText('SkyUI')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByText('SkyUI'))
+    await user.keyboard('{Control>}')
+    await user.click(screen.getByText('MoreHUD'))
+    await user.keyboard('{/Control}')
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Lock' }))
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/api/order/lock')?.body).toEqual({ mod_ids: [1, 2], locked: true }),
+    )
+  })
+
+  it('bulk move to top posts position 1 for the selection', async () => {
+    const { calls } = mockApi(routes({ 'POST /api/order/move': { moved: [2, 3], position: 1 } }))
+    renderTab()
+    await screen.findByText('SkyUI')
+    const user = userEvent.setup()
+    await user.click(screen.getByText('MoreHUD'))
+    await user.keyboard('{Control>}')
+    await user.click(screen.getByText('USSEP'))
+    await user.keyboard('{/Control}')
+    await user.click(screen.getByRole('button', { name: 'Top' }))
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [2, 3], position: 1 }),
+    )
+  })
+
+  it('move-to-group targets the end of that bucket run', async () => {
+    const { calls } = mockApi(routes({ 'POST /api/order/move': { moved: [3], position: 2 } }))
+    renderTab()
+    await screen.findByText('SkyUI')
+    await userEvent.click(screen.getByText('USSEP'))
+    await userEvent.selectOptions(screen.getByLabelText('move to group'), '3')
+    await waitFor(() =>
+      // Interface's last mod is rank 2 → block lands at the end of the group
+      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [3], position: 2 }),
+    )
+  })
+
+  it('per-row lock button toggles one mod without selection', async () => {
+    const { calls } = mockApi(routes({ 'POST /api/order/lock': { mod_ids: [2], locked: false } }))
+    renderTab()
+    await screen.findByText('SkyUI')
+    await userEvent.click(screen.getByTitle(/pinned — sorts will not move/))
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/api/order/lock')?.body).toEqual({ mod_ids: [2], locked: false }),
+    )
+  })
+
+  it('inline position edit commits on Enter', async () => {
+    const { calls } = mockApi(routes({ 'POST /api/order/move': { moved: [3], position: 1 } }))
+    renderTab()
+    await screen.findByText('USSEP')
+    await userEvent.click(screen.getAllByTitle('click to type an exact position')[2])
+    const box = screen.getByLabelText('move to position')
+    await userEvent.clear(box)
+    await userEvent.type(box, '1{Enter}')
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [3], position: 1 }),
+    )
+  })
+
+  it('refining (sort-state running) disables locks and bulk actions', async () => {
+    mockApi(routes({ 'GET /api/sort-state': { phase: 'refining', running: true, error: null } }))
+    renderTab()
+    await screen.findByText('SkyUI')
+    const locks = screen.getAllByTitle(/pin at this position|pinned/)
+    for (const b of locks) expect(b).toBeDisabled()
+    await userEvent.click(screen.getByText('SkyUI'))
+    expect(screen.getByRole('button', { name: 'Lock' })).toBeDisabled()
+  })
+})
+
+describe('OrderTab sort machinery', () => {
+  it('heuristic sort posts llm:false + model, logs result in Sort subtab', async () => {
+    const { calls } = mockApi(routes({ 'POST /api/sort': { sorted: 3, llm: false } }))
+    renderTab()
+    await screen.findByText('SkyUI')
+    expect(screen.getByText('Not run yet this session.')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sort (heuristic)' }))
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/api/sort')?.body).toEqual({ llm: false, model: 'haiku' }),
+    )
+    expect(await screen.findByText('3 mods sorted (last run)')).toBeInTheDocument()
+  })
+
+  it('refine enters refining mode: button becomes Force Stop, stop posts sort-stop', async () => {
+    let running = false
+    const { calls } = mockApi(
+      routes({
+        'POST /api/sort': () => {
+          running = true
+          return { started: true }
+        },
+        'POST /api/sort-stop': { stopped: true },
+        'GET /api/sort-state': () => ({
+          phase: running ? 'refining with claude' : 'idle',
+          running,
+          error: null,
+          job: 'bulk',
+        }),
+      }),
+    )
+    renderTab()
+    await screen.findByText('SkyUI')
+
+    await userEvent.click(toolbarBtn('Refine with Claude'))
+    const stop = await screen.findByRole('button', { name: 'Force Stop Claude' })
+    expect(calls.find((c) => c.path === '/api/sort')?.body).toEqual({ llm: true, model: 'haiku' })
+
+    await userEvent.click(stop)
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/sort-stop')).toBe(true))
+  })
+
+  it('refine uncertain posts model and enters refining', async () => {
+    let running = false
+    const { calls } = mockApi(
+      routes({
+        'POST /api/sort-desc': () => {
+          running = true
+          return { started: true }
+        },
+        'GET /api/sort-state': () => ({ phase: running ? 'checking' : 'idle', running, error: null, job: 'desc' }),
+      }),
+    )
+    renderTab()
+    await screen.findByText('SkyUI')
+    await userEvent.selectOptions(screen.getByLabelText('claude model'), 'opus')
+    await userEvent.click(toolbarBtn('Refine uncertain'))
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/api/sort-desc')?.body).toEqual({ model: 'opus' }),
+    )
+    expect(await screen.findByRole('button', { name: 'Force Stop Claude' })).toBeInTheDocument()
+  })
+
+  it('SSE sort.running auto-enters refining mode', async () => {
+    let running = false
+    mockApi(
+      routes({
+        'GET /api/sort-state': () => ({ phase: running ? 'refining' : 'idle', running, error: null, job: 'bulk' }),
+      }),
+    )
+    renderTab()
+    await screen.findByText('SkyUI')
+    expect(toolbarBtn('Refine with Claude')).toBeInTheDocument()
+
+    running = true // a refine started elsewhere; SSE reports it mid-session
+    act(() =>
+      FakeEventSource.last.emit({
+        dl: { phase: 'idle', files: [], error: null, running: false },
+        sort: { phase: 'refining', running: true, error: null },
+      }),
+    )
+    expect(await screen.findByRole('button', { name: 'Force Stop Claude' })).toBeInTheDocument()
+  })
+
+  it('drift check marks wrong rows red with expected-group tooltip', async () => {
+    mockApi(routes({ 'GET /api/order/check': { mismatches: [{ mod_id: 3, expected: 3 }] } }))
+    renderTab()
+    await screen.findByText('USSEP')
+    // title-disambiguated: a subtab button shares the same label
+    await userEvent.click(screen.getByTitle(/Flags mods whose current group disagrees/))
+    await userEvent.click(subtabBtn(/Check for drift/)) // message lives in its panel
+
+    expect(await screen.findByText(/1 mod\(s\) in the wrong spot/)).toBeInTheDocument()
+    await waitFor(() => {
+      const row = screen.getByText('USSEP').closest('tr')
+      expect(row).toHaveClass('r-wrong')
+      expect(row).toHaveAttribute('title', 'expected: 3 · Interface')
+    })
+    expect(screen.getByText('WRONG SPOT')).toBeInTheDocument()
+  })
+
+  it('scan archives starts the job, polls scan-state, then reloads conflicts', async () => {
+    let started = false
+    mockApi(
+      routes({
+        'POST /api/scan-conflicts': () => {
+          started = true
+          return { started: true }
+        },
+        // first poll after start reports done — poller stops and reloads
+        'GET /api/scan-state': () => ({ phase: started ? 'done' : 'idle', running: false, error: null }),
+        'GET /api/conflicts': () =>
+          started
+            ? {
+                pairs: [{ a: { mod_name: 'SkyUI' }, b: { mod_name: 'MoreHUD' }, paths: ['f.dds'], expected: false }],
+                scanned: 3,
+                total: 3,
+              }
+            : { pairs: [], scanned: 0, total: 0 },
+      }),
+    )
+    renderTab()
+    expect(await screen.findByText('SkyUI')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Scan archives' }))
+    expect(await screen.findByText(/SkyUI vs MoreHUD: 1 shared file/)).toBeInTheDocument()
+    expect(screen.getByText(/3\/3 archives scanned/)).toBeInTheDocument()
+  })
+})
+
+describe('PromptEditor', () => {
+  it('loads prompt once, save posts content, reset posts empty string', async () => {
+    const { calls } = mockApi(routes({ 'POST /api/sort-prompt': { saved: true } }))
+    renderTab()
+    await screen.findByText('SkyUI')
+
+    const box = await screen.findByLabelText('claude prompt')
+    await waitFor(() => expect(box).toHaveValue('sort {{MODS}} into {{BUCKETS}}'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save prompt' }))
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/api/sort-prompt' && c.method === 'POST')?.body).toEqual({
+        prompt: 'sort {{MODS}} into {{BUCKETS}}',
+      }),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reset to default' }))
+    await waitFor(() => expect(box).toHaveValue('default prompt'))
+    const posts = calls.filter((c) => c.path === '/api/sort-prompt' && c.method === 'POST')
+    expect(posts.at(-1)?.body).toEqual({ prompt: '' })
+  })
+})

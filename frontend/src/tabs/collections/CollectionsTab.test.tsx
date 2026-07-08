@@ -1,0 +1,69 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { CollectionsTab } from './CollectionsTab'
+import { mockApi } from '../../test/mockApi'
+import type { Collection } from '../../api/types'
+
+afterEach(() => vi.unstubAllGlobals())
+
+const coll = (over: Partial<Collection>): Collection => ({
+  id: 1,
+  slug: 'lorerim',
+  name: 'Lorerim',
+  url: 'https://nexus/collections/lorerim',
+  enabled: true,
+  mod_count: 10,
+  downloaded_count: 4,
+  rule_count: 3,
+  ...over,
+})
+
+describe('CollectionsTab', () => {
+  it('renders cards with counts; empty state otherwise', async () => {
+    mockApi({ 'GET /api/collections': { collections: [coll({})] } })
+    render(<CollectionsTab />)
+    expect(await screen.findByText('Lorerim')).toBeInTheDocument()
+    expect(screen.getByText('4/10 downloaded · 3 order rule(s)')).toBeInTheDocument()
+  })
+
+  it('enable checkbox posts and reverts on error', async () => {
+    const { calls } = mockApi({
+      'GET /api/collections': { collections: [coll({})] },
+      'POST /api/collections/1/enabled': { error: 'db locked' },
+    })
+    render(<CollectionsTab />)
+    const cb = await screen.findByLabelText('enable Lorerim')
+    await userEvent.click(cb)
+    expect(calls.find((c) => c.path === '/api/collections/1/enabled')?.body).toEqual({ enabled: false })
+    await waitFor(() => expect(cb).toBeChecked()) // reverted
+    expect(await screen.findByText('db locked')).toBeInTheDocument()
+  })
+
+  it('expanding lazy-loads mods exactly once', async () => {
+    const { calls } = mockApi({
+      'GET /api/collections': { collections: [coll({})] },
+      'GET /api/collections/1/mods': {
+        mods: [
+          { mod_name: 'SkyUI', mod_url: 'https://n/skyui', bucket: 3, locked: true, downloaded: true },
+          { mod_name: 'ELFX', mod_url: 'https://n/elfx', bucket: null, locked: false, downloaded: false },
+        ],
+        buckets: { '3': 'Interface' },
+      },
+    })
+    render(<CollectionsTab />)
+    const title = await screen.findByText('Lorerim')
+
+    await userEvent.click(title) // expand
+    expect(await screen.findByText('SkyUI')).toBeInTheDocument()
+    expect(screen.getByText('3 · Interface')).toBeInTheDocument()
+    expect(screen.getByText('? · Unsorted')).toBeInTheDocument()
+    expect(screen.getByText('(not downloaded)')).toBeInTheDocument()
+
+    await userEvent.click(title) // collapse
+    expect(screen.queryByText('SkyUI')).not.toBeInTheDocument()
+    await userEvent.click(title) // re-expand: no refetch
+    expect(await screen.findByText('SkyUI')).toBeInTheDocument()
+    expect(calls.filter((c) => c.path === '/api/collections/1/mods').length).toBe(1)
+  })
+})

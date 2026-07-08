@@ -17,7 +17,11 @@ db.init_db()
 # Local-only app with no auth: reject cross-origin browser requests (CSRF)
 # and DNS-rebinding hosts. Requests without an Origin header (curl, the CLI)
 # are allowed — browsers always send Origin on POST.
+# MODMAN_EXTRA_ORIGINS (comma-separated) mirrors the MODMAN_DB_PATH pattern:
+# read at import time so a throwaway test server on another port (e.g. 7799)
+# can accept its own browser origin without loosening the default.
 ALLOWED_ORIGINS = {"http://127.0.0.1:7788", "http://localhost:7788"}
+ALLOWED_ORIGINS |= {o.strip() for o in os.environ.get("MODMAN_EXTRA_ORIGINS", "").split(",") if o.strip()}
 
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 
@@ -30,9 +34,24 @@ async def reject_cross_origin(request: Request, call_next):
     return await call_next(request)
 
 
+# Built React frontend (frontend/ — Vite). `npm run build` produces dist/.
+DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
+
+
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(config.WEB_DIR, "index.html"))
+    built = os.path.join(DIST_DIR, "index.html")
+    if not os.path.isfile(built):
+        return JSONResponse(
+            {"error": "frontend not built — run: cd frontend && npm install && npm run build"},
+            status_code=503,
+        )
+    return FileResponse(built)
+
+
+@app.get("/favicon.svg")
+def favicon():
+    return FileResponse(os.path.join(DIST_DIR, "favicon.svg"))
 
 
 @app.get("/api/mods")
@@ -305,13 +324,15 @@ async def order_move(request: Request):
 async def order_lock(request: Request):
     body = await request.json()
     try:
-        mod_id, locked = int(body["mod_id"]), bool(body["locked"])
+        raw = body.get("mod_ids") or [body["mod_id"]]
+        mod_ids = [int(i) for i in raw]
+        locked = bool(body["locked"])
     except (KeyError, TypeError, ValueError):
-        return JSONResponse({"error": "expected {mod_id, locked}"}, status_code=400)
-    err = order_store.set_lock(mod_id, locked)
+        return JSONResponse({"error": "expected {mod_id | mod_ids, locked}"}, status_code=400)
+    err = order_store.set_lock(mod_ids, locked)
     if err:
         return JSONResponse({"error": err}, status_code=400)
-    return {"mod_id": mod_id, "locked": locked}
+    return {"mod_ids": mod_ids, "locked": locked}
 
 
 @app.get("/api/order/check")
@@ -331,6 +352,14 @@ async def set_sort_prompt(request: Request):
     if err:
         return JSONResponse({"error": err}, status_code=400)
     return {"saved": True}
+
+
+# Vite emits hashed /assets/*.js|css; conditional so a fresh clone without a
+# build still imports (GET / then explains the missing build).
+if os.path.isdir(os.path.join(DIST_DIR, "assets")):
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/assets", StaticFiles(directory=os.path.join(DIST_DIR, "assets")), name="assets")
 
 
 if __name__ == "__main__":

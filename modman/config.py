@@ -50,4 +50,3 @@ MODS_DIR = os.path.join(BASE_DIR, "mods", "")
 # in the same process. A fresh subprocess with this env var set is the only
 # reliable way to point a test server at a throwaway db copy.
 DB_PATH = os.environ.get("MODMAN_DB_PATH") or os.path.join(ROOT_DIR, "mods.db")
-WEB_DIR = os.path.join(ROOT_DIR, "web")

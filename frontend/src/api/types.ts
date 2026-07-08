@@ -1,0 +1,174 @@
+// Hand-written mirrors of webapp.py's raw-dict responses (no Pydantic on the
+// backend, so no codegen). Each tab's phase fills in its own types after
+// reading the corresponding handler — keep these in sync with webapp.py.
+
+export interface CollectionRef {
+  slug: string
+  name?: string
+}
+
+/** GET /api/mods row */
+export interface Mod {
+  file_id: number
+  mod_id: number
+  mod_name: string
+  mod_url: string
+  file_name: string
+  filename: string
+  file_version: string
+  author: string
+  category: string
+  size_bytes: number
+  downloaded_at: string
+  status: 'ok' | 'missing' | 'deleted'
+  installed: boolean
+  collections: CollectionRef[]
+}
+
+/** POST /api/validate */
+export interface ValidateResult {
+  ok: number[]
+  fixed: number[]
+  missing: number[]
+}
+
+/** POST /api/delete */
+export interface DeleteResult {
+  deleted: number
+  files_removed: number
+}
+
+/** One row of a POST /api/diff group */
+export interface DiffItem {
+  file_id: number
+  size: number
+  mod_name: string
+  name: string
+  version: string
+  old_version?: string
+}
+
+/** POST /api/diff */
+export interface DiffResult {
+  new: DiffItem[]
+  updated: DiffItem[]
+  unchanged: DiffItem[]
+}
+
+/** GET /api/installorder mod row */
+export interface OrderMod {
+  mod_id: number
+  mod_name: string
+  mod_url: string
+  category: string | null
+  bucket: number | null
+  locked: boolean
+  installed: boolean
+  file_type: string | null
+  flags: string[]
+}
+
+/** GET /api/installorder */
+export interface InstallOrder {
+  buckets: Record<string, string>
+  mods: OrderMod[]
+  notes: string[]
+}
+
+/** GET /api/order/check */
+export interface OrderCheck {
+  mismatches: { mod_id: number; expected: number | null }[]
+}
+
+/** GET /api/sort-prompt */
+export interface SortPrompt {
+  prompt: string
+  default: string
+}
+
+/** GET /api/conflicts */
+export interface ConflictPair {
+  a: { mod_name: string }
+  b: { mod_name: string }
+  paths: string[]
+  expected: boolean
+}
+export interface ConflictsResult {
+  pairs: ConflictPair[]
+  scanned: number
+  total: number
+}
+
+/** GET /api/requirements-missing item */
+export interface MissingRequirement {
+  mod_name: string
+  requires_url: string
+  requires_mod_id: number
+  notes: string | null
+}
+
+/** GET /api/collections item */
+export interface Collection {
+  id: number
+  slug: string
+  name: string
+  url: string
+  enabled: boolean
+  mod_count: number
+  downloaded_count: number
+  rule_count: number
+}
+
+/** GET /api/collections/{id}/mods */
+export interface CollectionMods {
+  mods: {
+    mod_name: string
+    mod_url: string
+    bucket: number | null
+    locked: boolean
+    downloaded: boolean
+  }[]
+  buckets: Record<string, string>
+}
+
+/** POST /api/fetch-collection */
+export interface FetchCollectionResult {
+  modlist: unknown
+  collection: { id: number; slug: string; name: string } | null
+  count: number
+  diff: DiffResult
+}
+
+/** Shared shape of the four background-job state endpoints
+ *  (/api/sort-state, /api/scan-state, /api/requirements-state, /api/enforce-state) */
+export interface JobState {
+  running: boolean
+  phase: string
+  error: string | null
+  log?: string[]
+  job?: string
+}
+
+export type DlFileStatus = 'pending' | 'url' | 'queued' | 'downloading' | 'done' | 'skipped' | 'failed'
+
+/** One entry of engine.state.files */
+export interface DlFile {
+  name: string
+  size: number
+  got: number
+  status: DlFileStatus
+}
+
+/** GET /api/state / the `dl` half of the SSE frame (engine.state) */
+export interface DlState {
+  phase: string
+  files: DlFile[]
+  error: string | null
+  running: boolean
+}
+
+/** SSE /api/events frame */
+export interface EventsFrame {
+  dl: DlState
+  sort: JobState
+}

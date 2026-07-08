@@ -113,16 +113,25 @@ def apply_corrections(conn, corrections):
         _upsert_sort(conn, mod_id, bucket, ",".join(flags))
 
 
-def set_lock(mod_id, locked):
-    """Pin/unpin a mod at its current position. Returns error string or None."""
+def set_lock(mod_ids, locked):
+    """Pin/unpin one mod or a list of mods at their current positions.
+    All-or-nothing: any unknown mod_id fails the whole call.
+    Returns error string or None."""
+    if isinstance(mod_ids, int):
+        mod_ids = [mod_ids]
     with db.connect() as conn:
-        known = conn.execute("SELECT 1 FROM mods WHERE mod_id = ?", (mod_id,)).fetchone()
-        if not known:
-            return "unknown mod"
-        conn.execute(
+        placeholders = ",".join("?" * len(mod_ids))
+        known = {
+            r["mod_id"]
+            for r in conn.execute(f"SELECT mod_id FROM mods WHERE mod_id IN ({placeholders})", mod_ids)
+        }
+        unknown = [i for i in mod_ids if i not in known]
+        if unknown:
+            return f"unknown mod(s): {unknown}"
+        conn.executemany(
             "INSERT INTO mod_sort (mod_id, locked) VALUES (?, ?)"
             " ON CONFLICT(mod_id) DO UPDATE SET locked = excluded.locked",
-            (mod_id, 1 if locked else 0),
+            [(i, 1 if locked else 0) for i in mod_ids],
         )
     return None
 
