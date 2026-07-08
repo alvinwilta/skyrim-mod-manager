@@ -435,4 +435,6 @@ if os.path.isdir(os.path.join(DIST_DIR, "assets")):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=7788)
+    # timeout_graceful_shutdown: open SSE streams (/api/events) never close on
+    # their own, so cap the connection-drain wait or SIGTERM hangs forever.
+    uvicorn.run(app, host="127.0.0.1", port=7788, timeout_graceful_shutdown=3)
