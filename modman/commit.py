@@ -64,9 +64,15 @@ def _prefix(index, total):
 
 def _plan(conn):
     """(file_id, old_name, new_name) for every ok archive still un-prefixed,
-    numbered by its mod's 1-based position in the current install order."""
+    numbered by its mod's 1-based position in the current install order.
+
+    Skips rows whose file isn't actually on disk: a `status='ok'` row can name
+    a file that was deleted outside the app / never fully downloaded, and one
+    missing file must not abort the whole commit. There's nothing to prefix if
+    the archive isn't there."""
     mods = order_store.load_order()["mods"]
     plan = []
+    skipped = 0
     for i, m in enumerate(mods):
         prefix = _prefix(i, len(mods))
         rows = conn.execute(
@@ -75,7 +81,12 @@ def _plan(conn):
             (m["mod_id"],),
         ).fetchall()
         for r in rows:
+            if not os.path.isfile(os.path.join(DOWNLOADS_DIR, r["filename"])):
+                skipped += 1
+                continue
             plan.append((r["file_id"], r["filename"], prefix + r["filename"]))
+    if skipped:
+        log.warning("commit: skipped %d db row(s) with no file on disk", skipped)
     return plan
 
 

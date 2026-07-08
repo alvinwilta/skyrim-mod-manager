@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from modman import collection_rules, commit, config, conflicts, db, engine, llm_refine, mo2, nexus, order_store, precedence, requirements
+from modman import collection_rules, commit, config, conflicts, db, engine, llm_refine, mo2, mo2_order, nexus, order_store, precedence, requirements
 
 log = logging.getLogger(__name__)
 app = FastAPI(title="Mod Manager")
@@ -350,6 +350,11 @@ async def order_lock(request: Request):
 @app.get("/api/order/check")
 def order_check():
     return order_store.check_order()
+
+
+@app.get("/api/order/mo2-check")
+def order_mo2_check():
+    return mo2_order.compare()
 
 
 @app.post("/api/order/commit")

@@ -1,4 +1,5 @@
 import os
+import re
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -42,6 +43,31 @@ BASE_DIR = os.path.expanduser(_env.get("MO2_BASE_DIR") or os.environ.get("MO2_BA
 NEXUS_API_KEY = _env.get("NEXUS_API_KEY") or os.environ.get("NEXUS_API_KEY")
 DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads", "")
 MODS_DIR = os.path.join(BASE_DIR, "mods", "")
+
+# MO2 install-state paths (read-only) -- used by modman/mo2_order.py to compare
+# the app's computed install order against what MO2 actually has installed.
+MO2_INI = os.path.join(BASE_DIR, "MO2", "ModOrganizer.ini")
+PROFILES_DIR = os.path.join(BASE_DIR, "profiles", "")
+
+
+def active_profile():
+    """MO2's currently-selected profile name (ModOrganizer.ini
+    `selected_profile=@ByteArray(<name>)`). Falls back to 'Default'."""
+    try:
+        with open(MO2_INI, errors="ignore") as f:
+            for line in f:
+                if line.strip().startswith("selected_profile="):
+                    val = line.split("=", 1)[1].strip()
+                    m = re.match(r"@ByteArray\((.*)\)$", val)
+                    return (m.group(1) if m else val) or "Default"
+    except OSError:
+        pass
+    return "Default"
+
+
+def modlist_path():
+    """Path to the active profile's modlist.txt (ordered install list)."""
+    return os.path.join(PROFILES_DIR, active_profile(), "modlist.txt")
 
 # Override for test isolation (MODMAN_DB_PATH env var) -- must be a real env
 # var read at import time, not a post-import monkeypatch: modman/__init__.py

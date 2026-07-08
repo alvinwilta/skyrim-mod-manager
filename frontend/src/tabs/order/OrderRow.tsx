@@ -14,6 +14,7 @@ interface Props {
   hl: Highlights
   selected: boolean
   wrongExpected: number | null | undefined // bucket id when drift-flagged
+  mo2Wrong: boolean // true when this mod is out of order vs MO2's install order
   justChanged: boolean
   disabled: boolean // refining: no drag, no lock, no move
   onRowClick: (e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => void
@@ -83,6 +84,7 @@ const RowCells = memo(function RowCells({
   hl,
   wrong,
   wrongExpected,
+  mo2Wrong,
   disabled,
   onToggleLock,
   onMoveTo,
@@ -94,6 +96,7 @@ const RowCells = memo(function RowCells({
   hl: Highlights
   wrong: boolean
   wrongExpected: number | null | undefined
+  mo2Wrong: boolean
   disabled: boolean
   onToggleLock: () => void
   onMoveTo: (position: number) => void
@@ -139,6 +142,11 @@ const RowCells = memo(function RowCells({
             buckets={buckets}
           />
         )}
+        {mo2Wrong && !wrong && (
+          <span className="badge" style={{ background: '#3a1214', color: 'var(--red)' }} title="out of order vs MO2's real install order">
+            MO2 ORDER{' '}
+          </span>
+        )}
       </td>
       <td className="num">
         <a href={mod.mod_url} target="_blank" rel="noreferrer" className="dim">
@@ -161,6 +169,7 @@ export function OrderRow({
   hl,
   selected,
   wrongExpected,
+  mo2Wrong,
   justChanged,
   disabled,
   onRowClick,
@@ -174,7 +183,7 @@ export function OrderRow({
 
   const wrong = wrongExpected !== undefined
   const moved = hl.moved && ((mod.flags?.some((f) => f.startsWith('MOVED')) ?? false) || justChanged)
-  const rowCls = ['ordrow', wrong ? 'r-wrong' : moved ? 'r-upd' : mod.locked ? 'r-locked' : '', selected ? 'r-sel' : '']
+  const rowCls = ['ordrow', wrong || mo2Wrong ? 'r-wrong' : moved ? 'r-upd' : mod.locked ? 'r-locked' : '', selected ? 'r-sel' : '']
     .filter(Boolean)
     .join(' ')
   const hint = wrong
@@ -213,6 +222,7 @@ export function OrderRow({
         hl={hl}
         wrong={wrong}
         wrongExpected={wrongExpected}
+        mo2Wrong={mo2Wrong}
         disabled={disabled}
         onToggleLock={onToggleLock}
         onMoveTo={onMoveTo}

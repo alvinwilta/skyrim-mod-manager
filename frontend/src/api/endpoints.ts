@@ -10,6 +10,7 @@ import type {
   InstallOrder,
   JobState,
   MissingRequirement,
+  Mo2Check,
   Mod,
   OrderCheck,
   SortPrompt,
@@ -37,6 +38,7 @@ export const api = {
   orderLock: (modIds: number[], locked: boolean) =>
     post<{ mod_ids: number[]; locked: boolean }>('/api/order/lock', { mod_ids: modIds, locked }),
   orderCheck: () => get<OrderCheck>('/api/order/check'),
+  orderMo2Check: () => get<Mo2Check>('/api/order/mo2-check'),
   orderCommit: () => post<{ started: boolean }>('/api/order/commit'),
   orderUncommit: () => post<{ started: boolean }>('/api/order/uncommit'),
   orderCommitState: () => get<CommitState>('/api/order/commit-state'),

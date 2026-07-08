@@ -24,6 +24,7 @@ import { SelectionToolbar } from './SelectionToolbar'
 import { Subtabs } from './subtabs/Subtabs'
 import { ConflictsView } from './subtabs/ConflictsView'
 import { RequirementsView } from './subtabs/RequirementsView'
+import { Mo2View } from './subtabs/Mo2View'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { LoadingOverlay } from '../../components/LoadingOverlay'
 
@@ -73,6 +74,11 @@ export function OrderTab() {
   const [showLocked, setShowLocked] = useState(true)
   const [dragId, setDragId] = useState<number | null>(null)
   const [confirmCommit, setConfirmCommit] = useState(false)
+
+  const mo2WrongIds = useMemo(
+    () => new Set(jobs.mo2.out_of_order.map((e) => e.mod_id).filter((x): x is number => x != null)),
+    [jobs.mo2],
+  )
 
   const toggleHl = (key: HighlightKey) => setHl((h) => ({ ...h, [key]: !h[key] }))
 
@@ -262,6 +268,18 @@ export function OrderTab() {
           >
             Check for drift
           </button>
+          <button
+            className="btn ghost"
+            disabled={!data.committed || data.refining}
+            title={
+              data.committed
+                ? "Compares your install list against what MO2 actually has installed and enabled on disk (modlist.txt order). Flags mods out of order, installed-but-not-listed, and listed-but-not-installed."
+                : 'Commit the install order to disk first — only then does MO2 see this order to compare against.'
+            }
+            onClick={() => void jobs.checkMo2()}
+          >
+            Check vs MO2 order
+          </button>
           <span style={{ flex: 1 }} />
           <button
             className={`btn${data.committed ? '' : ' ghost'}`}
@@ -278,8 +296,8 @@ export function OrderTab() {
           </button>
         </div>
         {jobs.commitMsg && (
-          <div className="dim" style={{ marginTop: 8 }}>
-            {jobs.commitMsg}
+          <div className={jobs.commitError ? 'c-red' : 'dim'} style={{ marginTop: 8 }}>
+            {jobs.commitError ? `Commit failed — ${jobs.commitMsg}` : jobs.commitMsg}
           </div>
         )}
         <Subtabs
@@ -287,6 +305,7 @@ export function OrderTab() {
             { id: 'conflicts', label: 'Conflicts', count: jobs.conflicts.pairs.filter((p) => !p.expected).length || undefined },
             { id: 'requirements', label: 'Requirements', count: jobs.missing.length || undefined },
             { id: 'drift', label: 'Check for drift', count: jobs.wrongById.size || undefined },
+            { id: 'mo2', label: 'vs MO2', count: jobs.mo2.out_of_order.length || undefined },
           ]}
         >
           {(active) => (
@@ -294,6 +313,7 @@ export function OrderTab() {
               {active === 'conflicts' && <ConflictsView msg={jobs.scanMsg} pairs={jobs.conflicts.pairs} />}
               {active === 'requirements' && <RequirementsView msg={jobs.reqMsg} missing={jobs.missing} />}
               {active === 'drift' && <div className="dim">{jobs.driftMsg}</div>}
+              {active === 'mo2' && <Mo2View msg={jobs.mo2Msg} mo2={jobs.mo2} />}
             </>
           )}
         </Subtabs>
@@ -385,6 +405,7 @@ export function OrderTab() {
                     wrongExpected={
                       hl.drift && jobs.wrongById.has(r.mod.mod_id) ? jobs.wrongById.get(r.mod.mod_id) : undefined
                     }
+                    mo2Wrong={data.committed && mo2WrongIds.has(r.mod.mod_id)}
                     justChanged={jobs.justChanged.has(r.mod.mod_id)}
                     disabled={frozen}
                     onRowClick={(e) => onRowClick(r.mod.mod_id, e)}

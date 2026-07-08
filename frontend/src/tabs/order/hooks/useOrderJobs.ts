@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../../api/endpoints'
 import { usePoller } from '../../../hooks/usePoller'
 import { useEvents } from '../../../events/EventsProvider'
-import type { ConflictsResult, MissingRequirement } from '../../../api/types'
+import type { ConflictsResult, MissingRequirement, Mo2Check } from '../../../api/types'
 import { snapshotBuckets, diffChanged, type BucketSnapshot } from '../lib/changeDiff'
 import { errText, type useOrderData } from './useOrderData'
 
 const NOT_RUN = 'Not run yet this session.'
+const EMPTY_MO2: Mo2Check = { out_of_order: [], in_mo2_not_list: [], in_list_not_mo2: [] }
 
 /**
  * All background-job machinery for the Install Order tab: heuristic sort,
@@ -31,7 +32,10 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const [syncing, setSyncing] = useState(false)
   const [missing, setMissing] = useState<MissingRequirement[]>([])
   const [driftMsg, setDriftMsg] = useState('')
+  const [mo2, setMo2] = useState<Mo2Check>(EMPTY_MO2)
+  const [mo2Msg, setMo2Msg] = useState(NOT_RUN)
   const [commitMsg, setCommitMsg] = useState('')
+  const [commitError, setCommitError] = useState(false)
   const [committing, setCommitting] = useState(false)
   const [wrongById, setWrongById] = useState<ReadonlyMap<number, number | null>>(new Map())
   const [justChanged, setJustChanged] = useState<ReadonlySet<number>>(new Set())
@@ -167,17 +171,28 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   )
 
   // Commit watcher: 1s. Renames files on disk; blocks all reordering meanwhile.
+  // A thrown tick (route 404 on a stale backend, network blip) must NOT hang the
+  // overlay forever — catch it, drop out of committing, and surface the error.
   usePoller(
     async () => {
-      const s = await api.orderCommitState()
-      setCommitMsg(s.phase + (s.error ? ' — ' + s.error : ''))
-      if (!s.running) {
+      try {
+        const s = await api.orderCommitState()
+        if (!s.running) {
+          setCommitMsg(s.phase + (s.error ? ' — ' + s.error : ''))
+          setCommitError(!!s.error)
+          setCommitting(false)
+          data.setCommitted(s.committed)
+          await finishAction()
+          return false
+        }
+        setCommitMsg(s.phase)
+        return true
+      } catch (e) {
+        setCommitMsg(errText(e))
+        setCommitError(true)
         setCommitting(false)
-        data.setCommitted(s.committed)
-        await finishAction()
         return false
       }
-      return true
     },
     1000,
     committing,
@@ -185,24 +200,28 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
 
   const runCommit = async () => {
     takeSnapshot()
+    setCommitError(false)
     setCommitMsg('renaming files…')
     try {
       await api.orderCommit()
       setCommitting(true)
     } catch (e) {
       setCommitMsg(errText(e))
+      setCommitError(true)
       snapshot.current = null
     }
   }
 
   const runUncommit = async () => {
     takeSnapshot()
+    setCommitError(false)
     setCommitMsg('restoring names…')
     try {
       await api.orderUncommit()
       setCommitting(true)
     } catch (e) {
       setCommitMsg(errText(e))
+      setCommitError(true)
       snapshot.current = null
     }
   }
@@ -306,6 +325,26 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     [data],
   )
 
+  const checkMo2 = useCallback(async () => {
+    setMo2Msg('reading MO2 install state…')
+    try {
+      const d = await api.orderMo2Check()
+      setMo2(d)
+      const n = d.out_of_order.length
+      setMo2Msg(
+        n
+          ? `${n} installed mod(s) sit in a different order than your list — highlighted red below. ` +
+            `Re-install/re-sort in MO2 to match, or adjust the list.`
+          : d.in_mo2_not_list.length || d.in_list_not_mo2.length
+            ? 'Install order matches for every mod present in both. See the set differences below.'
+            : 'Install order matches MO2 exactly — nothing out of place.',
+      )
+    } catch (e) {
+      setMo2(EMPTY_MO2)
+      setMo2Msg(errText(e))
+    }
+  }, [])
+
   return {
     model,
     setModel,
@@ -325,8 +364,12 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     missing,
     driftMsg,
     commitMsg,
+    commitError,
     committing,
     wrongById,
+    mo2,
+    mo2Msg,
+    checkMo2,
     justChanged,
     runSort,
     refineOrStop,

@@ -434,6 +434,25 @@ describe('OrderTab commit to disk', () => {
     expect(calls.some((c) => c.method === 'POST' && c.path === '/api/order/commit')).toBe(true)
     expect(toolbarBtn('Sort (heuristic)')).toBeDisabled()
   })
+
+  it('commit: a failing commit-state poll clears the overlay and shows the error', async () => {
+    mockApi(
+      routes({
+        'POST /api/order/commit': { started: true },
+        // stale/broken backend: state route errors — must not hang the overlay
+        'GET /api/order/commit-state': { __status: 404, error: 'Not Found' },
+      }),
+    )
+    renderTab()
+    await screen.findByText('SkyUI')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Commit order to disk' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Commit' }))
+
+    // overlay gone, error surfaced
+    await waitFor(() => expect(screen.getByText(/Commit failed/)).toBeInTheDocument())
+    expect(screen.queryByText(/do not close this tab/i)).not.toBeInTheDocument()
+  })
 })
 
 describe('PromptEditor', () => {
