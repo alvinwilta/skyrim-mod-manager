@@ -188,6 +188,19 @@ async def delete(request: Request):
     return engine.delete_files(file_ids)
 
 
+@app.post("/api/purge")
+async def purge(request: Request):
+    body = await request.json()
+    file_ids = (body or {}).get("file_ids") or []
+    if not file_ids:
+        return JSONResponse({"error": "no files selected"}, status_code=400)
+    if commit.is_committed():
+        return JSONResponse(
+            {"error": "Install order is committed to disk — revert it before purging files."}, status_code=409
+        )
+    return engine.purge_files(file_ids)
+
+
 @app.post("/api/redownload")
 async def redownload(request: Request):
     body = await request.json()

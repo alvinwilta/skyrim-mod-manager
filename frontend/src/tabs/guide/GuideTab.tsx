@@ -30,7 +30,9 @@ export function GuideTab() {
             is written for it if it had none. Blocked while the order is committed to disk.
           </li>
           <li>
-            <b>Show deleted</b> reveals soft-deleted rows again.
+            <b>Show deleted</b> switches to a deleted-only view (just the soft-deleted rows); toggle off to return to the
+            live library. In that view the Delete button becomes <b>Purge</b> — it permanently removes the record from
+            the database (soft-delete only marks it; purge is the real, unrecoverable delete).
           </li>
           <li>
             <b>Source</b> column: which collection(s) a mod came from, or <span className="dim">manual</span> if you

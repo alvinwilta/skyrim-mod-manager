@@ -158,6 +158,26 @@ describe('LibraryTab', () => {
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/mods').length).toBe(before + 1))
   })
 
+  it('deleted view: Delete becomes Purge and hits /api/purge', async () => {
+    const { calls } = mockLib({
+      'GET /api/mods': [mod({ file_id: 5, mod_name: 'GhostMod', file_name: 'ghost.7z', status: 'deleted' })],
+      'POST /api/purge': { purged: 1, files_removed: 0 },
+    })
+    renderTab()
+    await userEvent.click(screen.getByRole('button', { name: /Show deleted/ }))
+    expect(await screen.findByText('GhostMod')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByLabelText(/select ghost.7z/))
+    await userEvent.click(screen.getByRole('button', { name: 'Purge (1)' }))
+    expect(await screen.findByText('Permanently purge 1 record(s)?')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Purge' }))
+
+    const p = calls.find((c) => c.path === '/api/purge')
+    expect(p?.body).toEqual({ file_ids: [5] })
+    expect(calls.some((c) => c.path === '/api/delete')).toBe(false)
+    expect(await screen.findByText(/1 record\(s\) purged/)).toBeInTheDocument()
+  })
+
   it('import from disk: starts the job, polls state, then reloads with adopted rows', async () => {
     let started = false
     mockLib({

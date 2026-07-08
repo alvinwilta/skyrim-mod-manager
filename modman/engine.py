@@ -221,6 +221,32 @@ def delete_files(file_ids):
     return {"deleted": len(rows), "files_removed": removed}
 
 
+def purge_files(file_ids):
+    """Hard-delete: remove the rows entirely (record + archive + .meta + conflict
+    paths + collection links), and drop the mod_sort row for any mod left with no
+    files. Used to permanently clear already soft-deleted entries."""
+    removed = 0
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT file_id, mod_id, filename FROM mods WHERE file_id IN ({','.join('?' * len(file_ids))})",
+            file_ids,
+        ).fetchall()
+        for r in rows:
+            if r["filename"]:
+                path = os.path.join(DOWNLOADS_DIR, r["filename"])
+                if os.path.exists(path):
+                    os.remove(path)
+                    removed += 1
+                mo2.remove_meta(r["filename"])
+            conn.execute("DELETE FROM mods WHERE file_id = ?", (r["file_id"],))
+            conn.execute("DELETE FROM mod_files WHERE file_id = ?", (r["file_id"],))
+            conn.execute("DELETE FROM mod_collections WHERE file_id = ?", (r["file_id"],))
+            # drop install-order state only if the mod has no other files left
+            if not conn.execute("SELECT 1 FROM mods WHERE mod_id = ? LIMIT 1", (r["mod_id"],)).fetchone():
+                conn.execute("DELETE FROM mod_sort WHERE mod_id = ?", (r["mod_id"],))
+    return {"purged": len(rows), "files_removed": removed}
+
+
 def modfiles_from_db(file_ids):
     """Rebuild modlist-shaped entries from library rows, for redownloads."""
     with db.connect() as conn:

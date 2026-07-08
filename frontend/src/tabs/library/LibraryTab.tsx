@@ -41,7 +41,8 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   const [msg, setMsg] = useState('')
   const { dl } = useEvents()
 
-  const rows = showDeleted ? allRows : allRows.filter((r) => r.status !== 'deleted')
+  // "Show deleted" is an exclusive view: on = ONLY soft-deleted rows, off = only live rows.
+  const rows = allRows.filter((r) => (showDeleted ? r.status === 'deleted' : r.status !== 'deleted'))
   const nDeleted = allRows.filter((r) => r.status === 'deleted').length
   const sel = useRowSelection(rows.map((r) => r.file_id))
 
@@ -87,8 +88,15 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const doDelete = async () => {
     try {
-      const r = await api.deleteFiles(ids())
-      setMsg(`${r.deleted} marked deleted · ${r.files_removed} file(s) removed from disk`)
+      // In the deleted-only view, "Delete" permanently purges the record from
+      // the DB instead of soft-deleting an already-deleted row again.
+      if (showDeleted) {
+        const r = await api.purgeFiles(ids())
+        setMsg(`${r.purged} record(s) purged · ${r.files_removed} file(s) removed from disk`)
+      } else {
+        const r = await api.deleteFiles(ids())
+        setMsg(`${r.deleted} marked deleted · ${r.files_removed} file(s) removed from disk`)
+      }
     } catch (e) {
       setMsg(errText(e))
     }
@@ -149,7 +157,8 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
         />
         <div className="toolbar" style={{ marginTop: 6 }}>
           <span className="dim">
-            {rows.length} files{!showDeleted && nDeleted ? ` (${nDeleted} deleted hidden)` : ''}
+            {rows.length} {showDeleted ? 'deleted files' : 'files'}
+            {!showDeleted && nDeleted ? ` (${nDeleted} deleted hidden)` : ''}
           </span>
           <button className="btn ghost" disabled={!n} onClick={doValidate}>
             {n ? `Validate (${n})` : 'Validate selected'}
@@ -169,14 +178,24 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
             style={{ color: 'var(--red)', borderColor: '#4a2226' }}
             onClick={() => setConfirmDelete(true)}
           >
-            {n ? `Delete (${n})` : 'Delete selected'}
+            {showDeleted
+              ? n
+                ? `Purge (${n})`
+                : 'Purge selected'
+              : n
+                ? `Delete (${n})`
+                : 'Delete selected'}
           </button>
           <ConfirmDialog
             open={confirmDelete}
             onOpenChange={setConfirmDelete}
-            title={`Delete ${n} file(s)?`}
-            description="Removes the file(s) from disk. The library keeps the record (marked deleted), so they won't resurface as new on the next import."
-            confirmLabel="Delete"
+            title={showDeleted ? `Permanently purge ${n} record(s)?` : `Delete ${n} file(s)?`}
+            description={
+              showDeleted
+                ? "Permanently removes the record from the database (and the file from disk if any remains). This can't be undone; the mod will resurface as new on the next import."
+                : "Removes the file(s) from disk. The library keeps the record (marked deleted), so they won't resurface as new on the next import."
+            }
+            confirmLabel={showDeleted ? 'Purge' : 'Delete'}
             danger
             onConfirm={() => void doDelete()}
           />
