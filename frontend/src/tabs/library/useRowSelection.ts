@@ -49,7 +49,7 @@ export function useRowSelection(visibleIds: number[]) {
   }, [])
 
   /** Replace the whole selection (e.g. default-checked groups on a new diff,
-   *  plain row click, marquee). Optional anchor keeps shift-range working after. */
+   *  plain row click). Optional anchor keeps shift-range working after. */
   const replace = useCallback((ids: Iterable<number>, anchorIndex: number | null = null) => {
     setSelected(new Set(ids))
     lastIndex.current = anchorIndex

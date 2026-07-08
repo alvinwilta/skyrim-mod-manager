@@ -15,7 +15,7 @@ interface Props {
  * Floating bulk-actions bar, fixed to the bottom of the viewport while any
  * rows are selected. Fixed positioning matters twice over: it never inserts
  * a blank strip into the page flow, and appearing/disappearing can't shift
- * the table mid marquee-drag (rows would slide out from under the box).
+ * the table mid drag (rows would slide out from under the pointer).
  */
 export function SelectionToolbar({ count, buckets, mods, disabled, onLock, onMoveTo, onClear }: Props) {
   const [pos, setPos] = useState('')

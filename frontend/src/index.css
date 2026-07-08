@@ -163,12 +163,7 @@ tr.runhead:hover td { background: #161a23; }
   box-shadow: 0 10px 40px rgba(0,0,0,.6);
 }
 .dlg-title { font-size: 15px; font-weight: 600; }
-.marquee {
-  position: fixed; z-index: 15; pointer-events: none;
-  border: 1px solid var(--blue); background: rgba(96, 165, 250, .15);
-  border-radius: 2px;
-}
-tr.ordrow td { user-select: none; } /* marquee/box-select owns drag on rows */
+tr.ordrow td { user-select: none; } /* text selection must not steal the drag gesture */
 @media (max-width: 640px) {
   main { padding: 12px 12px 40px; }
   .row { grid-template-columns: 22px 1fr 70px; grid-template-rows: auto auto; gap: 4px 8px; }

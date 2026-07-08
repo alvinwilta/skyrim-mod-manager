@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { OrderMod } from '../../api/types'
@@ -66,62 +66,44 @@ function PosCell({ pos, disabled, onMoveTo }: { pos: number; disabled: boolean; 
   )
 }
 
-export function OrderRow({
+/**
+ * Cells 2..6 (everything past the drag handle), split out and memoized. During
+ * a drag, dnd-kit re-renders every sortable row on each pointer move just to
+ * refresh transforms — but none of THESE props change mid-drag (the parent
+ * doesn't re-render, so the inline handlers keep their identity), so this whole
+ * subtree — the flag filtering, badges and links — is skipped. Only the cheap
+ * <tr> transform style recomputes per frame. Kept out of the memo boundary:
+ * dnd-kit's attributes/listeners, which get fresh identities each render.
+ */
+const RowCells = memo(function RowCells({
   mod,
   pos,
   names,
   buckets,
   hl,
-  selected,
+  wrong,
   wrongExpected,
-  justChanged,
   disabled,
-  onRowClick,
   onToggleLock,
   onMoveTo,
-}: Props) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: mod.mod_id,
-    disabled,
-  })
-
-  const wrong = wrongExpected !== undefined
-  const moved = hl.moved && ((mod.flags?.some((f) => f.startsWith('MOVED')) ?? false) || justChanged)
+}: {
+  mod: OrderMod
+  pos: number
+  names: ReadonlyMap<number, string>
+  buckets: Record<string, string>
+  hl: Highlights
+  wrong: boolean
+  wrongExpected: number | null | undefined
+  disabled: boolean
+  onToggleLock: () => void
+  onMoveTo: (position: number) => void
+}) {
   const shownFlags = (mod.flags || []).filter((f) => {
     const cat = flagCategory(f)
     return cat === null || hl[cat]
   })
-  const rowCls = ['ordrow', wrong ? 'r-wrong' : moved ? 'r-upd' : mod.locked ? 'r-locked' : '', selected ? 'r-sel' : '']
-    .filter(Boolean)
-    .join(' ')
-  const hint = wrong
-    ? `now in "${buckets[String(mod.bucket)] || 'unsorted'}", but Sort/Refine expected "${buckets[String(wrongExpected)] || 'unsorted'}" — a manual move drifted it`
-    : undefined
-
   return (
-    <tr
-      ref={setNodeRef}
-      className={rowCls}
-      title={hint}
-      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : undefined }}
-      data-mid={mod.mod_id}
-      onClick={(e) => {
-        // interactive elements keep their own behavior; text selection wins
-        if ((e.target as Element).closest('input, button, a, select, .posnum, .draghandle')) return
-        if (window.getSelection()?.toString()) return
-        onRowClick(e)
-      }}
-    >
-      <td style={{ width: 30 }}>
-        <span
-          className="draghandle"
-          title={disabled ? 'reordering locked while Claude refines' : 'drag to reorder'}
-          {...attributes}
-          {...listeners}
-        >
-          ≡
-        </span>
-      </td>
+    <>
       <td className="num" style={{ width: 70, whiteSpace: 'nowrap' }}>
         <button
           className={`lockbtn${mod.locked ? ' on' : ''}`}
@@ -167,6 +149,74 @@ export function OrderRow({
       <td className="num">
         <GroupBadge bucket={mod.bucket} buckets={buckets} />
       </td>
+    </>
+  )
+})
+
+export function OrderRow({
+  mod,
+  pos,
+  names,
+  buckets,
+  hl,
+  selected,
+  wrongExpected,
+  justChanged,
+  disabled,
+  onRowClick,
+  onToggleLock,
+  onMoveTo,
+}: Props) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: mod.mod_id,
+    disabled,
+  })
+
+  const wrong = wrongExpected !== undefined
+  const moved = hl.moved && ((mod.flags?.some((f) => f.startsWith('MOVED')) ?? false) || justChanged)
+  const rowCls = ['ordrow', wrong ? 'r-wrong' : moved ? 'r-upd' : mod.locked ? 'r-locked' : '', selected ? 'r-sel' : '']
+    .filter(Boolean)
+    .join(' ')
+  const hint = wrong
+    ? `now in "${buckets[String(mod.bucket)] || 'unsorted'}", but Sort/Refine expected "${buckets[String(wrongExpected)] || 'unsorted'}" — a manual move drifted it`
+    : undefined
+
+  return (
+    <tr
+      ref={setNodeRef}
+      className={rowCls}
+      title={hint}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : undefined }}
+      data-mid={mod.mod_id}
+      onClick={(e) => {
+        // interactive elements keep their own behavior; text selection wins
+        if ((e.target as Element).closest('input, button, a, select, .posnum, .draghandle')) return
+        if (window.getSelection()?.toString()) return
+        onRowClick(e)
+      }}
+    >
+      <td style={{ width: 30 }}>
+        <span
+          className="draghandle"
+          title={disabled ? 'reordering locked while Claude refines' : 'drag to reorder'}
+          {...attributes}
+          {...listeners}
+        >
+          ≡
+        </span>
+      </td>
+      <RowCells
+        mod={mod}
+        pos={pos}
+        names={names}
+        buckets={buckets}
+        hl={hl}
+        wrong={wrong}
+        wrongExpected={wrongExpected}
+        disabled={disabled}
+        onToggleLock={onToggleLock}
+        onMoveTo={onMoveTo}
+      />
     </tr>
   )
 }
