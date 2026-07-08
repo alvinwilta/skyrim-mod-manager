@@ -35,9 +35,9 @@ def _edges():
         ).fetchall()
     must_precede, rule_type = {}, {}
     for r in rows:
-        if r["type"] == "after":
+        if r["type"] == "before":
             dependent, precedent = r["reference_mod_id"], r["source_mod_id"]
-        else:  # before, requires: the reference is the precedent
+        else:  # after, requires: the reference is the precedent
             dependent, precedent = r["source_mod_id"], r["reference_mod_id"]
         must_precede.setdefault(dependent, set()).add(precedent)
         rule_type[(dependent, precedent)] = r["type"]
