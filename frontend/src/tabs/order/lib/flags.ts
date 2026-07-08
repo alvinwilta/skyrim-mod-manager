@@ -10,7 +10,7 @@ export interface ParsedFlag {
  * install, or a manual move that drifted from the sorter's opinion. A plain
  * ordering CONFLICT (two mods that share/overwrite files) is a warning — amber.
  *
- * Shapes: CONFLICT:<mod_id> · DUPLICATE:<mod_id> · MOVED:<from>><to> · WRONG SPOT
+ * Shapes: CONFLICT:<mod_id> · DUPLICATE:<mod_id> · MOVED:<from>><to> · WRONG SPOT[:<expected_bucket>]
  */
 export function parseFlag(
   flag: string,
@@ -18,7 +18,7 @@ export function parseFlag(
   buckets: Record<string, string>,
 ): ParsedFlag {
   const severity: ParsedFlag['severity'] =
-    flag.startsWith('DUPLICATE') || flag === 'WRONG SPOT'
+    flag.startsWith('DUPLICATE') || flag.startsWith('WRONG SPOT')
       ? 'red'
       : flag.startsWith('CONFLICT') || flag.startsWith('MOVED')
         ? 'amber'
@@ -26,6 +26,16 @@ export function parseFlag(
 
   let label = flag.split(':')[0]
   let hint = flag
+
+  if (flag.startsWith('WRONG SPOT')) {
+    const expId = flag.split(':')[1]
+    const exp = expId ? buckets[expId] || `bucket ${expId}` : 'unsorted'
+    label = `WRONG SPOT → ${exp}`
+    hint =
+      `The last Sort/Refine placed this in "${exp}", but it now sits elsewhere` +
+      ` — a manual drag or move pulled it out. Drag it back into "${exp}", or re-run Sort to re-place it.`
+    return { label, hint, severity }
+  }
 
   const refId = (flag.startsWith('CONFLICT') || flag.startsWith('DUPLICATE')) && parseInt(flag.split(':')[1], 10)
   if (refId) {

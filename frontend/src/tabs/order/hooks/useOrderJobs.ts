@@ -249,8 +249,10 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
         if (!silent) {
           setDriftMsg(
             wrong.size
-              ? `${wrong.size} mod(s) in the wrong spot — highlighted red in the table below`
-              : 'order matches the sorter — nothing misplaced',
+              ? `${wrong.size} mod(s) sit in a different group than the last Sort/Refine put them ` +
+                `— usually a manual drag/move dragged them out. Highlighted red below; each badge ` +
+                `shows the group the sorter expected (→ group). Drag them back or re-run Sort.`
+              : 'order matches the sorter — nothing misplaced (no manual moves have drifted from Sort/Refine)',
           )
           await data.reload()
         }

@@ -307,13 +307,13 @@ describe('OrderTab sort machinery', () => {
     await userEvent.click(screen.getByTitle(/Flags mods whose current group disagrees/))
     await userEvent.click(subtabBtn(/Check for drift/)) // message lives in its panel
 
-    expect(await screen.findByText(/1 mod\(s\) in the wrong spot/)).toBeInTheDocument()
+    expect(await screen.findByText(/1 mod\(s\) sit in a different group/)).toBeInTheDocument()
     await waitFor(() => {
       const row = screen.getByText('USSEP').closest('tr')
       expect(row).toHaveClass('r-wrong')
-      expect(row).toHaveAttribute('title', 'expected: 3 · Interface')
+      expect(row?.getAttribute('title')).toMatch(/Sort\/Refine expected "Interface"/)
     })
-    expect(screen.getByText('WRONG SPOT')).toBeInTheDocument()
+    expect(screen.getByText('WRONG SPOT → Interface')).toBeInTheDocument()
   })
 
   it('scan archives starts the job, polls scan-state, then reloads conflicts', async () => {

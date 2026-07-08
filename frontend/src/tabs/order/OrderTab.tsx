@@ -211,7 +211,7 @@ export function OrderTab() {
           <button
             className="btn ghost"
             disabled={data.refining}
-            title="Flags mods whose current group disagrees with the last sorter opinion — usually a manual drag that moved them out of where Sort/Refine put them"
+            title="Flags mods whose current group disagrees with where the last Sort/Refine placed them — i.e. a manual drag or move drifted them out of the sorter's group. Each flag names the group the sorter expected."
             onClick={() => void jobs.checkDrift(false)}
           >
             Check for drift

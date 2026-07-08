@@ -41,12 +41,23 @@ describe('parseFlag', () => {
     expect(f.hint).toContain('None · unsorted')
   })
 
-  it('WRONG SPOT — red', () => {
-    expect(parseFlag('WRONG SPOT', names, buckets)).toEqual({
-      label: 'WRONG SPOT',
-      hint: 'WRONG SPOT',
-      severity: 'red',
-    })
+  it('WRONG SPOT:<id> — red, names the expected group', () => {
+    const f = parseFlag('WRONG SPOT:5', names, buckets)
+    expect(f.severity).toBe('red')
+    expect(f.label).toBe('WRONG SPOT → Foundation')
+    expect(f.hint).toContain('Foundation')
+    expect(f.hint).toContain('manual drag or move')
+  })
+
+  it('WRONG SPOT with no expected id — unsorted', () => {
+    const f = parseFlag('WRONG SPOT', names, buckets)
+    expect(f.severity).toBe('red')
+    expect(f.label).toBe('WRONG SPOT → unsorted')
+  })
+
+  it('WRONG SPOT:<unknown id> — falls back to bucket <id>', () => {
+    const f = parseFlag('WRONG SPOT:99', names, buckets)
+    expect(f.label).toBe('WRONG SPOT → bucket 99')
   })
 
   it('unknown flags — dim passthrough', () => {

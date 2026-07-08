@@ -87,7 +87,9 @@ export function OrderRow({
   const rowCls = ['ordrow', wrong ? 'r-wrong' : moved ? 'r-upd' : mod.locked ? 'r-locked' : '', selected ? 'r-sel' : '']
     .filter(Boolean)
     .join(' ')
-  const hint = wrong ? `expected: ${wrongExpected ?? '?'} · ${buckets[String(wrongExpected)] || 'unsorted'}` : undefined
+  const hint = wrong
+    ? `now in "${buckets[String(mod.bucket)] || 'unsorted'}", but Sort/Refine expected "${buckets[String(wrongExpected)] || 'unsorted'}" — a manual move drifted it`
+    : undefined
 
   return (
     <tr
@@ -141,7 +143,13 @@ export function OrderRow({
         {(mod.flags || []).map((f) => (
           <FlagBadge key={f} flag={f} names={names} buckets={buckets} />
         ))}
-        {wrong && <FlagBadge flag="WRONG SPOT" names={names} buckets={buckets} />}
+        {wrong && (
+          <FlagBadge
+            flag={wrongExpected != null ? `WRONG SPOT:${wrongExpected}` : 'WRONG SPOT'}
+            names={names}
+            buckets={buckets}
+          />
+        )}
       </td>
       <td className="num">
         <a href={mod.mod_url} target="_blank" rel="noreferrer" className="dim">

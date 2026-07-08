@@ -85,9 +85,11 @@ export function GuideTab() {
             missing from your library. Result in the <b>Requirements</b> tab.
           </li>
           <li>
-            <b>Check for drift</b> — flags mods whose current group disagrees with the last sorter's opinion (usually
-            means a manual drag moved it out of where Sort/Refine put it); highlights those rows red in the table.
-            Result in the <b>Check for drift</b> tab.
+            <b>Check for drift</b> — compares each mod's current group against the group the last Sort/Refine placed it
+            in (its <code>expected_bucket</code>). A mismatch means something moved the mod after the sort — almost
+            always a manual drag or a "move to position" — so it no longer sits where the sorter put it. Those rows turn
+            red and get a <b>WRONG SPOT → group</b> badge naming the group the sorter expected; drag them back or re-run
+            Sort to re-place. Result in the <b>Check for drift</b> tab.
           </li>
         </ul>
 
