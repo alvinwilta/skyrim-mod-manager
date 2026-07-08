@@ -133,7 +133,9 @@ def set_prompt(text):
 def _call_claude(prompt, model):
     global _proc
     _proc = subprocess.Popen(
-        ["claude", "-p", prompt, "--model", model, "--output-format", "json"],
+        # --no-session-persistence: these are throwaway one-shot prompts, don't
+        # pollute the user's `claude` session history / resume picker with them.
+        ["claude", "-p", prompt, "--model", model, "--output-format", "json", "--no-session-persistence"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     try:
