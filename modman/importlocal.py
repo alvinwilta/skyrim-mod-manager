@@ -24,7 +24,7 @@ import os
 import threading
 import time
 
-from . import conflicts, db, mo2, nexus
+from . import conflicts, db, jobs, mo2, nexus
 from .config import DOWNLOADS_DIR, GAME
 
 log = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ def _row_for(filename):
                 **info,
                 "file_id": file_id, "mod_id": mod_id, "filename": filename,
                 "size_bytes": size, "game": domain, "downloaded_at": downloaded_at,
-                "mod_url": f"https://www.nexusmods.com/{domain}/mods/{mod_id}",
+                "mod_url": nexus.mod_url(domain, mod_id),
                 "non_nexus": False,
             }
         # tier 2: real ids from the .meta, no url
@@ -141,8 +141,9 @@ def scan():
     state["adopted"], state["non_nexus"] = adopted, non_nexus
     state["skipped"] = len(archives) - adopted
     if adopted:
-        conflicts.classify_file_types()
+        # scan first: classify_file_types only reads rows with files_scanned=1
         conflicts.scan()
+        conflicts.classify_file_types()
     return adopted, non_nexus
 
 
@@ -165,21 +166,10 @@ def _insert(row):
 
 def start_scan():
     """Async adopt. Returns an error string or None (mirrors conflicts.start_scan)."""
-    if not _lock.acquire(blocking=False):
-        return "an import is already running"
 
-    def runner():
-        try:
-            state.update({"error": None, "running": True, "adopted": 0, "non_nexus": 0, "skipped": 0})
-            n, nn = scan()
-            state["phase"] = (
-                f"Adopted {n} file(s)" + (f" ({nn} non-Nexus)" if nn else "") if n else "Nothing new to import"
-            )
-        except Exception as e:
-            state.update({"error": str(e), "phase": "Error"})
-        finally:
-            state["running"] = False
-            _lock.release()
+    def work():
+        n, nn = scan()
+        return f"Adopted {n} file(s)" + (f" ({nn} non-Nexus)" if nn else "") if n else "Nothing new to import"
 
-    threading.Thread(target=runner, daemon=True).start()
-    return None
+    return jobs.start(_lock, state, "an import is already running", work,
+                      init={"adopted": 0, "non_nexus": 0, "skipped": 0})

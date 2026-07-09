@@ -62,6 +62,14 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load])
 
+  // "Show deleted" swaps the visible row set: a selection carried across the
+  // toggle would silently keep targeting rows that are no longer shown —
+  // worst case, live rows purged from the deleted-only view.
+  useEffect(() => {
+    sel.clear()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDeleted])
+
   // Legacy loadLibOnFinish(): refresh the library when a download job completes.
   const wasRunning = useRef(false)
   useEffect(() => {
@@ -274,9 +282,15 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
                     deleted{' '}
                   </span>
                 )}
-                <a href={r.mod_url} target="_blank" style={{ color: 'inherit' }} rel="noreferrer">
-                  {r.mod_name}
-                </a>
+                {r.mod_url ? (
+                  <a href={r.mod_url} target="_blank" style={{ color: 'inherit' }} rel="noreferrer">
+                    {r.mod_name}
+                  </a>
+                ) : (
+                  // non-Nexus adopted mods have no page; href="" would open a
+                  // duplicate copy of this app
+                  r.mod_name
+                )}
               </td>
               <td className="dim">{r.file_name}</td>
               <td className="num">{r.file_version}</td>

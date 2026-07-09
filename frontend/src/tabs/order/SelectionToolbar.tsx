@@ -5,6 +5,7 @@ interface Props {
   count: number
   buckets: Record<string, string>
   mods: OrderMod[] // full ordered list, for group target positions
+  selected: ReadonlySet<number> // the mods being moved, excluded from position math
   disabled: boolean
   onLock: (locked: boolean) => void
   onMoveTo: (position: number) => void
@@ -17,21 +18,24 @@ interface Props {
  * a blank strip into the page flow, and appearing/disappearing can't shift
  * the table mid drag (rows would slide out from under the pointer).
  */
-export function SelectionToolbar({ count, buckets, mods, disabled, onLock, onMoveTo, onClear }: Props) {
+export function SelectionToolbar({ count, buckets, mods, selected, disabled, onLock, onMoveTo, onClear }: Props) {
   const [pos, setPos] = useState('')
 
-  // "Move to group" → insert at the end of that bucket's last contiguous run
+  // "Move to group" → insert right after that bucket's last mod. The backend
+  // removes the moving mods first and then inserts at position-1, so the
+  // target must be computed on the list WITHOUT the selection.
+  const remaining = mods.filter((m) => !selected.has(m.mod_id))
   const groupTargets = Object.keys(buckets)
     .map(Number)
     .sort((a, b) => a - b)
     .map((b) => {
       let last = -1
-      mods.forEach((m, i) => {
+      remaining.forEach((m, i) => {
         if (m.bucket === b) last = i
       })
-      return { bucket: b, position: last + 1 }
+      return { bucket: b, position: last + 2 } // 1-based slot after `last`
     })
-    .filter((g) => g.position > 0)
+    .filter((g) => g.position > 1)
 
   if (!count) return null
 

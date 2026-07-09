@@ -208,14 +208,16 @@ describe('OrderTab selection + bulk actions', () => {
   })
 
   it('move-to-group targets the end of that bucket run', async () => {
-    const { calls } = mockApi(routes({ 'POST /api/order/move': { moved: [3], position: 2 } }))
+    const { calls } = mockApi(routes({ 'POST /api/order/move': { moved: [3], position: 3 } }))
     renderTab()
     await screen.findByText('SkyUI')
     await userEvent.click(screen.getByText('USSEP'))
     await userEvent.selectOptions(screen.getByLabelText('move to group'), '3')
     await waitFor(() =>
-      // Interface's last mod is rank 2 → block lands at the end of the group
-      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [3], position: 2 }),
+      // Interface's last remaining mod (MoreHUD) is at index 1 once USSEP is
+      // excluded; the backend inserts after removing the moved block, so
+      // end-of-group = position 3
+      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [3], position: 3 }),
     )
   })
 

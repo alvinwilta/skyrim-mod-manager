@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import threading
 
-from . import buckets, conflicts, db, nexus, order_store
+from . import buckets, conflicts, db, jobs, nexus, order_store
 
 log = logging.getLogger(__name__)
 
@@ -99,7 +99,8 @@ def _parse_reply(text):
             conflict_lines.append(line)
             continue
         parts = [p.strip() for p in line.split("|")]
-        if not parts[0].isdigit():
+        # lstrip('-'): adopted local mods carry NEGATIVE ids and appear in replies too
+        if not parts[0].lstrip("-").isdigit():
             continue
         item = {"id": int(parts[0])}
         if len(parts) > 1 and parts[1].isdigit():
@@ -141,6 +142,13 @@ def _call_claude(prompt, model):
     try:
         out, err = _proc.communicate(timeout=600)
         code = _proc.returncode
+    except subprocess.TimeoutExpired:
+        # kill before clearing _proc: leaving the child alive would keep
+        # claude burning usage with the stop endpoint already reporting
+        # "no claude process running"
+        _proc.kill()
+        _proc.communicate()
+        raise RuntimeError("claude timed out after 600s")
     finally:
         _proc = None
     if code != 0:
@@ -148,6 +156,9 @@ def _call_claude(prompt, model):
             raise RuntimeError("stopped by user")
         raise RuntimeError(f"claude exited {code}: {err.strip()[:200]}")
     return json.loads(out).get("result", "")
+
+
+BUCKET_LIST = "\n".join(f"{n}. {label} — {BUCKET_HINTS[n]}" for n, label in BUCKETS.items())
 
 
 def _run_claude(mods, model="haiku"):
@@ -158,10 +169,9 @@ def _run_claude(mods, model="haiku"):
             sections.append(f"\n# {last}. {BUCKETS.get(last, 'Unsorted')}")
         sections.append(f"{m['mod_id']}|{m['mod_name']}|{m['category'] or ''}")
     lines = "\n".join(sections).strip()
-    bucket_list = "\n".join(f"{n}. {label} — {BUCKET_HINTS[n]}" for n, label in BUCKETS.items())
     known_conflicts = conflicts.summary_for([m["mod_id"] for m in mods]) or "(none scanned yet)"
     prompt = (
-        get_prompt().replace("{{BUCKETS}}", bucket_list)
+        get_prompt().replace("{{BUCKETS}}", BUCKET_LIST)
         .replace("{{CONFLICTS}}", known_conflicts)
         .replace("{{MODS}}", lines)
     )
@@ -195,8 +205,7 @@ def _run_claude_desc(mods, model="haiku"):
         f"{m['mod_id']}|{m['mod_name']}|{m['category'] or ''}|{(m['description'] or '').strip()[:200]}"
         for m in mods
     )
-    bucket_list = "\n".join(f"{n}. {label} — {BUCKET_HINTS[n]}" for n, label in BUCKETS.items())
-    prompt = DESC_PROMPT.replace("{{BUCKETS}}", bucket_list).replace("{{MODS}}", lines)
+    prompt = DESC_PROMPT.replace("{{BUCKETS}}", BUCKET_LIST).replace("{{MODS}}", lines)
     return _parse_reply(_call_claude(prompt, model))
 
 
@@ -259,21 +268,8 @@ def start_llm_refine(model="haiku"):
         return f"unknown model {model!r} — expected one of {MODELS}"
     if shutil.which("claude") is None:
         return "claude CLI not found — heuristic order kept"
-    if not _lock.acquire(blocking=False):
-        return "a sort job is already running"
-
-    def runner():
-        try:
-            state.update({"error": None, "running": True, "job": "bulk"})
-            _refine_job(model)
-        except Exception as e:
-            state.update({"error": str(e), "phase": "Error"})
-        finally:
-            state["running"] = False
-            _lock.release()
-
-    threading.Thread(target=runner, daemon=True).start()
-    return None
+    return jobs.start(_lock, state, "a sort job is already running",
+                      lambda: _refine_job(model), init={"job": "bulk"})
 
 
 def _desc_refine_job(model):
@@ -295,11 +291,13 @@ def _desc_refine_job(model):
         by_domain = {}
         for c in missing:
             by_domain.setdefault(c["game"], []).append(c)
-        with db.connect() as conn:
-            for domain, items in by_domain.items():
-                if not domain:
-                    continue
-                summaries = nexus.fetch_summaries(domain, [c["mod_id"] for c in items])
+        for domain, items in by_domain.items():
+            if not domain:
+                continue
+            # fetch OUTSIDE the write transaction: holding sqlite's write lock
+            # across a 30s GraphQL call starves any concurrent writer
+            summaries = nexus.fetch_summaries(domain, [c["mod_id"] for c in items])
+            with db.connect() as conn:
                 for c in items:
                     c["description"] = summaries.get(c["mod_id"]) or ""
                     conn.execute(
@@ -332,18 +330,5 @@ def start_desc_refine(model="haiku"):
         return f"unknown model {model!r} — expected one of {MODELS}"
     if shutil.which("claude") is None:
         return "claude CLI not found"
-    if not _lock.acquire(blocking=False):
-        return "a sort job is already running"
-
-    def runner():
-        try:
-            state.update({"error": None, "running": True, "job": "desc"})
-            _desc_refine_job(model)
-        except Exception as e:
-            state.update({"error": str(e), "phase": "Error"})
-        finally:
-            state["running"] = False
-            _lock.release()
-
-    threading.Thread(target=runner, daemon=True).start()
-    return None
+    return jobs.start(_lock, state, "a sort job is already running",
+                      lambda: _desc_refine_job(model), init={"job": "desc"})

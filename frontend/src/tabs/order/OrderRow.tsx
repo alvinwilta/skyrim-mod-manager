@@ -149,9 +149,15 @@ const RowCells = memo(function RowCells({
         )}
       </td>
       <td className="num">
-        <a href={mod.mod_url} target="_blank" rel="noreferrer" className="dim">
-          {mod.mod_id}
-        </a>
+        {mod.mod_url ? (
+          <a href={mod.mod_url} target="_blank" rel="noreferrer" className="dim">
+            {mod.mod_id}
+          </a>
+        ) : (
+          // non-Nexus adopted mods have no page; href="" would open a
+          // duplicate copy of this app
+          <span className="dim">{mod.mod_id}</span>
+        )}
       </td>
       <td className="hide-sm dim">{mod.category || ''}</td>
       <td className="num">

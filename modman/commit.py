@@ -23,7 +23,7 @@ import logging
 import os
 import threading
 
-from . import db, mo2, order_store
+from . import db, engine, importlocal, jobs, mo2, order_store
 from .config import DOWNLOADS_DIR
 
 log = logging.getLogger(__name__)
@@ -172,23 +172,24 @@ def uncommit():
 
 
 def _run(fn, busy, done):
-    if not _lock.acquire(blocking=False):
-        return "a rename job is already running"
+    # renaming under a live downloads-dir writer corrupts both sides: the
+    # writer's open fd keeps filling the renamed file while the db row is
+    # repointed, so refuse to start while either job runs (they in turn
+    # refuse to start while committed/renaming — see webapp's guards)
+    if engine.state.get("running"):
+        return "a download job is running — wait for it to finish first"
+    if importlocal.state.get("running"):
+        return "an import is running — wait for it to finish first"
 
-    def runner():
-        try:
-            state.update({"error": None, "running": True, "phase": busy})
-            n = fn()
-            state["phase"] = f"{done} {n} file(s)" if n else "Nothing to rename"
-        except Exception as e:
-            state.update({"error": str(e), "phase": "Error"})
-        finally:
-            state["running"] = False
-            state["committed"] = is_committed()
-            _lock.release()
+    def work():
+        n = fn()
+        return f"{done} {n} file(s)" if n else "Nothing to rename"
 
-    threading.Thread(target=runner, daemon=True).start()
-    return None
+    return jobs.start(
+        _lock, state, "a rename job is already running", work,
+        init={"phase": busy},
+        finalize=lambda: state.update(committed=is_committed()),
+    )
 
 
 def start_commit():

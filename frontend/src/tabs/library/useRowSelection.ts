@@ -19,7 +19,9 @@ export function useRowSelection(visibleIds: number[]) {
         const next = new Set(prev)
         const check = !prev.has(id)
         if (shiftKey && anchor !== null) {
-          const [a, b] = [Math.min(index, anchor), Math.max(index, anchor)]
+          // clamp: the anchor can be stale from before a filter shrank the
+          // list — indexing past it would add `undefined` to the selection
+          const [a, b] = [Math.min(index, anchor), Math.min(Math.max(index, anchor), visibleIds.length - 1)]
           for (let i = a; i <= b; i++) {
             if (check) next.add(visibleIds[i])
             else next.delete(visibleIds[i])

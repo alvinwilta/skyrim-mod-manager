@@ -1,16 +1,15 @@
 import asyncio
 import json
-import logging
 import os
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from modman import collection_rules, commit, config, conflicts, db, engine, importlocal, llm_refine, mo2, mo2_order, nexus, order_store, precedence, requirements
+from modman import commit, conflicts, db, engine, importlocal, llm_refine, mo2, mo2_order, order_store, precedence, requirements
 
-log = logging.getLogger(__name__)
 app = FastAPI(title="Mod Manager")
 db.init_db()
 
@@ -36,6 +35,29 @@ async def reject_cross_origin(request: Request, call_next):
 
 # Built React frontend (frontend/ — Vite). `npm run build` produces dist/.
 DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
+
+
+def _order_frozen(action):
+    """409 while the install order is committed to disk (or mid-rename):
+    anything that adds/removes/renames archives would desync the prefixed
+    names from the db. Returns the response to send, or None to proceed."""
+    if commit.state.get("running"):
+        return JSONResponse(
+            {"error": "Files are being renamed — wait for the commit/revert to finish."}, status_code=409
+        )
+    if commit.is_committed():
+        return JSONResponse(
+            {"error": f"Install order is committed to disk — revert it before {action}."}, status_code=409
+        )
+    return None
+
+
+def _need_file_ids(body):
+    """(file_ids, error_response) from a {file_ids: [...]} body."""
+    file_ids = (body or {}).get("file_ids") or []
+    if not file_ids:
+        return [], JSONResponse({"error": "no files selected"}, status_code=400)
+    return file_ids, None
 
 
 @app.get("/")
@@ -100,51 +122,21 @@ async def diff(request: Request):
             {"error": "not a valid modlist json (expected data.collectionRevision.modFiles)"},
             status_code=400,
         )
-    return engine.diff_modlist(modfiles)
+    return await run_in_threadpool(engine.diff_modlist, modfiles)
 
 
 @app.post("/api/fetch-collection")
 async def fetch_collection(request: Request):
     body = await request.json()
     url = (body or {}).get("url", "")
-    is_collection = "/collections/" in url
+    # threadpool: the fetch is a synchronous requests call that can hold the
+    # event loop for tens of seconds, stalling SSE and every other request
     try:
-        fetch = nexus.fetch_collection if is_collection else nexus.fetch_mod
-        payload = fetch(url)
-        modfiles = engine.parse_modlist(payload)
+        return await run_in_threadpool(engine.fetch_and_register, url)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse({"error": f"fetch failed: {e}"}, status_code=502)
-    collection = None
-    if is_collection:
-        rev = payload["data"]["collectionRevision"]
-        slug = nexus.collection_slug(url)
-        name = (rev.get("collection") or {}).get("name")
-        collection_id = db.upsert_collection(slug, rev.get("collectionId"), rev.get("revisionNumber"), name)
-        # link this collection's FULL modlist now, whether or not any file
-        # is actually downloaded -- import alone should register everything
-        entries = [
-            {
-                "file_id": m["fileId"], "mod_id": m["file"]["mod"]["modId"],
-                "mod_name": m["file"]["mod"]["name"],
-                "mod_url": f"https://www.nexusmods.com/{(m['file']['mod'].get('game') or {}).get('domainName') or 'skyrimspecialedition'}/mods/{m['file']['mod']['modId']}",
-            }
-            for m in modfiles
-        ]
-        db.link_collection_files(collection_id, entries)
-        collection = {"id": collection_id, "slug": slug, "name": name}
-        # curated ordering rules, if a personal API key is configured --
-        # non-fatal, collection provenance above still works without it
-        try:
-            n_rules = collection_rules.sync(collection_id, rev.get("downloadLink"))
-            collection["rules_synced"] = n_rules
-        except Exception as e:
-            log.warning("collection rules sync failed for %s: %s", slug, e)
-    return {
-        "modlist": payload, "diff": engine.diff_modlist(modfiles),
-        "count": len(modfiles), "collection": collection,
-    }
 
 
 @app.post("/api/download")
@@ -155,10 +147,9 @@ async def download(request: Request):
         file_ids = body["file_ids"]
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "expected {modlist, file_ids}"}, status_code=400)
-    if commit.is_committed():
-        return JSONResponse(
-            {"error": "Install order is committed to disk — revert it before downloading."}, status_code=409
-        )
+    frozen = _order_frozen("downloading")
+    if frozen:
+        return frozen
     collection_id = (body or {}).get("collection_id")
     err = engine.start_download(modfiles, file_ids, collection_id=collection_id)
     if err:
@@ -168,50 +159,44 @@ async def download(request: Request):
 
 @app.post("/api/validate")
 async def validate(request: Request):
-    body = await request.json()
-    file_ids = (body or {}).get("file_ids") or []
-    if not file_ids:
-        return JSONResponse({"error": "no files selected"}, status_code=400)
-    return engine.validate_files(file_ids)
+    file_ids, err = _need_file_ids(await request.json())
+    if err:
+        return err
+    return await run_in_threadpool(engine.validate_files, file_ids)
 
 
 @app.post("/api/delete")
 async def delete(request: Request):
-    body = await request.json()
-    file_ids = (body or {}).get("file_ids") or []
-    if not file_ids:
-        return JSONResponse({"error": "no files selected"}, status_code=400)
-    if commit.is_committed():
-        return JSONResponse(
-            {"error": "Install order is committed to disk — revert it before deleting files."}, status_code=409
-        )
-    return engine.delete_files(file_ids)
+    file_ids, err = _need_file_ids(await request.json())
+    if err:
+        return err
+    frozen = _order_frozen("deleting files")
+    if frozen:
+        return frozen
+    return await run_in_threadpool(engine.delete_files, file_ids)
 
 
 @app.post("/api/purge")
 async def purge(request: Request):
-    body = await request.json()
-    file_ids = (body or {}).get("file_ids") or []
-    if not file_ids:
-        return JSONResponse({"error": "no files selected"}, status_code=400)
-    if commit.is_committed():
-        return JSONResponse(
-            {"error": "Install order is committed to disk — revert it before purging files."}, status_code=409
-        )
-    return engine.purge_files(file_ids)
+    file_ids, err = _need_file_ids(await request.json())
+    if err:
+        return err
+    frozen = _order_frozen("purging files")
+    if frozen:
+        return frozen
+    return await run_in_threadpool(engine.purge_files, file_ids)
 
 
 @app.post("/api/redownload")
 async def redownload(request: Request):
-    body = await request.json()
-    file_ids = (body or {}).get("file_ids") or []
-    if not file_ids:
-        return JSONResponse({"error": "no files selected"}, status_code=400)
-    if commit.is_committed():
-        return JSONResponse(
-            {"error": "Install order is committed to disk — revert it before downloading."}, status_code=409
-        )
-    err = engine.start_download(engine.modfiles_from_db(file_ids), file_ids)
+    file_ids, err = _need_file_ids(await request.json())
+    if err:
+        return err
+    frozen = _order_frozen("downloading")
+    if frozen:
+        return frozen
+    modfiles = await run_in_threadpool(engine.modfiles_from_db, file_ids)
+    err = engine.start_download(modfiles, file_ids)
     if err:
         return JSONResponse({"error": err}, status_code=409)
     return {"started": len(file_ids)}
@@ -245,10 +230,9 @@ async def set_collection_enabled(collection_id: int, request: Request):
 
 @app.post("/api/import-local")
 def import_local():
-    if commit.is_committed():
-        return JSONResponse(
-            {"error": "Install order is committed to disk — revert it before importing new files."}, status_code=409
-        )
+    frozen = _order_frozen("importing new files")
+    if frozen:
+        return frozen
     err = importlocal.start_scan()
     if err:
         return JSONResponse({"error": err}, status_code=409)
@@ -275,11 +259,7 @@ def scan_state():
 
 @app.get("/api/conflicts")
 def get_conflicts():
-    with db.connect() as conn:
-        total = conn.execute("SELECT COUNT(*) c FROM mods WHERE status = 'ok'").fetchone()["c"]
-        scanned = conn.execute(
-            "SELECT COUNT(*) c FROM mods WHERE status = 'ok' AND COALESCE(files_scanned, 0) = 1"
-        ).fetchone()["c"]
+    scanned, total = conflicts.scan_progress()
     return {"pairs": conflicts.pairs(), "scanned": scanned, "total": total}
 
 
@@ -303,6 +283,9 @@ def requirements_missing():
 
 @app.post("/api/enforce-order")
 def enforce_order():
+    frozen = _order_frozen("applying collection rules")
+    if frozen:
+        return frozen
     err = precedence.start_enforce()
     if err:
         return JSONResponse({"error": err}, status_code=409)
@@ -317,7 +300,10 @@ def enforce_state():
 @app.post("/api/sort")
 async def sort_mods(request: Request):
     body = await request.json()
-    n = order_store.heuristic_sort()
+    frozen = _order_frozen("sorting")
+    if frozen:
+        return frozen
+    n = await run_in_threadpool(order_store.heuristic_sort)
     if (body or {}).get("llm"):
         err = llm_refine.start_llm_refine((body or {}).get("model") or "haiku")
         if err:
@@ -328,6 +314,9 @@ async def sort_mods(request: Request):
 @app.post("/api/sort-desc")
 async def sort_desc(request: Request):
     body = await request.json()
+    frozen = _order_frozen("sorting")
+    if frozen:
+        return frozen
     err = llm_refine.start_desc_refine((body or {}).get("model") or "haiku")
     if err:
         return JSONResponse({"error": err}, status_code=409)
@@ -356,9 +345,10 @@ async def order_move(request: Request):
         position = int(body["position"])
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "expected {mod_id | mod_ids, position}"}, status_code=400)
-    if commit.is_committed():
-        return JSONResponse({"error": "install order is committed to disk — revert first"}, status_code=409)
-    err = order_store.move(mod_ids, position)
+    frozen = _order_frozen("moving mods")
+    if frozen:
+        return frozen
+    err = await run_in_threadpool(order_store.move, mod_ids, position)
     if err:
         return JSONResponse({"error": err}, status_code=400)
     return {"moved": mod_ids, "position": position}
@@ -373,9 +363,10 @@ async def order_lock(request: Request):
         locked = bool(body["locked"])
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "expected {mod_id | mod_ids, locked}"}, status_code=400)
-    if commit.is_committed():
-        return JSONResponse({"error": "install order is committed to disk — revert first"}, status_code=409)
-    err = order_store.set_lock(mod_ids, locked)
+    frozen = _order_frozen("changing locks")
+    if frozen:
+        return frozen
+    err = await run_in_threadpool(order_store.set_lock, mod_ids, locked)
     if err:
         return JSONResponse({"error": err}, status_code=400)
     return {"mod_ids": mod_ids, "locked": locked}

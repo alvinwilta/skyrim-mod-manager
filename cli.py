@@ -4,7 +4,7 @@ Usage:
     python cli.py <collection-url | modlist.json> [--include-unchanged]
 
 Diffs the modlist against mods.db and downloads new + updated files.
-Requires a Chromium-family browser running with --remote-debugging-port=9222
+Requires a Chromium-family browser running with --remote-debugging-port=9223
 and a logged-in nexusmods.com session.
 """
 
@@ -13,7 +13,7 @@ import json
 import logging
 import sys
 
-from modman import db, engine, nexus
+from modman import commit, db, engine, nexus
 
 
 def load_modlist(source):
@@ -33,6 +33,13 @@ def main():
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     db.init_db()
+
+    # same gate as every webapp download path: downloading while archives
+    # carry install-order prefixes would repoint db rows at unprefixed names
+    # and orphan the committed files
+    if commit.is_committed():
+        print("Install order is committed to disk — revert it (Install Order tab) before downloading.")
+        return 1
 
     modfiles = engine.parse_modlist(load_modlist(args.source))
     diff = engine.diff_modlist(modfiles)

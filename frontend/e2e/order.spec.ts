@@ -7,10 +7,9 @@ const gotoOrder = async (page: Page) => {
 }
 
 test.describe('Install Order tab', () => {
-  test('renders grouped list with badges and run headers', async ({ page }) => {
+  test('renders ordered list with group badges', async ({ page }) => {
     await gotoOrder(page)
     expect(await page.locator('tr.ordrow').count()).toBeGreaterThan(0)
-    expect(await page.locator('tr.runhead').count()).toBeGreaterThan(0)
     await expect(page.locator('tr.ordrow .badge').first()).toBeVisible() // group badges
   })
 
@@ -62,7 +61,8 @@ test.describe('Install Order tab', () => {
 
     // selection survives the reload — Unlock straight away
     await expect(page.getByText('2 selected')).toBeVisible()
-    await page.getByRole('button', { name: 'Unlock' }).click()
+    // exact: a sortable row's accessible name can contain "Unlock" (mod names)
+    await page.getByRole('button', { name: 'Unlock', exact: true }).click()
     await expect(page.locator('tr.ordrow').nth(0).locator('.lockbtn.on')).toHaveCount(0)
   })
 
@@ -79,27 +79,6 @@ test.describe('Install Order tab', () => {
 
     await expect(page.locator('text=/moved .*to #1/')).toBeVisible()
     await expect(rows.nth(0).locator('td').nth(2)).toContainText(name || '')
-  })
-
-  test('marquee box-select: drag across rows selects them', async ({ page }) => {
-    await gotoOrder(page)
-    const rows = page.locator('tr.ordrow')
-    if ((await rows.count()) < 3) test.skip()
-    await rows.nth(0).scrollIntoViewIfNeeded()
-
-    // start on non-interactive space (Mod name cell) of row 0, drag to row 2
-    const startCell = rows.nth(0).locator('td').nth(2)
-    const endCell = rows.nth(2).locator('td').nth(2)
-    const sb = (await startCell.boundingBox())!
-    const eb = (await endCell.boundingBox())!
-    await page.mouse.move(sb.x + sb.width * 0.7, sb.y + 2)
-    await page.mouse.down()
-    await page.mouse.move(sb.x + sb.width * 0.7, eb.y + eb.height - 2, { steps: 10 })
-    await expect(page.locator('.marquee')).toBeVisible()
-    await page.mouse.up()
-
-    await expect(page.getByText('3 selected')).toBeVisible()
-    await page.getByRole('button', { name: 'Clear selection' }).click()
   })
 
   test('row click selects; ctrl-click extends', async ({ page }) => {

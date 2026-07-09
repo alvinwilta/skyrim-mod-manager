@@ -459,8 +459,8 @@ export function GuideTab() {
             keyboard-draggable: focus a row, then Enter/Space picks it up and the arrow keys move it.
           </li>
           <li>
-            Select rows by clicking (ctrl toggles, shift ranges) or by dragging a box across rows — then the floating
-            toolbar can <b>Lock</b>/<b>Unlock</b> the block, <b>Move</b> it to an exact position, send it to{' '}
+            Select rows by clicking (each click toggles the row in or out, shift-click selects a range) — then the
+            floating toolbar can <b>Lock</b>/<b>Unlock</b> the block, <b>Move</b> it to an exact position, send it to{' '}
             <b>Top</b>/<b>Bottom</b>, or <b>Move to group…</b> (inserts at the end of the chosen group). Dragging any
             selected row carries the whole block.
           </li>

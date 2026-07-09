@@ -24,31 +24,49 @@ def meta_path(filename):
     return os.path.join(DOWNLOADS_DIR, filename + ".meta")
 
 
+def _write_meta_ini(path, *, game_name, mod_id, file_id, name, mod_name,
+                    version, repository, nexus_domain=None):
+    """The one QSettings-ini template both writers share."""
+    with open(path, "w") as f:
+        f.write("[General]\n")
+        f.write(f"gameName={game_name}\n")
+        if nexus_domain:
+            # our own extension (MO2 ignores unknown keys): preserves the exact
+            # Nexus domain, which gameName alone can't round-trip -- `site`
+            # tools map to gameName=SkyrimSE and would re-import as the wrong
+            # domain (broken redownload) without this
+            f.write(f"nexusDomain={nexus_domain}\n")
+        f.write(
+            f"modID={mod_id}\n"
+            f"fileID={file_id}\n"
+            "url=\n"
+            f"name={name}\n"
+            f"modName={mod_name}\n"
+            f"version={version}\n"
+            "newestVersion=\n"
+            "category=0\n"
+            f"repository={repository}\n"
+            "installed=false\n"
+            "uninstalled=false\n"
+            "paused=false\n"
+            "removed=false\n"
+        )
+
+
 def write_meta(filename, meta):
     """Write an MO2 download meta for an archive. Never overwrites an existing
     meta — MO2 owns it after install (tracks installed/uninstalled there)."""
     path = meta_path(filename)
     if os.path.exists(path):
         return
-    game = GAME_NAMES.get(meta.get("game") or "", "SkyrimSE")
-    with open(path, "w") as f:
-        f.write(
-            "[General]\n"
-            f"gameName={game}\n"
-            f"modID={meta['mod_id']}\n"
-            f"fileID={meta['file_id']}\n"
-            "url=\n"
-            f"name={meta['file_name']}\n"
-            f"modName={meta['mod_name']}\n"
-            f"version={meta['file_version']}\n"
-            "newestVersion=\n"
-            "category=0\n"
-            "repository=Nexus\n"
-            "installed=false\n"
-            "uninstalled=false\n"
-            "paused=false\n"
-            "removed=false\n"
-        )
+    _write_meta_ini(
+        path,
+        game_name=GAME_NAMES.get(meta.get("game") or "", "SkyrimSE"),
+        mod_id=meta["mod_id"], file_id=meta["file_id"],
+        name=meta["file_name"], mod_name=meta["mod_name"],
+        version=meta["file_version"], repository="Nexus",
+        nexus_domain=meta.get("game"),
+    )
 
 
 def is_installed(filename):
@@ -106,7 +124,9 @@ def nexus_identity(meta):
         return None
     if mod_id <= 0 or file_id <= 0:
         return None
-    domain = DOMAIN_FOR_GAMENAME.get(meta.get("gamename") or "", GAME)
+    # nexusDomain (ours, exact) beats the gameName reverse map (lossy: `site`
+    # tools write gameName=SkyrimSE)
+    domain = meta.get("nexusdomain") or DOMAIN_FOR_GAMENAME.get(meta.get("gamename") or "", GAME)
     return domain, mod_id, file_id
 
 
@@ -118,22 +138,10 @@ def write_local_meta(filename, mod_name):
     path = meta_path(filename)
     if os.path.exists(path):
         return
-    game = GAME_NAMES.get(GAME, "SkyrimSE")
-    with open(path, "w") as f:
-        f.write(
-            "[General]\n"
-            f"gameName={game}\n"
-            "modID=0\n"
-            "fileID=0\n"
-            "url=\n"
-            f"name={filename}\n"
-            f"modName={mod_name}\n"
-            "version=\n"
-            "newestVersion=\n"
-            "category=0\n"
-            "repository=\n"
-            "installed=false\n"
-            "uninstalled=false\n"
-            "paused=false\n"
-            "removed=false\n"
-        )
+    _write_meta_ini(
+        path,
+        game_name=GAME_NAMES.get(GAME, "SkyrimSE"),
+        mod_id=0, file_id=0,
+        name=filename, mod_name=mod_name,
+        version="", repository="",
+    )

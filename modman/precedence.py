@@ -12,7 +12,7 @@ informational here, not a bug to auto-correct)."""
 import logging
 import threading
 
-from . import db, order_store
+from . import db, jobs, order_store
 
 log = logging.getLogger(__name__)
 
@@ -44,14 +44,38 @@ def _edges():
     return must_precede, rule_type
 
 
+def _on_cycle(dependent, precedent, must_precede):
+    """True when the rule 'precedent before dependent' lies on a directed
+    cycle, i.e. some chain of other rules also forces dependent before
+    precedent -- genuinely unsatisfiable, so the rule should be dropped.
+    A pair merely re-broken by another rule's move is NOT on a cycle and
+    can simply be fixed again."""
+    forward = {}  # X -> mods that X must precede
+    for dep, precs in must_precede.items():
+        for p in precs:
+            forward.setdefault(p, set()).add(dep)
+    stack, seen = [dependent], set()
+    while stack:
+        node = stack.pop()
+        if node == precedent:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        stack.extend(forward.get(node, ()))
+    return False
+
+
 def enforce():
     """Reposition mods that violate a stored ordering rule. Returns the
     number of moves made, and fills state['log'] with one human-readable
-    line per move/skip/drop -- locked-skips and cyclic drops used to be
-    silent (python logger only); now they're visible in the UI too. Caps
-    total attempts so a cyclic/contradictory rule set can't loop forever --
-    a repeat violation on the same pair after one fix attempt is dropped
-    rather than retried."""
+    line per move/skip/drop so they're visible in the UI.
+
+    A pair is re-fixed when a later rule's move legitimately re-breaks it
+    (chained before/after rules are the normal case in manifests); only a
+    pair on an actual rule cycle -- or one still thrashing after a generous
+    retry cap, the backstop for a contradiction the cycle check can't see --
+    is dropped. max_attempts caps the whole pass regardless."""
     must_precede, rule_type = _edges()
     state["log"] = []
     if not must_precede:
@@ -64,10 +88,12 @@ def enforce():
     pos = {m["mod_id"]: i for i, m in enumerate(mods)}
     name = lambda mid: names.get(mid, f"mod {mid}")
 
-    fixed_once = set()
+    n_edges = sum(len(v) for v in must_precede.values())
+    fix_counts = {}
+    max_fixes_per_pair = max(5, n_edges)
     entries = []
     moves = 0
-    max_attempts = max(10, sum(len(v) for v in must_precede.values()) * 3)
+    max_attempts = max(10, n_edges * n_edges * 3)
     for _ in range(max_attempts):
         violation = None
         for dependent, precedents in must_precede.items():
@@ -84,22 +110,25 @@ def enforce():
 
         precedent, dependent = violation
         rtype = rule_type.get((dependent, precedent), "?")
-        if precedent in locked or violation in fixed_once:
-            if violation in fixed_once:
+        exhausted = fix_counts.get(violation, 0) >= max_fixes_per_pair
+        if precedent in locked or exhausted or (
+            fix_counts.get(violation) and _on_cycle(dependent, precedent, must_precede)
+        ):
+            if precedent in locked:
+                entries.append(
+                    f"Skipped: '{name(precedent)}' should be before '{name(dependent)}' ({rtype}) but is locked in place"
+                )
+            else:
                 log.warning("dependency cycle/conflict involving mods %s and %s -- dropping", precedent, dependent)
                 entries.append(
                     f"Dropped: '{name(precedent)}' vs '{name(dependent)}' ({rtype}) — "
                     "conflicts with another rule, left as-is"
                 )
-            else:
-                entries.append(
-                    f"Skipped: '{name(precedent)}' should be before '{name(dependent)}' ({rtype}) but is locked in place"
-                )
             must_precede[dependent].discard(precedent)
             state["log"] = entries
             continue
 
-        fixed_once.add(violation)
+        fix_counts[violation] = fix_counts.get(violation, 0) + 1
         state["phase"] = f"Repositioning '{name(precedent)}' before '{name(dependent)}'"
         order_store.move([precedent], pos[dependent] + 1)
         entries.append(f"Moved '{name(precedent)}' to just before '{name(dependent)}' ({rtype})")
@@ -113,26 +142,16 @@ def enforce():
 
 def start_enforce():
     """Async ordering-rule enforcement. Returns error string or None (mirrors start_download)."""
-    if not _lock.acquire(blocking=False):
-        return "an enforce pass is already running"
 
-    def runner():
-        try:
-            state.update({"error": None, "running": True})
-            n = enforce()
-            skipped = sum(1 for e in state["log"] if e.startswith("Skipped"))
-            dropped = sum(1 for e in state["log"] if e.startswith("Dropped"))
-            bits = [f"{n} repositioned"] if n else []
-            if skipped:
-                bits.append(f"{skipped} skipped (locked)")
-            if dropped:
-                bits.append(f"{dropped} dropped (conflicting rule)")
-            state["phase"] = ", ".join(bits) if bits else "Nothing to reposition"
-        except Exception as e:
-            state.update({"error": str(e), "phase": "Error"})
-        finally:
-            state["running"] = False
-            _lock.release()
+    def work():
+        n = enforce()
+        skipped = sum(1 for e in state["log"] if e.startswith("Skipped"))
+        dropped = sum(1 for e in state["log"] if e.startswith("Dropped"))
+        bits = [f"{n} repositioned"] if n else []
+        if skipped:
+            bits.append(f"{skipped} skipped (locked)")
+        if dropped:
+            bits.append(f"{dropped} dropped (conflicting rule)")
+        return ", ".join(bits) if bits else "Nothing to reposition"
 
-    threading.Thread(target=runner, daemon=True).start()
-    return None
+    return jobs.start(_lock, state, "an enforce pass is already running", work)

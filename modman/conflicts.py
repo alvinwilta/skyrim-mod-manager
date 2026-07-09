@@ -19,7 +19,7 @@ import os
 import subprocess
 import threading
 
-from . import db
+from . import db, jobs
 from .buckets import STRUCTURAL_BUCKETS
 from .config import DOWNLOADS_DIR
 
@@ -65,9 +65,12 @@ def _list_paths(filepath):
     `7z l -slt`. Directory entries mark themselves with an empty Folder
     field and an Attributes value starting with 'D' -- not Folder = '+'
     as you'd expect from the docs -- so both are checked."""
-    out = subprocess.run(
+    proc = subprocess.run(
         ["7z", "l", "-slt", filepath], capture_output=True, text=True, timeout=120,
-    ).stdout
+    )
+    if proc.returncode > 1:  # 0 = ok, 1 = warnings; >1 = fatal / unreadable archive
+        raise RuntimeError(f"7z exited {proc.returncode}: {(proc.stderr or '').strip()[:200]}")
+    out = proc.stdout
     paths, cur, folder, attrs, past_header = [], None, "", "", False
 
     def flush():
@@ -105,8 +108,12 @@ def scan():
         try:
             entries = _list_paths(filepath) if os.path.isfile(filepath) else []
         except Exception as e:
+            # do NOT mark files_scanned: a transient failure (7z missing from
+            # PATH, timeout, half-written archive) recorded as "scanned, no
+            # files" would permanently read as conflict-free -- leave the row
+            # unscanned so the next run retries it
             log.warning("archive scan failed for %s: %s", r["filename"], e)
-            entries = []
+            continue
         with db.connect() as conn:
             conn.executemany(
                 "INSERT OR IGNORE INTO mod_files (file_id, path) VALUES (?, ?)",
@@ -157,25 +164,25 @@ def classify_file_types():
     return len(rows)
 
 
+def scan_progress():
+    """(scanned, total) archive-scan coverage over ok rows, for the UI's n/m line."""
+    with db.connect() as conn:
+        total = conn.execute("SELECT COUNT(*) c FROM mods WHERE status = 'ok'").fetchone()["c"]
+        scanned = conn.execute(
+            "SELECT COUNT(*) c FROM mods WHERE status = 'ok' AND COALESCE(files_scanned, 0) = 1"
+        ).fetchone()["c"]
+    return scanned, total
+
+
 def start_scan():
     """Async archive scan. Returns error string or None (mirrors start_download)."""
-    if not _lock.acquire(blocking=False):
-        return "a scan is already running"
 
-    def runner():
-        try:
-            state.update({"error": None, "running": True})
-            n = scan()
-            classify_file_types()
-            state["phase"] = f"Scanned {n} new archive(s)" if n else "Nothing new to scan"
-        except Exception as e:
-            state.update({"error": str(e), "phase": "Error"})
-        finally:
-            state["running"] = False
-            _lock.release()
+    def work():
+        n = scan()
+        classify_file_types()
+        return f"Scanned {n} new archive(s)" if n else "Nothing new to scan"
 
-    threading.Thread(target=runner, daemon=True).start()
-    return None
+    return jobs.start(_lock, state, "a scan is already running", work)
 
 
 def pairs():

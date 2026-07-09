@@ -360,6 +360,7 @@ export function OrderTab() {
         count={sel.selected.size}
         buckets={data.buckets}
         mods={data.mods}
+        selected={sel.selected}
         disabled={frozen}
         onLock={(locked) => void doLock([...sel.selected], locked)}
         onMoveTo={(p) => void doMove([...sel.selected], p)}

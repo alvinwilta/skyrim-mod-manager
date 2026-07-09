@@ -22,8 +22,13 @@ def _write_ranks(conn, unlocked_ids):
     slots = [None] * total
     for r in locked:
         i = min(r["rank"] or 0, total - 1)
-        while slots[i] is not None:  # collision: next free slot downward
-            i = (i + 1) % total
+        while i < total and slots[i] is not None:  # collision: next free slot downward
+            i += 1
+        if i == total:  # nothing free below: take the nearest free slot upward
+            # (never wrap to 0 — a mod locked at the bottom must not jump to the top)
+            i = min(r["rank"] or 0, total - 1)
+            while slots[i] is not None:
+                i -= 1
         slots[i] = r["mod_id"]
     it = iter(unlocked_ids)
     for i in range(total):

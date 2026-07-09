@@ -26,7 +26,10 @@ def _resolve_index(manifest):
             continue
         if source.get("md5"):
             by_md5[source["md5"]] = source["modId"]
-        by_name[m.get("name")] = source["modId"]
+        # a rule reference's logicalFileName matches the mod entry's own
+        # source.logicalFilename, NOT its display name
+        if source.get("logicalFilename"):
+            by_name[source["logicalFilename"]] = source["modId"]
     return by_md5, by_name
 
 

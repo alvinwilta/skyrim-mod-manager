@@ -3,7 +3,7 @@ import shutil
 import sqlite3
 import time
 
-from .config import DB_PATH, DOWNLOADS_DIR, GAME
+from .config import DB_PATH, GAME
 
 # collection_mod_rules types that actually imply an order and get applied by
 # modman/precedence.py's enforce() pass -- conflicts/recommends/provides don't.
@@ -176,7 +176,6 @@ def record_downloads(entries):
     Missing rows keep the mod visible in the library but are excluded from the
     diff, so the next import retries them. Sort state lives in mod_sort keyed
     by mod_id, so writing file rows never touches it."""
-    ondisk = {os.path.splitext(f)[0]: f for f in os.listdir(DOWNLOADS_DIR)}
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     with connect() as conn:
         for entry in entries:
@@ -188,20 +187,29 @@ def record_downloads(entries):
             conn.execute(
                 # ON CONFLICT UPDATE (not INSERT OR REPLACE) so columns omitted here --
                 # files_scanned in particular -- keep their existing value on a
-                # redownload instead of being reset to their column default
+                # redownload instead of being reset to their column default.
+                # The status/filename CASEs keep a FAILED redownload from
+                # downgrading a healthy 'ok' row to missing/NULL-filename --
+                # the intact archive already on disk stays the row's truth.
                 "INSERT INTO mods (file_id, mod_id, mod_name, file_name,"
                 " mod_version, file_version, category, author, filename, size_bytes,"
                 " game, downloaded_at, status, mod_url, requirements_alert) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 " ON CONFLICT(file_id) DO UPDATE SET mod_id=excluded.mod_id, mod_name=excluded.mod_name,"
                 " file_name=excluded.file_name, mod_version=excluded.mod_version,"
                 " file_version=excluded.file_version, category=excluded.category, author=excluded.author,"
-                " filename=excluded.filename, size_bytes=excluded.size_bytes, game=excluded.game,"
-                " downloaded_at=excluded.downloaded_at, status=excluded.status, mod_url=excluded.mod_url,"
+                " filename=CASE WHEN excluded.status = 'missing' AND mods.status = 'ok'"
+                "   THEN mods.filename ELSE excluded.filename END,"
+                " size_bytes=excluded.size_bytes, game=excluded.game,"
+                " downloaded_at=excluded.downloaded_at,"
+                " status=CASE WHEN excluded.status = 'missing' AND mods.status = 'ok'"
+                "   THEN mods.status ELSE excluded.status END,"
+                " mod_url=excluded.mod_url,"
                 " requirements_alert=excluded.requirements_alert",
                 (
                     m["file_id"], m["mod_id"], m["mod_name"], m["file_name"],
                     m["mod_version"], m["file_version"], m["category"], m["author"],
-                    ondisk.get(entry["name"]) if status == "ok" else None,
+                    # the exact on-disk name recorded by the downloader itself
+                    entry.get("filename") if status == "ok" else None,
                     entry["size"], game, now, status,
                     f"https://www.nexusmods.com/{game}/mods/{m['mod_id']}",
                     m.get("requirements_alert"),

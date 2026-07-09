@@ -11,7 +11,7 @@ missing-requirement warning; it does not feed the ordering pass."""
 import logging
 import threading
 
-from . import db, nexus
+from . import db, jobs, nexus
 
 log = logging.getLogger(__name__)
 
@@ -46,12 +46,14 @@ def scan():
         by_domain.setdefault(c["game"], []).append(c["mod_id"])
 
     checked = 0
-    with db.connect() as conn:
-        for domain, mod_ids in by_domain.items():
-            state["phase"] = f"Fetching requirements for {len(mod_ids)} mod(s) ({domain})"
-            if not domain:
-                continue
-            reqs = nexus.fetch_requirements(domain, mod_ids)
+    for domain, mod_ids in by_domain.items():
+        if not domain:
+            continue
+        state["phase"] = f"Fetching requirements for {len(mod_ids)} mod(s) ({domain})"
+        # fetch OUTSIDE the write transaction: holding sqlite's write lock
+        # across a 30s GraphQL call starves any concurrent writer
+        reqs = nexus.fetch_requirements(domain, mod_ids)
+        with db.connect() as conn:
             for mod_id in mod_ids:
                 found = reqs.get(mod_id, [])
                 for r in found:
@@ -75,22 +77,12 @@ def scan():
 
 def start_scan():
     """Async requirements sync. Returns error string or None (mirrors start_download)."""
-    if not _lock.acquire(blocking=False):
-        return "a requirements sync is already running"
 
-    def runner():
-        try:
-            state.update({"error": None, "running": True})
-            n = scan()
-            state["phase"] = f"Checked {n} mod(s)" if n else "Nothing new to check"
-        except Exception as e:
-            state.update({"error": str(e), "phase": "Error"})
-        finally:
-            state["running"] = False
-            _lock.release()
+    def work():
+        n = scan()
+        return f"Checked {n} mod(s)" if n else "Nothing new to check"
 
-    threading.Thread(target=runner, daemon=True).start()
-    return None
+    return jobs.start(_lock, state, "a requirements sync is already running", work)
 
 
 def missing():
@@ -110,7 +102,7 @@ def missing():
             # requires_mod_id isn't in `mods` (that's the whole point) so it has
             # no stored mod_url of its own -- build one from the requiring mod's
             # own game domain, which is virtually always the same game.
-            "requires_url": f"https://www.nexusmods.com/{r['game']}/mods/{r['requires_mod_id']}",
+            "requires_url": nexus.mod_url(r["game"], r["requires_mod_id"]),
             "notes": r["notes"],
         }
         for r in rows

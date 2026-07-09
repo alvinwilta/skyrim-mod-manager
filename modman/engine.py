@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-from . import conflicts, db, mo2, nexus
+from . import collection_rules, conflicts, db, jobs, mo2, nexus
 from .config import DOWNLOADS_DIR, GAME, MAX_WORKERS
 
 log = logging.getLogger(__name__)
@@ -102,7 +102,8 @@ def run_job(modfiles, file_ids, collection_id=None):
     """Synchronous download pipeline. Returns {'done': n, 'failed': n}."""
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
-    selected = [m for m in modfiles if m["file"]["fileId"] in set(file_ids)]
+    wanted = set(file_ids)
+    selected = [m for m in modfiles if m["file"]["fileId"] in wanted]
     progress = {e["name"]: e for e in (_progress_entry(m) for m in selected)}
     state["files"] = list(progress.values())
 
@@ -141,6 +142,7 @@ def run_job(modfiles, file_ids, collection_id=None):
         ok = nexus.retry(nexus.fetch_file, session, url, filename, entry)
         entry["status"] = "done" if ok else "failed"
         if ok:
+            entry["filename"] = filename  # the exact on-disk name, for record_downloads
             mo2.write_meta(filename, entry["meta"])
         log.info("%s: %s", entry["status"], filename)
 
@@ -154,7 +156,7 @@ def run_job(modfiles, file_ids, collection_id=None):
             {
                 "file_id": e["meta"]["file_id"], "mod_id": e["meta"]["mod_id"],
                 "mod_name": e["meta"]["mod_name"],
-                "mod_url": f"https://www.nexusmods.com/{e['meta']['game'] or GAME}/mods/{e['meta']['mod_id']}",
+                "mod_url": nexus.mod_url(e["meta"]["game"] or GAME, e["meta"]["mod_id"]),
             }
             for e in progress.values() if e["status"] == "done"
         ]
@@ -188,10 +190,13 @@ def validate_files(file_ids):
         for r in rows:
             path = os.path.join(DOWNLOADS_DIR, r["filename"]) if r["filename"] else None
             disk = os.path.getsize(path) if path and os.path.exists(path) else None
-            if disk is None or (r["size_bytes"] and disk < r["size_bytes"]):
+            # disk == 0 is always missing: no real archive is empty, and a
+            # size_bytes-0 row (Nexus metadata gap) must not bless a crash
+            # artifact that never received its first chunk
+            if not disk or (r["size_bytes"] and disk < r["size_bytes"]):
                 conn.execute("UPDATE mods SET status = 'missing' WHERE file_id = ?", (r["file_id"],))
                 report["missing"].append(r["file_id"])
-            elif not r["size_bytes"] and disk:
+            elif not r["size_bytes"]:
                 conn.execute(
                     "UPDATE mods SET size_bytes = ?, status = 'ok' WHERE file_id = ?", (disk, r["file_id"])
                 )
@@ -228,7 +233,12 @@ def purge_files(file_ids):
     removed = 0
     with db.connect() as conn:
         rows = conn.execute(
-            f"SELECT file_id, mod_id, filename FROM mods WHERE file_id IN ({','.join('?' * len(file_ids))})",
+            # status != 'ok' backstop: purge is only ever offered on the
+            # deleted-only view ('missing' covers the out-of-band-deleted
+            # escape hatch) — a live row reaching here is a caller bug, and
+            # hard-deleting it would be unrecoverable data loss
+            f"SELECT file_id, mod_id, filename FROM mods"
+            f" WHERE status != 'ok' AND file_id IN ({','.join('?' * len(file_ids))})",
             file_ids,
         ).fetchall()
         for r in rows:
@@ -278,20 +288,51 @@ def modfiles_from_db(file_ids):
     ]
 
 
+def fetch_and_register(url):
+    """Fetch a collection (or single-mod) modlist from a nexusmods URL and,
+    for a collection, register it: collections row, links for its FULL
+    modlist (import alone should record everything, downloaded or not), and
+    the curator's ordering rules when an API key is configured. Returns the
+    /api/fetch-collection response body. Synchronous — callers run it off
+    the event loop."""
+    is_collection = "/collections/" in url
+    fetch = nexus.fetch_collection if is_collection else nexus.fetch_mod
+    payload = fetch(url)
+    modfiles = parse_modlist(payload)
+    collection = None
+    if is_collection:
+        rev = payload["data"]["collectionRevision"]
+        slug = nexus.collection_slug(url)
+        name = (rev.get("collection") or {}).get("name")
+        collection_id = db.upsert_collection(slug, rev.get("collectionId"), rev.get("revisionNumber"), name)
+        entries = [
+            {
+                "file_id": m["fileId"], "mod_id": m["file"]["mod"]["modId"],
+                "mod_name": m["file"]["mod"]["name"],
+                "mod_url": nexus.mod_url(
+                    (m["file"]["mod"].get("game") or {}).get("domainName") or GAME, m["file"]["mod"]["modId"]
+                ),
+            }
+            for m in modfiles
+        ]
+        db.link_collection_files(collection_id, entries)
+        collection = {"id": collection_id, "slug": slug, "name": name}
+        # curated ordering rules, if a personal API key is configured --
+        # non-fatal, collection provenance above still works without it
+        try:
+            collection["rules_synced"] = collection_rules.sync(collection_id, rev.get("downloadLink"))
+        except Exception as e:
+            log.warning("collection rules sync failed for %s: %s", slug, e)
+    return {
+        "modlist": payload, "diff": diff_modlist(modfiles),
+        "count": len(modfiles), "collection": collection,
+    }
+
+
 def start_download(modfiles, file_ids, collection_id=None):
     """Async wrapper around run_job for the web app. Returns error string or None."""
-    if not _job_lock.acquire(blocking=False):
-        return "a download job is already running"
 
-    def runner():
-        try:
-            state.update({"error": None, "running": True})
-            run_job(modfiles, file_ids, collection_id=collection_id)
-        except Exception as e:
-            state.update({"error": str(e), "phase": "Error"})
-        finally:
-            state["running"] = False
-            _job_lock.release()
+    def work():
+        run_job(modfiles, file_ids, collection_id=collection_id)  # maintains its own phase
 
-    threading.Thread(target=runner, daemon=True).start()
-    return None
+    return jobs.start(_job_lock, state, "a download job is already running", work)

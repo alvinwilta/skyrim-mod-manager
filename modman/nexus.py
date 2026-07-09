@@ -5,14 +5,13 @@ import json
 import logging
 import os
 import re
+import subprocess
 import tempfile
 import time
 import urllib.parse
 
 import requests
 from playwright.sync_api import sync_playwright
-
-import subprocess
 
 from .config import BROWSER_CMD, CDP_URL, DOWNLOADS_DIR, GAME, GAME_ID, NEXUS_API_KEY
 
@@ -40,6 +39,11 @@ def collection_slug(url):
     m = _COLLECTION_URL_RE.search(url)
     return m.group(1) if m else None
 
+
+def mod_url(domain, mod_id):
+    """Canonical mod-page URL — the one shape stored in mods.mod_url everywhere."""
+    return f"https://www.nexusmods.com/{domain}/mods/{mod_id}"
+
 BROWSER_HEADERS = {
     "Origin": "https://www.nexusmods.com",
     "Referer": "https://www.nexusmods.com/",
@@ -65,8 +69,13 @@ def retry(func, *args, tries=5, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            log.info("attempt %d/%d failed: %s", attempt + 1, tries, e)
-            time.sleep(1 + attempt)
+            # surface the final failure at warning — it's the root cause the
+            # caller reports as a bare "failed" status
+            last = attempt + 1 == tries
+            log.log(logging.WARNING if last else logging.INFO,
+                    "attempt %d/%d failed: %s", attempt + 1, tries, e)
+            if not last:
+                time.sleep(1 + attempt)
     return None
 
 
@@ -113,7 +122,10 @@ def fetch_collection_manifest(download_link):
         timeout=30,
     )
     r.raise_for_status()
-    uri = r.json()["download_links"][0]["URI"]
+    links = (r.json() or {}).get("download_links") or []
+    if not links:
+        raise ValueError(f"no download links for collection manifest ({download_link})")
+    uri = links[0]["URI"]
     archive = requests.get(uri, timeout=60).content
     with tempfile.NamedTemporaryFile(suffix=".7z") as tmp:
         tmp.write(archive)
@@ -122,6 +134,8 @@ def fetch_collection_manifest(download_link):
             ["7z", "e", "-so", tmp.name, "collection.json"],
             capture_output=True, timeout=30,
         )
+    if out.returncode != 0 or not out.stdout.strip():
+        raise ValueError(f"could not extract collection.json from the manifest archive (7z exit {out.returncode})")
     return json.loads(out.stdout)
 
 
@@ -312,7 +326,13 @@ class LinkGenerator:
                 log.info("copied cookies not authenticated; using main browser context")
                 self._own_context.close()
             except Exception:
-                pass
+                # close the half-built isolated context too, or its window
+                # lingers in the user's browser (one per failed job)
+                if self._own_context:
+                    try:
+                        self._own_context.close()
+                    except Exception:
+                        pass
             self._own_context = None
 
             self._page = cdp.contexts[0].new_page()
@@ -393,22 +413,25 @@ def fetch_file(session, url, filename, entry):
     path = os.path.join(DOWNLOADS_DIR, filename)
     existing = os.path.getsize(path) if os.path.exists(path) else 0
 
-    response = session.get(
+    # context manager: the streamed body must be closed on the 416 early
+    # return and on mid-stream errors, or it pins the session's pooled
+    # connection until GC
+    with session.get(
         url, allow_redirects=True, stream=True, timeout=60,
         headers={"Range": f"bytes={existing}-"} if existing > 0 else {},
-    )
+    ) as response:
+        if response.status_code == 416:  # already complete
+            entry["got"] = existing
+            return True
+        if response.status_code not in (200, 206):
+            raise Exception(f"HTTP {response.status_code} for {filename}")
+        if response.status_code == 200 and existing > 0:  # server ignored the Range
+            existing = 0
 
-    if response.status_code == 416:  # already complete
-        return True
-    if response.status_code not in (200, 206):
-        raise Exception(f"HTTP {response.status_code} for {filename}")
-    if response.status_code == 200 and existing > 0:  # server ignored the Range
-        existing = 0
-
-    entry["got"] = existing
-    with open(path, "ab" if existing > 0 else "wb") as f:
-        for chunk in response.iter_content(chunk_size=256 * 1024):
-            if chunk:
-                f.write(chunk)
-                entry["got"] += len(chunk)
+        entry["got"] = existing
+        with open(path, "ab" if existing > 0 else "wb") as f:
+            for chunk in response.iter_content(chunk_size=256 * 1024):
+                if chunk:
+                    f.write(chunk)
+                    entry["got"] += len(chunk)
     return True
