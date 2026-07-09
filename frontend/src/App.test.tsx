@@ -32,7 +32,7 @@ describe('App shell', () => {
     render(<App />)
     await userEvent.click(screen.getByRole('button', { name: 'Guide' }))
     expect(screen.getByRole('heading', { name: 'Install Order' })).toBeInTheDocument()
-    expect(screen.getByText(/Sort \(heuristic\)/)).toBeInTheDocument()
+    expect(screen.getAllByText(/Sort \(heuristic\)/).length).toBeGreaterThan(0)
     expect(screen.getByText(/BSA-only/)).toBeInTheDocument()
   })
 })
