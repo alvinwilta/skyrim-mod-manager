@@ -37,20 +37,24 @@ npm run e2e     # Playwright suite (own backend on 7799, DB copy)
   ![Library tab](img/library.png)
 
 - **Install Order** — MO2 left-panel install order (which mod overwrites
-  which — not plugin load order), persisted in `mods.db` so order, locks and
-  flags survive restarts. **Ordering** tools change the order:
-  `Sort (heuristic)` classifies mods into the STEP SkyrimSE 2.3 guide's 20
-  groups; `Refine with Claude` / `Refine uncertain` send mods (plus real
-  scanned file conflicts) to Claude for corrections, with an editable prompt
-  and a safety valve that rejects replies reshuffling too much; `Apply
-  collection order rules` enforces curator before/after rules from imported
-  collections. **Analysis** tools are read-only: `Scan archives` finds real
-  file-path overlaps (via `7z`), `Sync requirements` flags missing Nexus
-  dependencies, `Check for drift` flags manually-moved mods, `Check vs MO2
-  order` compares against what MO2 actually has installed. Drag rows,
-  multi-select for bulk lock/move, lock (🔒) pins a mod against every
-  sort pass. Priority when signals disagree: locked > manual move >
-  collection rule > Claude > heuristic.
+  which — not plugin load order), persisted in `mods.db` so order, locks
+  and flags survive restarts.
+  - **Ordering** (changes the order):
+    - `Sort (heuristic)` — classifies mods into the STEP SkyrimSE 2.3
+      guide's 20 groups
+    - `Refine with Claude` / `Refine uncertain` — send mods (plus real
+      scanned file conflicts) to Claude for corrections; editable prompt,
+      safety valve rejects replies that reshuffle too much
+    - `Apply collection order rules` — enforces curator before/after rules
+      from imported collections
+  - **Analysis** (read-only):
+    - `Scan archives` — real file-path overlaps between archives (via `7z`)
+    - `Sync requirements` — flags missing Nexus dependencies
+    - `Check for drift` — flags manually-moved mods
+    - `Check vs MO2 order` — compares against what MO2 actually has installed
+  - Drag rows to reorder; multi-select for bulk lock/move; lock (🔒) pins a
+    mod against every sort pass. Priority when signals disagree:
+    locked > manual move > collection rule > Claude > heuristic.
 
   ![Install Order tab](img/order.png)
 
