@@ -44,6 +44,7 @@ export const api = {
   orderMo2Check: () => get<Mo2Check>('/api/order/mo2-check'),
   orderCommit: () => post<{ started: boolean }>('/api/order/commit'),
   orderUncommit: () => post<{ started: boolean }>('/api/order/uncommit'),
+  orderHideInstalled: (enabled: boolean) => post<{ started: boolean }>('/api/order/hide-installed', { enabled }),
   orderCommitState: () => get<CommitState>('/api/order/commit-state'),
   importLocal: () => post<{ started: boolean }>('/api/import-local'),
   importLocalState: () => get<JobState>('/api/import-local-state'),

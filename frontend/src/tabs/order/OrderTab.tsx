@@ -299,6 +299,19 @@ export function OrderTab() {
             Check vs MO2 order
           </button>
           <span style={{ flex: 1 }} />
+          <label
+            className="switch-label"
+            title="Move archives already installed in MO2 (per their .meta) into downloads/installed/ so MO2's Downloads tab only shows what's left to install. Toggle off to move them back. Names (and any install-order prefix) are untouched."
+          >
+            <input
+              type="checkbox"
+              className="switch"
+              checked={data.hidden}
+              disabled={jobs.committing || jobs.hiding}
+              onChange={(e) => void jobs.runHideInstalled(e.target.checked)}
+            />
+            Hide installed mods
+          </label>
           <button
             className={`btn${data.committed ? '' : ' ghost'}`}
             style={data.committed ? { background: '#7f1d1d' } : undefined}
@@ -463,9 +476,17 @@ export function OrderTab() {
         onConfirm={() => (data.committed ? void jobs.runUncommit() : void jobs.runCommit())}
       />
 
-      {jobs.committing && (
+      {(jobs.committing || jobs.hiding) && (
         <LoadingOverlay
-          message={data.committed ? 'Restoring original filenames…' : 'Renaming files on disk…'}
+          message={
+            jobs.hiding
+              ? data.hidden
+                ? 'Moving archives back…'
+                : 'Moving installed archives…'
+              : data.committed
+                ? 'Restoring original filenames…'
+                : 'Renaming files on disk…'
+          }
           detail="Do not close this tab until it finishes."
         />
       )}

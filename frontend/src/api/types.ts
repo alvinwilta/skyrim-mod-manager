@@ -75,11 +75,14 @@ export interface InstallOrder {
   notes: string[]
   /** true when files are renamed on disk with install-order prefixes */
   committed: boolean
+  /** true when installed archives are moved into downloads/installed/ */
+  hidden: boolean
 }
 
-/** GET /api/order/commit-state — JobState plus the persisted committed flag */
+/** GET /api/order/commit-state — JobState plus the persisted committed/hidden flags */
 export interface CommitState extends JobState {
   committed: boolean
+  hidden: boolean
 }
 
 /** GET /api/order/check */

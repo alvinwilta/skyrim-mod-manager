@@ -37,6 +37,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const [commitMsg, setCommitMsg] = useState('')
   const [commitError, setCommitError] = useState(false)
   const [committing, setCommitting] = useState(false)
+  const [hiding, setHiding] = useState(false) // hide-installed move job in flight
   const [wrongById, setWrongById] = useState<ReadonlyMap<number, number | null>>(new Map())
   const [justChanged, setJustChanged] = useState<ReadonlySet<number>>(new Set())
   const snapshot = useRef<BucketSnapshot | null>(null)
@@ -170,9 +171,10 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     syncing,
   )
 
-  // Commit watcher: 1s. Renames files on disk; blocks all reordering meanwhile.
-  // A thrown tick (route 404 on a stale backend, network blip) must NOT hang the
-  // overlay forever — catch it, drop out of committing, and surface the error.
+  // Commit/hide watcher: 1s. Both jobs rename/move files on disk (shared
+  // backend state); blocks all reordering meanwhile. A thrown tick (route 404
+  // on a stale backend, network blip) must NOT hang the overlay forever —
+  // catch it, drop out, and surface the error.
   usePoller(
     async () => {
       try {
@@ -181,7 +183,9 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
           setCommitMsg(s.phase + (s.error ? ' — ' + s.error : ''))
           setCommitError(!!s.error)
           setCommitting(false)
+          setHiding(false)
           data.setCommitted(s.committed)
+          data.setHidden(s.hidden)
           await finishAction()
           return false
         }
@@ -191,11 +195,12 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
         setCommitMsg(errText(e))
         setCommitError(true)
         setCommitting(false)
+        setHiding(false)
         return false
       }
     },
     1000,
-    committing,
+    committing || hiding,
   )
 
   const runCommit = async () => {
@@ -223,6 +228,18 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
       setCommitMsg(errText(e))
       setCommitError(true)
       snapshot.current = null
+    }
+  }
+
+  const runHideInstalled = async (enabled: boolean) => {
+    setCommitError(false)
+    setCommitMsg(enabled ? 'moving installed archives…' : 'moving archives back…')
+    try {
+      await api.orderHideInstalled(enabled)
+      setHiding(true)
+    } catch (e) {
+      setCommitMsg(errText(e))
+      setCommitError(true)
     }
   }
 
@@ -375,6 +392,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     commitMsg,
     commitError,
     committing,
+    hiding,
     wrongById,
     mo2,
     mo2Msg,
@@ -388,6 +406,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     runSync,
     runCommit,
     runUncommit,
+    runHideInstalled,
     checkDrift,
     clearDrift,
     clearJustChanged,

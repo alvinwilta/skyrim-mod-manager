@@ -204,7 +204,7 @@ async def redownload(request: Request):
 
 @app.get("/api/installorder")
 def installorder():
-    return {**order_store.load_order(), "committed": commit.is_committed()}
+    return {**order_store.load_order(), "committed": commit.is_committed(), "hidden": commit.is_hidden()}
 
 
 @app.get("/api/collections")
@@ -410,9 +410,18 @@ def order_uncommit():
     return {"started": True}
 
 
+@app.post("/api/order/hide-installed")
+async def order_hide_installed(request: Request):
+    body = await request.json()
+    err = commit.start_hide(bool((body or {}).get("enabled")))
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"started": True}
+
+
 @app.get("/api/order/commit-state")
 def order_commit_state():
-    return {**commit.state, "committed": commit.is_committed()}
+    return {**commit.state, "committed": commit.is_committed(), "hidden": commit.is_hidden()}
 
 
 @app.get("/api/sort-prompt")
