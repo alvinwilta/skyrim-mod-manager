@@ -28,6 +28,18 @@ class ParseReply(unittest.TestCase):
         r = llm_refine._parse_reply("```\n12|3\nnot a line\n```")
         self.assertEqual(r["order"], [{"id": 12, "b": 3}])
 
+    def test_out_of_range_bucket_dropped(self):
+        # a hallucinated bucket (STEP has exactly 1-20) must not reach mod_sort
+        r = llm_refine._parse_reply("12|25\n13|0\n14|20")
+        self.assertEqual(
+            r["order"], [{"id": 12}, {"id": 13}, {"id": 14, "b": 20}]
+        )
+
+    def test_invented_flags_dropped(self):
+        # only UNCERTAIN / CONFLICT:<id> / DUPLICATE:<id> are clearable later
+        r = llm_refine._parse_reply("12|3|UNCERTAIN,BOGUS,CONFLICT 55,CONFLICT:55,DUPLICATE:-9")
+        self.assertEqual(r["order"], [{"id": 12, "b": 3, "f": ["UNCERTAIN", "CONFLICT:55", "DUPLICATE:-9"]}])
+
 
 class Classify(unittest.TestCase):
     def test_keyword_beats_category(self):

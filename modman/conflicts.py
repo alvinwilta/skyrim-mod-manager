@@ -105,8 +105,14 @@ def scan():
     for i, r in enumerate(rows):
         state["phase"] = f"Scanning archive {i + 1}/{len(rows)}"
         filepath = os.path.join(DOWNLOADS_DIR, r["filename"])
+        if not os.path.isfile(filepath):
+            # same rule as the except below: a missing file (deleted
+            # out-of-band, or mid-rename during a commit) marked "scanned,
+            # no files" would permanently read as conflict-free — skip it
+            log.warning("archive scan: file not on disk, skipping: %s", r["filename"])
+            continue
         try:
-            entries = _list_paths(filepath) if os.path.isfile(filepath) else []
+            entries = _list_paths(filepath)
         except Exception as e:
             # do NOT mark files_scanned: a transient failure (7z missing from
             # PATH, timeout, half-written archive) recorded as "scanned, no
@@ -196,12 +202,21 @@ def pairs():
     structurally intended, not a real collision to worry about. Derived
     live from the current bucket every call, never persisted, so it can't
     go stale if a mod's bucket changes later."""
+    # the sharer filter runs in SQL (idx_mod_files_path) so python only ever
+    # sees actually-colliding paths — mod_files holds 10^5-10^6 rows on a real
+    # library and this runs on every /api/conflicts hit and inside bulk refine
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT mf.path, m.mod_id, m.mod_name, s.bucket FROM mod_files mf"
+            "WITH shared AS ("
+            "  SELECT mf.path FROM mod_files mf"
+            "  JOIN mods m ON m.file_id = mf.file_id AND m.status = 'ok'"
+            "  GROUP BY mf.path HAVING COUNT(DISTINCT m.mod_id) BETWEEN 2 AND ?)"
+            " SELECT mf.path, m.mod_id, m.mod_name, s.bucket FROM mod_files mf"
+            " JOIN shared ON shared.path = mf.path"
             " JOIN mods m ON m.file_id = mf.file_id AND m.status = 'ok'"
             " LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
-            " GROUP BY mf.path, m.mod_id"
+            " GROUP BY mf.path, m.mod_id",
+            (_MAX_SHARERS,),
         ).fetchall()
     by_path = {}
     for r in rows:

@@ -1,11 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ImportTab } from './ImportTab'
+import { ImportTab, __resetImportCache } from './ImportTab'
 import { mockApi } from '../../test/mockApi'
 import type { DiffItem } from '../../api/types'
 
 afterEach(() => vi.unstubAllGlobals())
+beforeEach(() => __resetImportCache()) // the diff cache deliberately survives remounts
 
 const item = (over: Partial<DiffItem>): DiffItem => ({
   file_id: 1,

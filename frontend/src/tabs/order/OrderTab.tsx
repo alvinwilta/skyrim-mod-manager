@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -173,6 +173,22 @@ export function OrderTab() {
     sel.toggle(mid, idx, e.shiftKey)
   }
 
+  // Stable per-row handlers (identity never changes): with hundreds of rows,
+  // fresh inline arrows per render defeated the row memo, so every poller
+  // message or selection click re-rendered the whole table. The ref always
+  // points at the latest closures; the wrappers are created once.
+  const live = useRef({ doMove, doLock, onRowClick })
+  live.current = { doMove, doLock, onRowClick }
+  const rowHandlers = useMemo(
+    () => ({
+      click: (mid: number, e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) =>
+        live.current.onRowClick(mid, e),
+      lock: (mid: number, locked: boolean) => void live.current.doLock([mid], !locked),
+      moveTo: (mid: number, p: number) => void live.current.doMove([mid], p),
+    }),
+    [],
+  )
+
   const onDragStart = (e: DragStartEvent) => setDragId(Number(e.active.id))
   const onDragEnd = (e: DragEndEvent) => {
     setDragId(null)
@@ -315,7 +331,9 @@ export function OrderTab() {
           <button
             className={`btn${data.committed ? '' : ' ghost'}`}
             style={data.committed ? { background: '#7f1d1d' } : undefined}
-            disabled={jobs.committing}
+            // refining: ranks are being rewritten — committing now would
+            // freeze a mid-refine order onto the filenames (backend also 409s)
+            disabled={jobs.committing || data.refining}
             title={
               data.committed
                 ? 'Files are renamed on disk with install-order prefixes and reordering is frozen. Click to rename them back to their original names.'
@@ -441,9 +459,9 @@ export function OrderTab() {
                     mo2Wrong={data.committed && mo2WrongIds.has(r.mod.mod_id)}
                     justChanged={jobs.justChanged.has(r.mod.mod_id)}
                     disabled={frozen}
-                    onRowClick={(e) => onRowClick(r.mod.mod_id, e)}
-                    onToggleLock={() => void doLock([r.mod.mod_id], !r.mod.locked)}
-                    onMoveTo={(p) => void doMove([r.mod.mod_id], p)}
+                    onRowClick={rowHandlers.click}
+                    onToggleLock={rowHandlers.lock}
+                    onMoveTo={rowHandlers.moveTo}
                   />
                 ))}
               </tbody>

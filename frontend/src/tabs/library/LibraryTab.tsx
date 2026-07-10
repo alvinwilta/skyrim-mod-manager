@@ -6,7 +6,7 @@ import type { CollectionRef, Mod } from '../../api/types'
 import { human } from '../../lib/format'
 import { useDebounce } from '../../hooks/useDebounce'
 import { usePoller } from '../../hooks/usePoller'
-import { useEvents } from '../../events/EventsProvider'
+import { useActivity } from '../../events/EventsProvider'
 import { useRowSelection } from './useRowSelection'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 
@@ -39,19 +39,26 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   const [showDeleted, setShowDeleted] = useState(false)
   const [committed, setCommitted] = useState(false)
   const [msg, setMsg] = useState('')
-  const { dl } = useEvents()
+  const { downloading } = useActivity()
 
   // "Show deleted" is an exclusive view: on = ONLY soft-deleted rows, off = only live rows.
   const rows = allRows.filter((r) => (showDeleted ? r.status === 'deleted' : r.status !== 'deleted'))
   const nDeleted = allRows.filter((r) => r.status === 'deleted').length
   const sel = useRowSelection(rows.map((r) => r.file_id))
 
+  // stale-response guard: rapid query changes can resolve out of order — only
+  // the newest load() may write state, or a slow old response overwrites a
+  // newer one (empty search box showing filtered results)
+  const loadSeq = useRef(0)
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current
     try {
       const [rowsData, cs] = await Promise.all([api.mods(debouncedQ.trim() || undefined), api.orderCommitState()])
+      if (seq !== loadSeq.current) return
       setAllRows(rowsData)
       setCommitted(cs.committed) // delete/redownload rename/remove files — unsafe while committed
     } catch (e) {
+      if (seq !== loadSeq.current) return
       setMsg(errText(e))
     }
   }, [debouncedQ])
@@ -73,9 +80,9 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   // Legacy loadLibOnFinish(): refresh the library when a download job completes.
   const wasRunning = useRef(false)
   useEffect(() => {
-    if (wasRunning.current && !dl.running) void load()
-    wasRunning.current = dl.running
-  }, [dl.running, load])
+    if (wasRunning.current && !downloading) void load()
+    wasRunning.current = downloading
+  }, [downloading, load])
 
   // Legacy setSticky(): pin the search bar right below the (wrappable) header.
   const wrapRef = useStickyTop<HTMLDivElement>()

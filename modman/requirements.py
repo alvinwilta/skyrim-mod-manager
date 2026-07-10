@@ -46,32 +46,39 @@ def scan():
         by_domain.setdefault(c["game"], []).append(c["mod_id"])
 
     checked = 0
-    for domain, mod_ids in by_domain.items():
+    for domain, all_ids in by_domain.items():
         if not domain:
             continue
-        state["phase"] = f"Fetching requirements for {len(mod_ids)} mod(s) ({domain})"
-        # fetch OUTSIDE the write transaction: holding sqlite's write lock
-        # across a 30s GraphQL call starves any concurrent writer
-        reqs = nexus.fetch_requirements(domain, mod_ids)
-        with db.connect() as conn:
-            for mod_id in mod_ids:
-                found = reqs.get(mod_id, [])
-                for r in found:
+        # chunked fetch-then-write: a failure mid-scan keeps every chunk
+        # already written (those rows are marked checked and never re-fetched),
+        # instead of one giant all-or-nothing request for a 500-mod library
+        for start in range(0, len(all_ids), nexus.LEGACY_CHUNK):
+            mod_ids = all_ids[start:start + nexus.LEGACY_CHUNK]
+            state["phase"] = (
+                f"Fetching requirements {min(start + len(mod_ids), len(all_ids))}/{len(all_ids)} ({domain})"
+            )
+            # fetch OUTSIDE the write transaction: holding sqlite's write lock
+            # across a 30s GraphQL call starves any concurrent writer
+            reqs = nexus.fetch_requirements(domain, mod_ids)
+            with db.connect() as conn:
+                for mod_id in mod_ids:
+                    found = reqs.get(mod_id, [])
+                    for r in found:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO mod_requirements (mod_id, requires_mod_id, notes)"
+                            " VALUES (?, ?, ?)",
+                            (mod_id, r["modId"], r["notes"]),
+                        )
                     conn.execute(
-                        "INSERT OR IGNORE INTO mod_requirements (mod_id, requires_mod_id, notes)"
-                        " VALUES (?, ?, ?)",
-                        (mod_id, r["modId"], r["notes"]),
+                        "UPDATE mods SET requirements_alert = ? WHERE mod_id = ?",
+                        (1 if found else 0, mod_id),
                     )
-                conn.execute(
-                    "UPDATE mods SET requirements_alert = ? WHERE mod_id = ?",
-                    (1 if found else 0, mod_id),
-                )
-                conn.execute(
-                    "INSERT INTO mod_sort (mod_id, requirements_checked) VALUES (?, 1)"
-                    " ON CONFLICT(mod_id) DO UPDATE SET requirements_checked = 1",
-                    (mod_id,),
-                )
-                checked += 1
+                    conn.execute(
+                        "INSERT INTO mod_sort (mod_id, requirements_checked) VALUES (?, 1)"
+                        " ON CONFLICT(mod_id) DO UPDATE SET requirements_checked = 1",
+                        (mod_id,),
+                    )
+                    checked += 1
     return checked
 
 

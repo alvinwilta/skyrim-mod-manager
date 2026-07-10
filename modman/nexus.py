@@ -64,10 +64,19 @@ async ( body ) => {
 """
 
 
-def retry(func, *args, tries=5, **kwargs):
+class LinkExpired(Exception):
+    """Signed CDN url rejected with 403 — its ~4h expiry elapsed. Retrying the
+    same url is pointless; the caller must generate a fresh one."""
+
+
+def retry(func, *args, tries=5, fatal=(), **kwargs):
+    """Call func up to `tries` times. Exceptions in `fatal` are re-raised
+    immediately instead of retried — for failures a retry can't fix."""
     for attempt in range(tries):
         try:
             return func(*args, **kwargs)
+        except fatal:
+            raise
         except Exception as e:
             # surface the final failure at warning — it's the root cause the
             # caller reports as a bare "failed" status
@@ -139,18 +148,25 @@ def fetch_collection_manifest(download_link):
     return json.loads(out.stdout)
 
 
-def _graphql(query, variables=None):
-    r = requests.post(
-        "https://api-router.nexusmods.com/graphql",
-        json={"query": query, "variables": variables or {}},
-        headers=BROWSER_HEADERS,
-        timeout=30,
-    )
-    r.raise_for_status()
-    d = r.json()
-    if not d.get("data"):
-        raise ValueError(f"graphql error: {d.get('errors')}")
-    return d["data"]
+def _graphql(query, variables=None, tries=3):
+    for attempt in range(tries):
+        r = requests.post(
+            "https://api-router.nexusmods.com/graphql",
+            json={"query": query, "variables": variables or {}},
+            headers=BROWSER_HEADERS,
+            timeout=30,
+        )
+        # public unauthenticated endpoint: back off on throttle/5xx instead of
+        # failing a whole batch job on one transient response
+        if r.status_code == 429 or r.status_code >= 500:
+            if attempt + 1 < tries:
+                time.sleep(2 * (attempt + 1))
+                continue
+        r.raise_for_status()
+        d = r.json()
+        if not d.get("data"):
+            raise ValueError(f"graphql error: {d.get('errors')}")
+        return d["data"]
 
 
 # files in these categories are no longer downloadable
@@ -168,29 +184,40 @@ def game_id_for(domain):
     return _game_ids[domain]
 
 
+# legacyMods(ids: [...]) batch size: one 500-mod library must not become one
+# enormous request (single 30s timeout, all-or-nothing failure)
+LEGACY_CHUNK = 50
+
+
+def _legacy_mods(game_id, mod_ids, fields):
+    """legacyMods lookup for many ids, chunked — returns all nodes."""
+    mod_ids = list(mod_ids)
+    nodes = []
+    for i in range(0, len(mod_ids), LEGACY_CHUNK):
+        chunk = mod_ids[i:i + LEGACY_CHUNK]
+        ids = ", ".join(f"{{gameId: {game_id}, modId: {mid}}}" for mid in chunk)
+        query = "{ legacyMods(ids: [" + ids + "]) { nodes { " + fields + " } } }"
+        nodes.extend(_graphql(query)["legacyMods"]["nodes"])
+    return nodes
+
+
 def fetch_summaries(domain, mod_ids):
     """Batch-fetch short Nexus summaries (not the full description page) for
-    several mods on one domain in a single call -- used to give the sorter's
-    second pass a real signal for mods the heuristic couldn't confidently
-    bucket, without paying a per-mod API round trip."""
-    game_id = game_id_for(domain)
-    ids = ", ".join(f"{{gameId: {game_id}, modId: {mid}}}" for mid in mod_ids)
-    query = "{ legacyMods(ids: [" + ids + "]) { nodes { modId summary } } }"
-    nodes = _graphql(query)["legacyMods"]["nodes"]
+    several mods on one domain -- used to give the sorter's second pass a
+    real signal for mods the heuristic couldn't confidently bucket, without
+    paying a per-mod API round trip."""
+    nodes = _legacy_mods(game_id_for(domain), mod_ids, "modId summary")
     return {n["modId"]: n.get("summary") or "" for n in nodes}
 
 
 def fetch_requirements(domain, mod_ids):
     """Batch-fetch each mod's real Nexus-declared requirements (the mod's own
-    'Requirements' section) for several mods on one domain in a single call.
+    'Requirements' section) for several mods on one domain.
     Drops external (non-Nexus) links, which carry modId '0' and no name."""
-    game_id = game_id_for(domain)
-    ids = ", ".join(f"{{gameId: {game_id}, modId: {mid}}}" for mid in mod_ids)
-    query = (
-        "{ legacyMods(ids: [" + ids + "]) { nodes { modId"
-        " modRequirements { nexusRequirements { nodes { modId modName notes externalRequirement } } } } } }"
+    nodes = _legacy_mods(
+        game_id_for(domain), mod_ids,
+        "modId modRequirements { nexusRequirements { nodes { modId modName notes externalRequirement } } }",
     )
-    nodes = _graphql(query)["legacyMods"]["nodes"]
     return {
         n["modId"]: [
             {"modId": int(r["modId"]), "modName": r["modName"], "notes": r.get("notes") or ""}
@@ -409,9 +436,15 @@ def filename_for(url, base):
 
 
 def fetch_file(session, url, filename, entry):
-    """Stream a file into DOWNLOADS_DIR with Range-resume. Updates entry['got']."""
+    """Stream a file into DOWNLOADS_DIR with Range-resume. Updates entry['got'].
+
+    Streams into a `.part` sidecar and renames to the final name only on
+    completion, so a failed or in-flight download can never be mistaken for a
+    finished archive (import-local only adopts archive extensions; commit and
+    the 7z scan only ever see finished names). Resume works off the .part."""
     path = os.path.join(DOWNLOADS_DIR, filename)
-    existing = os.path.getsize(path) if os.path.exists(path) else 0
+    part = path + ".part"
+    existing = os.path.getsize(part) if os.path.exists(part) else 0
 
     # context manager: the streamed body must be closed on the 416 early
     # return and on mid-stream errors, or it pins the session's pooled
@@ -422,16 +455,22 @@ def fetch_file(session, url, filename, entry):
     ) as response:
         if response.status_code == 416:  # already complete
             entry["got"] = existing
+            os.replace(part, path)
             return True
+        if response.status_code == 403:
+            # signed url outlived its ~4h window (or was never valid) — a
+            # retry of the same url can't succeed, only a regenerated one
+            raise LinkExpired(f"HTTP 403 for {filename} — download url expired")
         if response.status_code not in (200, 206):
             raise Exception(f"HTTP {response.status_code} for {filename}")
         if response.status_code == 200 and existing > 0:  # server ignored the Range
             existing = 0
 
         entry["got"] = existing
-        with open(path, "ab" if existing > 0 else "wb") as f:
+        with open(part, "ab" if existing > 0 else "wb") as f:
             for chunk in response.iter_content(chunk_size=256 * 1024):
                 if chunk:
                     f.write(chunk)
                     entry["got"] += len(chunk)
+    os.replace(part, path)
     return True

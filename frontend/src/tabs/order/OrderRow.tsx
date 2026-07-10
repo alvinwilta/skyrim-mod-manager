@@ -21,9 +21,11 @@ interface Props {
   mo2Wrong: boolean // true when this mod is out of order vs MO2's install order
   justChanged: boolean
   disabled: boolean // refining: no drag, no lock, no move
-  onRowClick: (e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => void
-  onToggleLock: () => void
-  onMoveTo: (position: number) => void
+  // mod_id-first signatures so the parent can pass ONE stable handler to every
+  // row (identity-stable → the memo boundaries actually hold)
+  onRowClick: (mid: number, e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => void
+  onToggleLock: (mid: number, locked: boolean) => void
+  onMoveTo: (mid: number, position: number) => void
 }
 
 function PosCell({ pos, disabled, onMoveTo }: { pos: number; disabled: boolean; onMoveTo: (p: number) => void }) {
@@ -102,8 +104,8 @@ const RowCells = memo(function RowCells({
   wrongExpected: number | null | undefined
   mo2Wrong: boolean
   disabled: boolean
-  onToggleLock: () => void
-  onMoveTo: (position: number) => void
+  onToggleLock: (mid: number, locked: boolean) => void
+  onMoveTo: (mid: number, position: number) => void
 }) {
   const shownFlags = (mod.flags || []).filter((f) => {
     const cat = flagCategory(f)
@@ -118,12 +120,12 @@ const RowCells = memo(function RowCells({
           title={mod.locked ? 'pinned — sorts will not move this; click to unpin' : 'pin at this position'}
           onClick={(e) => {
             e.stopPropagation()
-            onToggleLock()
+            onToggleLock(mod.mod_id, mod.locked)
           }}
         >
           {mod.locked ? '🔒' : '🔓'}
         </button>
-        <PosCell pos={pos} disabled={disabled} onMoveTo={onMoveTo} />
+        <PosCell pos={pos} disabled={disabled} onMoveTo={(p) => onMoveTo(mod.mod_id, p)} />
       </td>
       <td>
         {mod.installed && <span className="badge b-new">installed </span>}
@@ -185,7 +187,7 @@ const RowCells = memo(function RowCells({
   )
 })
 
-export function OrderRow({
+export const OrderRow = memo(function OrderRow({
   mod,
   pos,
   names,
@@ -241,7 +243,7 @@ export function OrderRow({
         // interactive elements keep their own behavior; text selection wins
         if ((e.target as Element).closest('input, button, a, select, .posnum, .draghandle')) return
         if (window.getSelection()?.toString()) return
-        onRowClick(e)
+        onRowClick(mod.mod_id, e)
       }}
     >
       <td style={{ width: 30 }}>
@@ -264,4 +266,4 @@ export function OrderRow({
       />
     </tr>
   )
-}
+})

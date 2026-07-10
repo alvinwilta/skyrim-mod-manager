@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../../api/endpoints'
 import { usePoller } from '../../../hooks/usePoller'
-import { useEvents } from '../../../events/EventsProvider'
+import { useActivity } from '../../../events/EventsProvider'
 import type { ConflictsResult, MissingRequirement, Mo2Check } from '../../../api/types'
 import { snapshotBuckets, diffChanged, type BucketSnapshot } from '../lib/changeDiff'
 import { errText, type useOrderData } from './useOrderData'
@@ -16,7 +16,7 @@ const EMPTY_MO2: Mo2Check = { out_of_order: [], in_mo2_not_list: [], in_list_not
  * (poll while running, reload + change-highlight when an action finishes).
  */
 export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
-  const events = useEvents()
+  const { sorting } = useActivity()
   const [model, setModel] = useState('haiku')
   const [msg, setMsg] = useState('') // the shared sortmsg line
   const [heuristicLog, setHeuristicLog] = useState(NOT_RUN)
@@ -98,10 +98,18 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
       .catch(() => {})
   }, [loadConflicts, loadMissing])
 
-  // SSE says a sort is running (started elsewhere / mid-session) → enter refining.
+  // SSE says a sort STARTED (elsewhere / mid-session) → enter refining.
+  // Rising-edge only: reacting to the level re-entered refining from a stale
+  // SSE frame right after the poller ended the job, looping poller-off →
+  // bridge-on → poller-off (visible button flicker + wasted requests) until
+  // the next frame arrived. prev starts false so a sort already running at
+  // mount still triggers the first edge.
+  const prevSorting = useRef(false)
   useEffect(() => {
-    if (events.sort.running && !data.refining) data.setRefining(true)
-  }, [events.sort.running, data])
+    const rising = sorting && !prevSorting.current
+    prevSorting.current = sorting
+    if (rising && !data.refining) data.setRefining(true)
+  }, [sorting, data.refining, data.setRefining])
 
   // Refine watcher: 2s, stops when the job ends, then reload + highlight.
   usePoller(

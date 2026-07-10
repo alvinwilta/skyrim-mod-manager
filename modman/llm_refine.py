@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 state = {"phase": "idle", "running": False, "error": None, "job": None}  # job: 'bulk' | 'desc'
 _lock = threading.Lock()
+jobs.register("sort refine", state)
 _proc = None  # running claude subprocess, for the force-stop endpoint
 MODELS = ("haiku", "sonnet", "opus")
 
@@ -82,10 +83,26 @@ Mods:
 {{MODS}}"""
 
 
+def _valid_flag(flag):
+    """Only persist flags the UI understands and clear_flags can strip:
+    UNCERTAIN, CONFLICT:<mod_id>, DUPLICATE:<mod_id>. Anything else the model
+    invents would be stored verbatim and stuck (unclearable) forever."""
+    if flag == "UNCERTAIN":
+        return True
+    kind, _, arg = flag.partition(":")
+    return kind in ("CONFLICT", "DUPLICATE") and arg.strip().lstrip("-").isdigit()
+
+
 def _parse_reply(text):
     """Parse the line-based reply: 'id|bucket[|flags]' rows, then an optional
     CONFLICTS: section. Line format keeps the reply ~3x smaller than JSON,
-    which is what dominates the runtime. Non-matching lines are skipped."""
+    which is what dominates the runtime. Non-matching lines are skipped.
+
+    Validation boundary for everything the LLM writes into mod_sort: a bucket
+    outside the real 1-20 STEP scheme (verified: both STEP 2.3 and 3.0 have
+    exactly groups 02-21) is a hallucination — dropping it here keeps it out
+    of bucket AND expected_bucket, where the drift check could never flag it
+    (expected == actual). Flags are whitelisted for the same reason."""
     text = re.sub(r"^```\w*|```$", "", text.strip(), flags=re.M).strip()
     order, conflict_lines, in_conflicts = [], [], False
     for line in text.splitlines():
@@ -103,10 +120,10 @@ def _parse_reply(text):
         if not parts[0].lstrip("-").isdigit():
             continue
         item = {"id": int(parts[0])}
-        if len(parts) > 1 and parts[1].isdigit():
+        if len(parts) > 1 and parts[1].isdigit() and int(parts[1]) in BUCKETS:
             item["b"] = int(parts[1])
         if len(parts) > 2:
-            item["f"] = [f.strip() for f in parts[2].split(",") if f.strip()]
+            item["f"] = [f.strip() for f in parts[2].split(",") if f.strip() and _valid_flag(f.strip())]
         order.append(item)
     return {"order": order, "conflicts": conflict_lines}
 
@@ -269,7 +286,8 @@ def start_llm_refine(model="haiku"):
     if shutil.which("claude") is None:
         return "claude CLI not found — heuristic order kept"
     return jobs.start(_lock, state, "a sort job is already running",
-                      lambda: _refine_job(model), init={"job": "bulk"})
+                      lambda: _refine_job(model), init={"job": "bulk"},
+                      exclusive_as="sort refine")
 
 
 def _desc_refine_job(model):
@@ -331,4 +349,5 @@ def start_desc_refine(model="haiku"):
     if shutil.which("claude") is None:
         return "claude CLI not found"
     return jobs.start(_lock, state, "a sort job is already running",
-                      lambda: _desc_refine_job(model), init={"job": "desc"})
+                      lambda: _desc_refine_job(model), init={"job": "desc"},
+                      exclusive_as="sort refine")

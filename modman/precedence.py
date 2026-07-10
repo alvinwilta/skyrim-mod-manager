@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 state = {"phase": "idle", "running": False, "error": None, "log": []}
 _lock = threading.Lock()
+jobs.register("rule enforcement", state)
 
 
 def _edges():
@@ -82,7 +83,10 @@ def enforce():
         state["phase"] = "No collection ordering rules to apply"
         return 0
 
-    mods = order_store.load_order()["mods"]
+    # order_positions, not load_order: this loop reloads after EVERY move, and
+    # load_order opens one .meta per mod for `installed`, which enforce never
+    # uses — that's tens of thousands of file opens on a rule-heavy pass
+    mods = order_store.order_positions()
     names = {m["mod_id"]: m["mod_name"] for m in mods}
     locked = {m["mod_id"] for m in mods if m["locked"]}
     pos = {m["mod_id"]: i for i, m in enumerate(mods)}
@@ -134,7 +138,7 @@ def enforce():
         entries.append(f"Moved '{name(precedent)}' to just before '{name(dependent)}' ({rtype})")
         state["log"] = entries
         moves += 1
-        mods = order_store.load_order()["mods"]
+        mods = order_store.order_positions()
         pos = {m["mod_id"]: i for i, m in enumerate(mods)}
 
     return moves
@@ -154,4 +158,5 @@ def start_enforce():
             bits.append(f"{dropped} dropped (conflicting rule)")
         return ", ".join(bits) if bits else "Nothing to reposition"
 
-    return jobs.start(_lock, state, "an enforce pass is already running", work)
+    return jobs.start(_lock, state, "an enforce pass is already running", work,
+                      exclusive_as="rule enforcement")

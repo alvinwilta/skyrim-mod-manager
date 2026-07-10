@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import { api } from '../../api/endpoints'
 import { ApiError } from '../../api/client'
 import type { DiffItem, DiffResult, FetchCollectionResult } from '../../api/types'
@@ -22,24 +22,63 @@ function toGroups(d: DiffResult): Group[] {
   ]
 }
 
+const DEFAULT_PLACEHOLDER = '{"data":{"collectionRevision":{"modFiles":[…]}}}'
+
+// Module-level cache (same pattern as PromptEditor): tabs unmount on switch,
+// and downloading auto-jumps to Progress — without this a fetched collection
+// diff was gone, so downloading a subset then coming back for the rest meant
+// re-fetching everything.
+const cache: {
+  url: string
+  diff: DiffResult | null
+  modlist: unknown
+  collection: FetchCollectionResult['collection']
+  placeholder: string
+  selected: number[] | null
+} = { url: '', diff: null, modlist: null, collection: null, placeholder: DEFAULT_PLACEHOLDER, selected: null }
+
+/** Test hook — reset the module cache between tests. */
+export const __resetImportCache = () => {
+  cache.url = ''
+  cache.diff = null
+  cache.modlist = null
+  cache.collection = null
+  cache.placeholder = DEFAULT_PLACEHOLDER
+  cache.selected = null
+}
+
 export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
-  const [url, setUrl] = useState('')
+  const [url, setUrl] = useState(cache.url)
   const [jsonText, setJsonText] = useState('')
-  const [jsonPlaceholder, setJsonPlaceholder] = useState('{"data":{"collectionRevision":{"modFiles":[…]}}}')
+  const [jsonPlaceholder, setJsonPlaceholder] = useState(cache.placeholder)
   const [err, setErr] = useState('')
   const [fetching, setFetching] = useState(false)
-  const [diff, setDiff] = useState<DiffResult | null>(null)
-  const [modlist, setModlist] = useState<unknown>(null)
-  const [collection, setCollection] = useState<FetchCollectionResult['collection']>(null)
+  const [diff, setDiff] = useState<DiffResult | null>(cache.diff)
+  const [modlist, setModlist] = useState<unknown>(cache.modlist)
+  const [collection, setCollection] = useState<FetchCollectionResult['collection']>(cache.collection)
 
   const groups = useMemo(() => (diff ? toGroups(diff) : []), [diff])
   const allItems = useMemo(() => groups.flatMap((g) => g.items), [groups])
   const sel = useRowSelection(allItems.map((i) => i.file_id))
 
+  // restore the cached selection once on remount (before any user click)
+  useEffect(() => {
+    if (cache.selected) sel.replace(cache.selected)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // keep the cached selection current so a remount restores exactly it
+  useEffect(() => {
+    cache.selected = diff ? [...sel.selected] : null
+  }, [sel.selected, diff])
+
   const showDiff = (d: DiffResult) => {
     setDiff(d)
+    cache.diff = d
     // new + updated default-checked, unchanged not (legacy grp() defaults)
-    sel.replace([...d.new, ...d.updated].map((i) => i.file_id))
+    const ids = [...d.new, ...d.updated].map((i) => i.file_id)
+    sel.replace(ids)
+    cache.selected = ids
   }
 
   const doFetch = async () => {
@@ -56,6 +95,9 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
       setCollection(d.collection)
       setJsonText('')
       setJsonPlaceholder(`fetched ${d.count} files from ${u}`)
+      cache.modlist = d.modlist
+      cache.collection = d.collection
+      cache.placeholder = `fetched ${d.count} files from ${u}`
       showDiff(d.diff)
     } catch (e) {
       setErr(errText(e))
@@ -77,6 +119,8 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
       const d = await api.diff(payload)
       setModlist(payload)
       setCollection(null) // pasted/uploaded JSON has no known collection identity
+      cache.modlist = payload
+      cache.collection = null
       showDiff(d)
     } catch (e) {
       setErr(errText(e))
@@ -127,7 +171,10 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
           placeholder="…/collections/h2uqa3/mods or …/skyrimspecialedition/mods/32117"
           style={{ flex: 1, minWidth: 260 }}
           value={url}
-          onChange={(e) => setUrl(e.target.value)}
+          onChange={(e) => {
+            setUrl(e.target.value)
+            cache.url = e.target.value
+          }}
         />
         <button className="btn" disabled={fetching} onClick={doFetch}>
           {fetching ? 'Fetching…' : 'Fetch from Nexus'}

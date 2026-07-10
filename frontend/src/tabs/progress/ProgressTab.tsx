@@ -1,10 +1,11 @@
-import { useEvents } from '../../events/EventsProvider'
+import { useDlEvents, useSpeed } from '../../events/EventsProvider'
 import { human } from '../../lib/format'
 import { computeStats, formatEta, isLinkPhase } from './lib/speed'
 import { ProgressRow } from './ProgressRow'
 
 export function ProgressTab() {
-  const { dl, speed } = useEvents()
+  const dl = useDlEvents()
+  const speed = useSpeed()
   const stats = computeStats(dl.files)
   const linkPhase = isLinkPhase(dl.phase)
 

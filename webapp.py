@@ -8,7 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from modman import commit, conflicts, db, engine, importlocal, llm_refine, mo2, mo2_order, order_store, precedence, requirements
+from modman import commit, conflicts, db, engine, importlocal, jobs, llm_refine, mo2, mo2_order, order_store, precedence, requirements
 
 app = FastAPI(title="Mod Manager")
 db.init_db()
@@ -196,6 +196,15 @@ async def redownload(request: Request):
     if frozen:
         return frozen
     modfiles = await run_in_threadpool(engine.modfiles_from_db, file_ids)
+    # adopted local mods carry negative synthetic ids and no Nexus source —
+    # fail fast instead of launching a browser job guaranteed to fail
+    local = [m["file"]["mod"]["name"] or str(m["fileId"]) for m in modfiles if m["file"]["mod"]["modId"] <= 0]
+    if local:
+        shown = ", ".join(local[:3]) + ("…" if len(local) > 3 else "")
+        return JSONResponse(
+            {"error": f"cannot redownload local/non-Nexus import(s) — no Nexus source: {shown}"},
+            status_code=400,
+        )
     err = engine.start_download(modfiles, file_ids)
     if err:
         return JSONResponse({"error": err}, status_code=409)
@@ -303,6 +312,12 @@ async def sort_mods(request: Request):
     frozen = _order_frozen("sorting")
     if frozen:
         return frozen
+    # the heuristic pass is synchronous (no jobs.start guard of its own): a
+    # re-sort under a live refine/enforce/rename would rewrite the table the
+    # running job snapshotted, so it defers to any registered job
+    running = jobs.busy()
+    if running:
+        return JSONResponse({"error": f"a {running} job is running — wait for it to finish first"}, status_code=409)
     n = await run_in_threadpool(order_store.heuristic_sort)
     if (body or {}).get("llm"):
         err = llm_refine.start_llm_refine((body or {}).get("model") or "haiku")

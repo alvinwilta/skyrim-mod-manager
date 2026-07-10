@@ -12,13 +12,19 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-from . import collection_rules, conflicts, db, jobs, mo2, nexus
+from . import collection_rules, conflicts, db, jobs, mo2, nexus, order_store
 from .config import DOWNLOADS_DIR, GAME, MAX_WORKERS
 
 log = logging.getLogger(__name__)
 
 state = {"phase": "idle", "files": [], "error": None, "running": False}
 _job_lock = threading.Lock()
+jobs.register("download", state)
+
+# signed CDN urls expire after ~4h; on free-tier bandwidth a large batch
+# outlives them, so the transfer runs in rounds: entries whose link expired
+# mid-batch get a fresh link next round (Range-resume picks up the partial)
+_LINK_ROUNDS = 4
 
 
 def sanitize(name):
@@ -82,6 +88,10 @@ def _progress_entry(modfile):
         "size": int(f.get("sizeInBytes") or 0),
         "got": 0,
         "status": "pending",
+        # pre-seeded: a worker thread setting a NEW dict key while /api/state
+        # or the SSE loop iterates this dict raises "dictionary changed size
+        # during iteration" — overwriting an existing key is safe
+        "filename": None,
         "meta": {
             "mod_id": mod["modId"],
             "file_id": f["fileId"],
@@ -98,25 +108,14 @@ def _progress_entry(modfile):
     }
 
 
-def run_job(modfiles, file_ids, collection_id=None):
-    """Synchronous download pipeline. Returns {'done': n, 'failed': n}."""
-    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
-
-    wanted = set(file_ids)
-    selected = [m for m in modfiles if m["file"]["fileId"] in wanted]
-    progress = {e["name"]: e for e in (_progress_entry(m) for m in selected)}
-    state["files"] = list(progress.values())
-
-    state["phase"] = "Generating download links"
+def _generate_links(modfiles, progress):
+    """Link-generation phase for one round: returns (url, filename, entry)
+    tasks for every entry that got a url; the rest are marked failed."""
     tasks = []
-    if not selected:
-        state["phase"] = "Finished"
-        return {"done": 0, "failed": 0}
-
-    first = selected[0]["file"]["mod"]
+    first = modfiles[0]["file"]["mod"]
     anchor_domain = (first.get("game") or {}).get("domainName") or "skyrimspecialedition"
     with nexus.LinkGenerator(anchor_domain, first["modId"]) as links:
-        for m in selected:
+        for m in modfiles:
             entry = progress[base_for(m)]
             meta = entry["meta"]
             entry["status"] = "url"
@@ -132,24 +131,72 @@ def run_job(modfiles, file_ids, collection_id=None):
                 continue
             entry["status"] = "queued"
             tasks.append((url, nexus.filename_for(url, entry["name"]), entry))
+    return tasks
 
-    state["phase"] = "Downloading"
+
+def run_job(modfiles, file_ids, collection_id=None):
+    """Synchronous download pipeline. Returns {'done': n, 'failed': n}."""
+    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+    wanted = set(file_ids)
+    selected = [m for m in modfiles if m["file"]["fileId"] in wanted]
+    progress = {e["name"]: e for e in (_progress_entry(m) for m in selected)}
+    state["files"] = list(progress.values())
+
+    if not selected:
+        state["phase"] = "Finished"
+        return {"done": 0, "failed": 0}
+
     session = requests.Session()
 
     def work(task):
         url, filename, entry = task
         entry["status"] = "downloading"
-        ok = nexus.retry(nexus.fetch_file, session, url, filename, entry)
+        try:
+            ok = nexus.retry(nexus.fetch_file, session, url, filename, entry,
+                             fatal=(nexus.LinkExpired,))
+        except nexus.LinkExpired:
+            entry["status"] = "expired"  # next round regenerates and resumes
+            log.info("expired link for %s — will regenerate", filename)
+            return
         entry["status"] = "done" if ok else "failed"
         if ok:
             entry["filename"] = filename  # the exact on-disk name, for record_downloads
-            mo2.write_meta(filename, entry["meta"])
+            try:
+                mo2.write_meta(filename, entry["meta"])
+            except OSError as e:
+                log.warning("could not write .meta for %s: %s", filename, e)
         log.info("%s: %s", entry["status"], filename)
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        list(ex.map(work, tasks))
-
-    db.record_downloads(progress.values())
+    remaining = selected
+    try:
+        for round_no in range(_LINK_ROUNDS):
+            state["phase"] = ("Generating download links" if round_no == 0
+                              else f"Refreshing {len(remaining)} expired link(s)")
+            tasks = _generate_links(remaining, progress)
+            if tasks:
+                state["phase"] = "Downloading"
+                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                    list(ex.map(work, tasks))
+            remaining = [m for m in remaining if progress[base_for(m)]["status"] == "expired"]
+            if not remaining:
+                break
+        for m in remaining:  # rounds exhausted with links still expiring
+            progress[base_for(m)]["status"] = "failed"
+    finally:
+        # one worker raising (e.g. disk full mid-batch) must not discard the
+        # records of every file that DID complete
+        db.record_downloads(progress.values())
+        # park brand-new mods at the very END of the install order (Unsorted,
+        # installed last = top of the overwrite stack) — appending shifts
+        # nothing, so a refine running right now is completely undisturbed
+        done_ids = [e["meta"]["mod_id"] for e in progress.values() if e["status"] == "done"]
+        try:
+            parked = order_store.park_new_at_end(done_ids)
+            if parked:
+                log.info("parked %d new mod(s) at the end of the install order", parked)
+        except Exception as e:
+            log.warning("could not park new mods: %s", e)
 
     if collection_id is not None:
         entries = [
@@ -335,4 +382,5 @@ def start_download(modfiles, file_ids, collection_id=None):
     def work():
         run_job(modfiles, file_ids, collection_id=collection_id)  # maintains its own phase
 
-    return jobs.start(_job_lock, state, "a download job is already running", work)
+    return jobs.start(_job_lock, state, "a download job is already running", work,
+                      exclusive_as="download")

@@ -260,15 +260,18 @@ def list_collections():
     provenance tracking, just whether its ordering rules are applied."""
     order_placeholders = ",".join("?" * len(ORDER_RULE_TYPES))
     with connect() as conn:
+        # correlated subqueries, not joins: joining mods x rules multiplies to
+        # (mod_count x rule_count) intermediate rows per collection before the
+        # COUNT(DISTINCT) dedups — millions of rows scanned per /api/collections
+        # hit on a big collection
         rows = conn.execute(
             "SELECT c.id, c.slug, c.name, c.revision_number, c.enabled,"
-            " COUNT(DISTINCT mc.file_id) AS mod_count,"
-            " COUNT(DISTINCT CASE WHEN m.status = 'ok' THEN mc.file_id END) AS downloaded_count,"
-            f" COUNT(DISTINCT CASE WHEN r.type IN ({order_placeholders}) THEN r.rowid END) AS rule_count"
-            " FROM collections c LEFT JOIN mod_collections mc ON mc.collection_id = c.id"
-            " LEFT JOIN mods m ON m.file_id = mc.file_id"
-            " LEFT JOIN collection_mod_rules r ON r.collection_id = c.id"
-            " GROUP BY c.id ORDER BY c.name COLLATE NOCASE",
+            " (SELECT COUNT(*) FROM mod_collections mc WHERE mc.collection_id = c.id) AS mod_count,"
+            " (SELECT COUNT(*) FROM mod_collections mc JOIN mods m ON m.file_id = mc.file_id"
+            "   AND m.status = 'ok' WHERE mc.collection_id = c.id) AS downloaded_count,"
+            f" (SELECT COUNT(*) FROM collection_mod_rules r WHERE r.collection_id = c.id"
+            f"   AND r.type IN ({order_placeholders})) AS rule_count"
+            " FROM collections c ORDER BY c.name COLLATE NOCASE",
             ORDER_RULE_TYPES,
         ).fetchall()
     out = [dict(r) for r in rows]

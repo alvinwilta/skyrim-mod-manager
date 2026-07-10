@@ -24,13 +24,14 @@ import os
 import threading
 import time
 
-from . import conflicts, db, jobs, mo2, nexus
+from . import conflicts, db, jobs, mo2, nexus, order_store
 from .config import DOWNLOADS_DIR, GAME
 
 log = logging.getLogger(__name__)
 
 state = {"phase": "idle", "running": False, "error": None, "adopted": 0, "non_nexus": 0, "skipped": 0}
 _lock = threading.Lock()
+jobs.register("import", state)
 
 ARCHIVE_EXTS = {".7z", ".zip", ".rar", ".7zip"}
 
@@ -126,6 +127,7 @@ def scan():
         known_ids = {r["file_id"] for r in conn.execute("SELECT file_id FROM mods")}
 
     adopted = non_nexus = 0
+    adopted_ids = []
     for i, filename in enumerate(archives):
         if filename in known_names:
             continue
@@ -135,12 +137,19 @@ def scan():
             continue
         _insert(row)
         known_ids.add(row["file_id"])
+        adopted_ids.append(row["mod_id"])
         adopted += 1
         non_nexus += 1 if row["non_nexus"] else 0
 
     state["adopted"], state["non_nexus"] = adopted, non_nexus
     state["skipped"] = len(archives) - adopted
     if adopted:
+        # same rule as downloads: new arrivals park Unsorted at the very end
+        # of the order (top of the overwrite stack) until the next Sort/Refine
+        try:
+            order_store.park_new_at_end(adopted_ids)
+        except Exception as e:
+            log.warning("could not park adopted mods: %s", e)
         # scan first: classify_file_types only reads rows with files_scanned=1
         conflicts.scan()
         conflicts.classify_file_types()
@@ -171,5 +180,9 @@ def start_scan():
         n, nn = scan()
         return f"Adopted {n} file(s)" + (f" ({nn} non-Nexus)" if nn else "") if n else "Nothing new to import"
 
+    # exclusive: adopting mid-download would record a partial archive as a
+    # healthy synthetic-id mod and write a non-Nexus .meta the finishing
+    # download then refuses to overwrite (two rows, one file, wrong .meta)
     return jobs.start(_lock, state, "an import is already running", work,
-                      init={"adopted": 0, "non_nexus": 0, "skipped": 0})
+                      init={"adopted": 0, "non_nexus": 0, "skipped": 0},
+                      exclusive_as="import")

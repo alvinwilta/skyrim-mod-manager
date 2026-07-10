@@ -11,6 +11,7 @@ const ICON: Record<string, [string, string, string]> = {
   done: ['✓', 'c-green', ''],
   skipped: ['✓', 'c-dim', ''],
   failed: ['✗', 'c-red', ''],
+  expired: ['⟳', 'c-amber', ''], // link expired mid-batch; refreshed next round
 }
 
 export const ProgressRow = memo(function ProgressRow({ file, index }: { file: DlFile; index: number }) {

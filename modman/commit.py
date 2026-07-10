@@ -35,13 +35,14 @@ import logging
 import os
 import threading
 
-from . import db, engine, importlocal, jobs, mo2, order_store
+from . import db, jobs, mo2, order_store
 from .config import DOWNLOADS_DIR
 
 log = logging.getLogger(__name__)
 
 state = {"phase": "idle", "running": False, "error": None, "committed": False, "hidden": False}
 _lock = threading.Lock()
+jobs.register("file-rename", state)
 
 FLAG_KEY = "install_committed"
 HIDE_KEY = "hide_installed"
@@ -164,15 +165,28 @@ def commit():
 
 def uncommit():
     """Rename every prefixed archive back to its orig_filename. Rolls back on
-    any failure. Clears the flag on full success. Returns the number restored."""
+    any failure. Clears the flag on full success. Returns the number restored.
+
+    A prefixed file missing on disk (deleted out-of-band while committed) is
+    skipped like commit skips them: the row's name is restored db-side so the
+    revert can finish instead of wedging the whole app in committed state —
+    the file is gone either way, and validate will flag the row missing."""
     with db.connect() as conn:
         rows = conn.execute(
             "SELECT file_id, filename, orig_filename FROM mods WHERE orig_filename IS NOT NULL"
         ).fetchall()
         done = []
+        skipped = 0
         try:
             for r in rows:
                 new, old = r["filename"], r["orig_filename"]
+                if not os.path.isfile(os.path.join(DOWNLOADS_DIR, new)):
+                    conn.execute(
+                        "UPDATE mods SET filename = ?, orig_filename = NULL WHERE file_id = ?", (old, r["file_id"])
+                    )
+                    conn.commit()
+                    skipped += 1
+                    continue
                 _rename(new, old)
                 conn.execute(
                     "UPDATE mods SET filename = ?, orig_filename = NULL WHERE file_id = ?", (old, r["file_id"])
@@ -181,6 +195,8 @@ def uncommit():
                 done.append((r["file_id"], new, old))
             _set_meta(conn, FLAG_KEY, "0")
             conn.commit()
+            if skipped:
+                log.warning("uncommit: %d file(s) missing on disk — db rows restored, nothing to rename", skipped)
         except Exception:
             log.exception("uncommit failed after %d rename(s); rolling back", len(done))
             for fid, new, old in reversed(done):
@@ -275,13 +291,9 @@ def set_hidden(enable):
 def _run(fn, busy, done):
     # renaming under a live downloads-dir writer corrupts both sides: the
     # writer's open fd keeps filling the renamed file while the db row is
-    # repointed, so refuse to start while either job runs (they in turn
-    # refuse to start while committed/renaming — see webapp's guards)
-    if engine.state.get("running"):
-        return "a download job is running — wait for it to finish first"
-    if importlocal.state.get("running"):
-        return "an import is running — wait for it to finish first"
-
+    # repointed — and renaming under a live refine desyncs the frozen prefix
+    # order from the still-moving ranks. exclusive_as covers every registered
+    # job (download, import, sort refine, rule enforcement) under one guard.
     def work():
         n = fn()
         return f"{done} {n} file(s)" if n else "Nothing to rename"
@@ -290,6 +302,7 @@ def _run(fn, busy, done):
         _lock, state, "a rename job is already running", work,
         init={"phase": busy},
         finalize=lambda: state.update(committed=is_committed(), hidden=is_hidden()),
+        exclusive_as="file-rename",
     )
 
 

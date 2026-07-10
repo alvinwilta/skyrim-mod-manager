@@ -69,20 +69,35 @@ def write_meta(filename, meta):
     )
 
 
+# meta path -> (mtime_ns, installed): /api/mods and load_order call
+# is_installed once per row per request — without this that's one file open
+# per mod every time. MO2 rewrites the .meta when install state changes, so
+# mtime is an exact invalidation key. One entry per archive, stays small.
+_installed_cache = {}
+
+
 def is_installed(filename):
     if not filename:
         return False
     path = meta_path(filename)
-    if not os.path.isfile(path):
+    try:
+        mtime = os.stat(path).st_mtime_ns
+    except OSError:
         return False
+    hit = _installed_cache.get(path)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+    installed = False
     try:
         with open(path, errors="ignore") as f:
             for line in f:
                 if line.strip().lower().startswith("installed="):
-                    return line.split("=", 1)[1].strip().lower() == "true"
+                    installed = line.split("=", 1)[1].strip().lower() == "true"
+                    break
     except OSError:
-        pass
-    return False
+        return False
+    _installed_cache[path] = (mtime, installed)
+    return installed
 
 
 def remove_meta(filename):

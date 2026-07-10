@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { TabNav, type TabId } from './components/TabNav'
-import { EventsProvider, useEvents } from './events/EventsProvider'
+import { EventsProvider, useActivity } from './events/EventsProvider'
 import { CollectionsTab } from './tabs/collections/CollectionsTab'
 import { GuideTab } from './tabs/guide/GuideTab'
 import { ImportTab } from './tabs/import/ImportTab'
@@ -10,11 +10,11 @@ import { ProgressTab } from './tabs/progress/ProgressTab'
 
 function Shell() {
   const [tab, setTab] = useState<TabId>('library')
-  const { dl, sort } = useEvents()
+  const { downloading, sorting } = useActivity()
 
   return (
     <>
-      <TabNav active={tab} onSelect={setTab} downloading={dl.running} sorting={sort.running} />
+      <TabNav active={tab} onSelect={setTab} downloading={downloading} sorting={sorting} />
       <main>
         {tab === 'library' && <LibraryTab onGoToProgress={() => setTab('progress')} />}
         {tab === 'order' && <OrderTab />}

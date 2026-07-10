@@ -5,10 +5,17 @@ order separately; this is the MO2 left-panel *install* order (file
 conflicts)."""
 
 import json
+import threading
 
 from . import buckets, db, mo2
 
 BUCKETS = buckets.BUCKETS
+
+# Serializes every multi-statement rank rewrite (sort, corrections, move,
+# park). Sqlite serializes single statements, not whole rewrites — a refine
+# applying corrections while a finished download parks its new mods would
+# otherwise interleave rank UPDATEs into a garbled order.
+_rank_lock = threading.Lock()
 
 
 def _write_ranks(conn, unlocked_ids):
@@ -21,12 +28,16 @@ def _write_ranks(conn, unlocked_ids):
     total = len(unlocked_ids) + len(locked)
     slots = [None] * total
     for r in locked:
-        i = min(r["rank"] or 0, total - 1)
+        # NULL rank (locked before ever being ranked) pins to the END, not
+        # slot 0: last installed = overwrites, the safe default — and it
+        # matches where load_order displays a rankless mod (bottom)
+        want = r["rank"] if r["rank"] is not None else total - 1
+        i = min(want, total - 1)
         while i < total and slots[i] is not None:  # collision: next free slot downward
             i += 1
         if i == total:  # nothing free below: take the nearest free slot upward
             # (never wrap to 0 — a mod locked at the bottom must not jump to the top)
-            i = min(r["rank"] or 0, total - 1)
+            i = min(want, total - 1)
             while slots[i] is not None:
                 i -= 1
         slots[i] = r["mod_id"]
@@ -54,7 +65,7 @@ def _upsert_sort(conn, mod_id, bucket=None, flags=None, expected=True):
 def heuristic_sort():
     """Bucket every unlocked ok mod and rank alphabetically within buckets;
     locked mods keep their bucket and pinned position."""
-    with db.connect() as conn:
+    with _rank_lock, db.connect() as conn:
         rows = conn.execute(
             "SELECT m.mod_id, m.mod_name, m.category FROM mods m"
             " LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
@@ -82,7 +93,15 @@ def _place_in_bucket(conn, mod_id, bucket):
     """Reposition a single already-tracked mod so its rank matches a new
     bucket assignment, without disturbing anyone else's order -- used when a
     later pass corrects an earlier bucket guess. Reuses _write_ranks so
-    locked mods keep their pinned slots."""
+    locked mods keep their pinned slots.
+
+    The list may NOT be bucket-sorted (manual moves scramble it; parked
+    unsorted arrivals sit at the end with no bucket), so the insertion point
+    is found by scanning actual positions, never by counting bucket sizes:
+    join the end of the target bucket's own run wherever it actually is;
+    else after the last smaller-bucket mod; else before the first
+    larger-bucket mod. Bucket-less mods are invisible to all three rules, so
+    a correction can never land inside the parked block."""
     rows = conn.execute(
         "SELECT m.mod_id, s.bucket FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
         " WHERE m.status = 'ok' AND m.mod_id != ? AND COALESCE(s.locked, 0) = 0"
@@ -90,7 +109,21 @@ def _place_in_bucket(conn, mod_id, bucket):
         (mod_id,),
     ).fetchall()
     ids = [r["mod_id"] for r in rows]
-    pos = sum(1 for r in rows if (r["bucket"] if r["bucket"] is not None else 999) <= bucket)
+    pos = None
+    for i, r in enumerate(rows):  # end of the target bucket's own run
+        if r["bucket"] == bucket:
+            pos = i + 1
+    if pos is None:
+        for i, r in enumerate(rows):  # after the last smaller bucket
+            if r["bucket"] is not None and r["bucket"] < bucket:
+                pos = i + 1
+    if pos is None:
+        for i, r in enumerate(rows):  # before the first larger bucket
+            if r["bucket"] is not None and r["bucket"] > bucket:
+                pos = i
+                break
+    if pos is None:
+        pos = len(ids)
     ids.insert(pos, mod_id)
     _write_ranks(conn, ids)
 
@@ -102,6 +135,11 @@ def apply_corrections(conn, corrections):
     was. Shared by the bulk refine and the description-refine passes so
     both are "apply a sparse correction list," not two divergent appliers.
     Ignores a repeated mod_id after its first occurrence."""
+    with _rank_lock:
+        _apply_corrections_locked(conn, corrections)
+
+
+def _apply_corrections_locked(conn, corrections):
     seen = set()
     for item in corrections:
         mod_id = item["id"]
@@ -198,6 +236,63 @@ def load_order():
     return {"buckets": BUCKETS, "mods": mods, "notes": notes}
 
 
+def order_positions():
+    """Minimal ordered view for precedence.enforce()'s move loop: id, name,
+    locked only. Deliberately skips load_order()'s per-mod .meta reads
+    (`installed`), which enforce never uses — it reloads after every move."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT m.mod_id, m.mod_name, s.locked AS sort_locked"
+            " FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
+            " WHERE m.status = 'ok' GROUP BY m.mod_id"
+            " ORDER BY s.rank IS NULL, s.rank, s.bucket, m.mod_name COLLATE NOCASE"
+        ).fetchall()
+    return [
+        {"mod_id": r["mod_id"], "mod_name": r["mod_name"], "locked": bool(r["sort_locked"])}
+        for r in rows
+    ]
+
+
+def park_new_at_end(mod_ids):
+    """Append brand-new mods (no ranked mod_sort row yet — redownloads keep
+    their place) at the very END of the install order: installed last =
+    overwrites everything above ("top of the stack"). Appending shifts
+    nothing — locked pins and every other rank stay exactly where they are,
+    which is what makes this safe to run while a refine is mid-flight (the
+    refine's corrections only touch mods from its own snapshot anyway).
+    No bucket is assigned — the arrivals show as Unsorted at the bottom
+    until the next Sort/Refine buckets them. Returns count parked."""
+    if not mod_ids:
+        return 0
+    with _rank_lock, db.connect() as conn:
+        placeholders = ",".join("?" * len(mod_ids))
+        ranked = {
+            r["mod_id"]
+            for r in conn.execute(
+                f"SELECT mod_id FROM mod_sort WHERE rank IS NOT NULL AND mod_id IN ({placeholders})", mod_ids
+            )
+        }
+        new, seen = [], set()
+        for mid in mod_ids:
+            if mid not in ranked and mid not in seen:
+                seen.add(mid)
+                new.append(mid)
+        if not new:
+            return 0
+        top = conn.execute(
+            "SELECT MAX(rank) AS r FROM mod_sort WHERE rank IS NOT NULL"
+            " AND mod_id IN (SELECT mod_id FROM mods WHERE status = 'ok')"
+        ).fetchone()["r"]
+        at = (top + 1) if top is not None else 0
+        for i, mid in enumerate(new):
+            conn.execute(
+                "INSERT INTO mod_sort (mod_id, rank) VALUES (?, ?)"
+                " ON CONFLICT(mod_id) DO UPDATE SET rank = excluded.rank",
+                (mid, at + i),
+            )
+        return len(new)
+
+
 def move(mod_ids, position):
     """Move one or several mods (as a block, keeping their relative order) to
     a 1-based position in the global order, shifting the rest. Moved mods
@@ -206,7 +301,7 @@ def move(mod_ids, position):
     which is what check_order compares against."""
     if isinstance(mod_ids, int):
         mod_ids = [mod_ids]
-    with db.connect() as conn:
+    with _rank_lock, db.connect() as conn:
         rows = conn.execute(
             "SELECT m.mod_id, s.bucket FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
             " WHERE m.status = 'ok' GROUP BY m.mod_id"

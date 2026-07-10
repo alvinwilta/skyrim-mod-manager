@@ -172,7 +172,9 @@ export interface JobState {
   job?: string
 }
 
-export type DlFileStatus = 'pending' | 'url' | 'queued' | 'downloading' | 'done' | 'skipped' | 'failed'
+// 'expired': signed CDN url outlived its ~4h window mid-batch — the backend
+// regenerates the link next round and resumes; transient, not a failure
+export type DlFileStatus = 'pending' | 'url' | 'queued' | 'downloading' | 'done' | 'skipped' | 'failed' | 'expired'
 
 /** One entry of engine.state.files */
 export interface DlFile {
