@@ -325,6 +325,15 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     [data],
   )
 
+  // The drift result lives only in this session (WRONG SPOT is computed, not
+  // stored) — clearing it un-highlights everything until the next check.
+  const clearDrift = useCallback(() => {
+    setWrongById(new Map())
+    setDriftMsg('cleared — run Check for drift to re-check')
+  }, [])
+
+  const clearJustChanged = useCallback(() => setJustChanged(new Set()), [])
+
   const checkMo2 = useCallback(async () => {
     setMo2Msg('reading MO2 install state…')
     try {
@@ -380,5 +389,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     runCommit,
     runUncommit,
     checkDrift,
+    clearDrift,
+    clearJustChanged,
   }
 }

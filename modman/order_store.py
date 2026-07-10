@@ -141,6 +141,31 @@ def set_lock(mod_ids, locked):
     return None
 
 
+# Flag kinds stored in mod_sort.flags that a user may clear from the UI.
+# WRONG SPOT / MO2 ORDER are not here: those are computed live by the drift
+# and MO2 checks, never persisted as flags.
+CLEARABLE_FLAG_KINDS = ("CONFLICT", "DUPLICATE", "MOVED", "UNCERTAIN")
+
+
+def clear_flags(kinds):
+    """Strip all flags of the given kinds (prefixes from CLEARABLE_FLAG_KINDS)
+    from every mod_sort row. Returns (cleared_mod_count, error-or-None)."""
+    bad = [k for k in kinds if k not in CLEARABLE_FLAG_KINDS]
+    if bad or not kinds:
+        return 0, f"kinds must be a non-empty subset of {list(CLEARABLE_FLAG_KINDS)}"
+    prefixes = tuple(kinds)
+    cleared = 0
+    with db.connect() as conn:
+        rows = conn.execute("SELECT mod_id, flags FROM mod_sort WHERE flags IS NOT NULL AND flags != ''").fetchall()
+        for r in rows:
+            flags = [f for f in r["flags"].split(",") if f]
+            kept = [f for f in flags if not f.startswith(prefixes)]
+            if len(kept) != len(flags):
+                conn.execute("UPDATE mod_sort SET flags = ? WHERE mod_id = ?", (",".join(kept), r["mod_id"]))
+                cleared += 1
+    return cleared, None
+
+
 def load_order():
     """Ordered library for the Load Order tab. One row per mod; a mod counts
     as installed when any of its archives is installed in MO2."""

@@ -107,6 +107,9 @@ tr.dropmark td { border-top: 2px solid var(--blue); }
 .chip:not(.on) { text-decoration: line-through; opacity: .6; }
 .chip.on { border-color: transparent; }
 .chip:hover { opacity: 1; }
+.chipgroup { display: inline-flex; align-items: center; gap: 2px; }
+.chip.chip-clear { padding: 3px 7px; text-decoration: none; opacity: .6; }
+.chip.chip-clear:hover { color: var(--red); border-color: var(--red); opacity: 1; }
 #summary { color: var(--dim); font-size: 13px; }
 
 /* progress view (same look as the old dashboard) */

@@ -19,7 +19,7 @@ import { type VisibleRow } from './lib/runs'
 import { OrderRow } from './OrderRow'
 import { OrderToolbar } from './OrderToolbar'
 import { HighlightBar } from './HighlightBar'
-import { ALL_HIGHLIGHTS_ON, flagCategory, type HighlightKey } from './lib/highlights'
+import { ALL_HIGHLIGHTS_ON, CLEARABLE_FLAG_KIND, flagCategory, type HighlightKey } from './lib/highlights'
 import { SelectionToolbar } from './SelectionToolbar'
 import { Subtabs } from './subtabs/Subtabs'
 import { ConflictsView } from './subtabs/ConflictsView'
@@ -81,6 +81,24 @@ export function OrderTab() {
   )
 
   const toggleHl = (key: HighlightKey) => setHl((h) => ({ ...h, [key]: !h[key] }))
+
+  // × on a chip: drift is session state (just reset the check result); the
+  // rest are stored mod_sort flags — strip them in the db, then reload.
+  const clearHl = async (key: HighlightKey) => {
+    const kind = CLEARABLE_FLAG_KIND[key]
+    if (!kind) {
+      jobs.clearDrift()
+      return
+    }
+    try {
+      const r = await api.orderClearFlags([kind])
+      jobs.setMsg(`cleared ${kind} tags from ${r.cleared} mod(s)`)
+      if (key === 'moved') jobs.clearJustChanged()
+      await data.reload()
+    } catch (e) {
+      jobs.setMsg(errText(e))
+    }
+  }
 
   // Committed = files renamed on disk with install-order prefixes. Freezes every
   // reordering surface (like refining does) so nothing renumbers under the
@@ -351,6 +369,7 @@ export function OrderTab() {
         hl={hl}
         counts={hlCounts}
         onToggle={toggleHl}
+        onClear={(k) => void clearHl(k)}
         showLocked={showLocked}
         onToggleLocked={() => setShowLocked((v) => !v)}
         lockedCount={lockedCount}

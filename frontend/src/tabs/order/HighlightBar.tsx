@@ -4,6 +4,7 @@ interface Props {
   hl: Highlights
   counts: Record<HighlightKey, number>
   onToggle: (key: HighlightKey) => void
+  onClear: (key: HighlightKey) => void
   showLocked: boolean
   onToggleLocked: () => void
   lockedCount: number
@@ -24,7 +25,7 @@ function Chip({ on, color, bg, label, title, onClick }: { on: boolean; color: st
   )
 }
 
-export function HighlightBar({ hl, counts, onToggle, showLocked, onToggleLocked, lockedCount }: Props) {
+export function HighlightBar({ hl, counts, onToggle, onClear, showLocked, onToggleLocked, lockedCount }: Props) {
   return (
     <div className="hlbar">
       <span className="dim" style={{ fontSize: 12 }}>
@@ -39,15 +40,31 @@ export function HighlightBar({ hl, counts, onToggle, showLocked, onToggleLocked,
         onClick={onToggleLocked}
       />
       {HIGHLIGHT_CHIPS.map((c) => (
-        <Chip
-          key={c.key}
-          on={hl[c.key]}
-          color={c.color}
-          bg={c.bg}
-          label={`${c.label} (${counts[c.key]})`}
-          title={c.title}
-          onClick={() => onToggle(c.key)}
-        />
+        <span key={c.key} className="chipgroup">
+          <Chip
+            on={hl[c.key]}
+            color={c.color}
+            bg={c.bg}
+            label={`${c.label} (${counts[c.key]})`}
+            title={c.title}
+            onClick={() => onToggle(c.key)}
+          />
+          {counts[c.key] > 0 && (
+            <button
+              type="button"
+              className="chip chip-clear"
+              title={
+                c.key === 'drift'
+                  ? 'Clear this drift check result (run Check for drift again to re-flag)'
+                  : `Clear all ${c.label.toLowerCase()} tags permanently — the next Sort/Refine re-adds any that still apply`
+              }
+              aria-label={`clear ${c.label.toLowerCase()} tags`}
+              onClick={() => onClear(c.key)}
+            >
+              ×
+            </button>
+          )}
+        </span>
       ))}
     </div>
   )

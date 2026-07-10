@@ -16,9 +16,13 @@ export function FlagBadge({
   buckets: Record<string, string>
 }) {
   const { label, hint, severity } = parseFlag(flag, names, buckets)
+  // trailing space: badges are nowrap spans, and JSX .map() emits no whitespace
+  // between siblings — without it a long badge run is one unbreakable line
   return (
-    <span className="badge" style={STYLE[severity]} title={hint}>
-      {label}
-    </span>
+    <>
+      <span className="badge" style={STYLE[severity]} title={hint}>
+        {label}
+      </span>{' '}
+    </>
   )
 }

@@ -4,7 +4,11 @@ import { CSS } from '@dnd-kit/utilities'
 import type { OrderMod } from '../../api/types'
 import { FlagBadge } from './FlagBadges'
 import { GroupBadge } from './GroupBadge'
+import { parseFlag } from './lib/flags'
 import { flagCategory, type Highlights } from './lib/highlights'
+
+/** Max flag badges shown inline per row; the rest collapse into a "+N more" badge. */
+const MAX_FLAG_BADGES = 3
 
 interface Props {
   mod: OrderMod
@@ -132,9 +136,23 @@ const RowCells = memo(function RowCells({
           </span>
         )}
         {mod.mod_name}{' '}
-        {shownFlags.map((f) => (
+        {shownFlags.slice(0, MAX_FLAG_BADGES).map((f) => (
           <FlagBadge key={f} flag={f} names={names} buckets={buckets} />
         ))}
+        {shownFlags.length > MAX_FLAG_BADGES && (
+          <>
+            <span
+              className="badge"
+              style={{ background: '#232833', color: 'var(--dim)' }}
+              title={shownFlags
+                .slice(MAX_FLAG_BADGES)
+                .map((f) => parseFlag(f, names, buckets).label)
+                .join('\n')}
+            >
+              +{shownFlags.length - MAX_FLAG_BADGES} more
+            </span>{' '}
+          </>
+        )}
         {wrong && (
           <FlagBadge
             flag={wrongExpected != null ? `WRONG SPOT:${wrongExpected}` : 'WRONG SPOT'}

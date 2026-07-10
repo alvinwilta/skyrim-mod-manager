@@ -372,6 +372,18 @@ async def order_lock(request: Request):
     return {"mod_ids": mod_ids, "locked": locked}
 
 
+@app.post("/api/order/clear-flags")
+async def order_clear_flags(request: Request):
+    body = await request.json()
+    kinds = body.get("kinds")
+    if not isinstance(kinds, list) or not all(isinstance(k, str) for k in kinds):
+        return JSONResponse({"error": "expected {kinds: [str, ...]}"}, status_code=400)
+    cleared, err = await run_in_threadpool(order_store.clear_flags, kinds)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    return {"cleared": cleared, "kinds": kinds}
+
+
 @app.get("/api/order/check")
 def order_check():
     return order_store.check_order()

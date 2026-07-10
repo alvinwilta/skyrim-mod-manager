@@ -28,6 +28,17 @@ export function flagCategory(flag: string): HighlightKey | null {
   return null
 }
 
+/** db flag prefix each highlight clears via /api/order/clear-flags.
+ *  drift is null: WRONG SPOT is computed by the drift check, not stored —
+ *  clearing it just resets the session's check result. */
+export const CLEARABLE_FLAG_KIND: Record<HighlightKey, string | null> = {
+  conflict: 'CONFLICT',
+  duplicate: 'DUPLICATE',
+  moved: 'MOVED',
+  uncertain: 'UNCERTAIN',
+  drift: null,
+}
+
 /** Chip metadata for the highlight bar — colors mirror the badge/row tints. */
 export const HIGHLIGHT_CHIPS: { key: HighlightKey; label: string; color: string; bg: string; title: string }[] = [
   { key: 'conflict', label: 'Conflicts', color: 'var(--amber)', bg: '#3a2b12', title: 'CONFLICT tags from Refine with Claude — mods that share files' },

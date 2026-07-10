@@ -38,6 +38,8 @@ export const api = {
     post<{ moved: number[]; position: number }>('/api/order/move', { mod_ids: modIds, position }),
   orderLock: (modIds: number[], locked: boolean) =>
     post<{ mod_ids: number[]; locked: boolean }>('/api/order/lock', { mod_ids: modIds, locked }),
+  orderClearFlags: (kinds: string[]) =>
+    post<{ cleared: number; kinds: string[] }>('/api/order/clear-flags', { kinds }),
   orderCheck: () => get<OrderCheck>('/api/order/check'),
   orderMo2Check: () => get<Mo2Check>('/api/order/mo2-check'),
   orderCommit: () => post<{ started: boolean }>('/api/order/commit'),
