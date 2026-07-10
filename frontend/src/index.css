@@ -110,6 +110,18 @@ tr.dropmark td { border-top: 2px solid var(--blue); }
 .chipgroup { display: inline-flex; align-items: center; gap: 2px; }
 .chip.chip-clear { padding: 3px 7px; text-decoration: none; opacity: .6; }
 .chip.chip-clear:hover { color: var(--red); border-color: var(--red); opacity: 1; }
+/* dismissable result lists: the × button replaces the list bullet */
+ul.dismiss-list { list-style: none; margin: 6px 0 0 6px; padding-left: 0; }
+.li-x {
+  background: none; border: 0; color: var(--dim); cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 0 6px 0 2px; border-radius: 4px; opacity: .55;
+}
+.li-x:hover { color: var(--red); opacity: 1; }
+.dismiss-restore {
+  background: none; border: 0; color: var(--dim); cursor: pointer;
+  font-size: 12px; font-family: inherit; text-decoration: underline dotted; padding: 0;
+}
+.dismiss-restore:hover { color: var(--text); }
 #summary { color: var(--dim); font-size: 13px; }
 
 /* progress view (same look as the old dashboard) */

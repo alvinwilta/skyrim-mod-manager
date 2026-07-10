@@ -4,6 +4,7 @@ import { usePoller } from '../../../hooks/usePoller'
 import { useActivity } from '../../../events/EventsProvider'
 import type { ConflictsResult, MissingRequirement, Mo2Check } from '../../../api/types'
 import { snapshotBuckets, diffChanged, type BucketSnapshot } from '../lib/changeDiff'
+import { useDismissed } from './useDismissed'
 import { errText, type useOrderData } from './useOrderData'
 
 const NOT_RUN = 'Not run yet this session.'
@@ -41,6 +42,16 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const [wrongById, setWrongById] = useState<ReadonlyMap<number, number | null>>(new Map())
   const [justChanged, setJustChanged] = useState<ReadonlySet<number>>(new Set())
   const snapshot = useRef<BucketSnapshot | null>(null)
+
+  // Per-line dismissals for each result list; each producing job clears its
+  // section when it reruns, so dismissed lines stay gone until the next scan.
+  const dismissed = {
+    notes: useDismissed('notes'),
+    rules: useDismissed('rules'),
+    conflicts: useDismissed('conflicts'),
+    requirements: useDismissed('requirements'),
+    mo2: useDismissed('mo2'),
+  }
 
   const takeSnapshot = () => {
     snapshot.current = snapshotBuckets(data.mods)
@@ -121,6 +132,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
       else setBulkMsg(m)
       if (!s.running) {
         data.setRefining(false)
+        dismissed.notes.clear() // fresh refine results — dismissed notes reset
         await finishAction()
         return false
       }
@@ -138,6 +150,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
       setEnforceLog(s.log || [])
       if (!s.running) {
         setEnforcing(false)
+        dismissed.rules.clear()
         await finishAction()
         return false
       }
@@ -154,6 +167,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
       setScanMsg(s.phase + (s.error ? ' — ' + s.error : ''))
       if (!s.running) {
         setScanning(false)
+        dismissed.conflicts.clear()
         await loadConflicts()
         return false
       }
@@ -170,6 +184,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
       setReqMsg(s.phase + (s.error ? ' — ' + s.error : ''))
       if (!s.running) {
         setSyncing(false)
+        dismissed.requirements.clear()
         await loadMissing()
         return false
       }
@@ -359,8 +374,10 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
 
   const clearJustChanged = useCallback(() => setJustChanged(new Set()), [])
 
+  const dismissedMo2Clear = dismissed.mo2.clear
   const checkMo2 = useCallback(async () => {
     setMo2Msg('reading MO2 install state…')
+    dismissedMo2Clear() // every click is a fresh check
     try {
       const d = await api.orderMo2Check()
       setMo2(d)
@@ -377,7 +394,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
       setMo2(EMPTY_MO2)
       setMo2Msg(errText(e))
     }
-  }, [])
+  }, [dismissedMo2Clear])
 
   return {
     model,
@@ -418,5 +435,6 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     checkDrift,
     clearDrift,
     clearJustChanged,
+    dismissed,
   }
 }

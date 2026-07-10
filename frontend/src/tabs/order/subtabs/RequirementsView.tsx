@@ -1,19 +1,27 @@
 import type { MissingRequirement } from '../../../api/types'
+import type { Dismissed } from '../hooks/useDismissed'
+import { DismissX, RestoreDismissed } from '../Dismiss'
 
-export function RequirementsView({ msg, missing }: { msg: string; missing: MissingRequirement[] }) {
+export const requirementKey = (m: MissingRequirement) => `${m.mod_name}|${m.requires_mod_id}`
+
+export function RequirementsView({ msg, missing, d }: { msg: string; missing: MissingRequirement[]; d: Dismissed }) {
+  const shown = missing.filter((m) => !d.has(requirementKey(m)))
   return (
     <div>
-      <div className="dim">{msg}</div>
-      {missing.length > 0 && (
+      <div className="dim">
+        {msg} <RestoreDismissed d={d} />
+      </div>
+      {shown.length > 0 && (
         <div className="grp">
           <h2>
             <span className="badge" style={{ background: '#3a2b12', color: 'var(--amber)' }}>
-              Missing requirements · {missing.length}
+              Missing requirements · {shown.length}
             </span>
           </h2>
-          <ul style={{ margin: '6px 0 0 20px' }} className="dim">
-            {missing.slice(0, 30).map((m, i) => (
+          <ul className="dim dismiss-list">
+            {shown.slice(0, 30).map((m, i) => (
               <li key={i}>
+                <DismissX onDismiss={() => d.dismiss(requirementKey(m))} />
                 {m.mod_name} requires{' '}
                 <a href={m.requires_url} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
                   mod {m.requires_mod_id}
@@ -21,7 +29,7 @@ export function RequirementsView({ msg, missing }: { msg: string; missing: Missi
                 {m.notes ? ` — ${m.notes}` : ''} — not in your library
               </li>
             ))}
-            {missing.length > 30 && <li>...and {missing.length - 30} more</li>}
+            {shown.length > 30 && <li>...and {shown.length - 30} more</li>}
           </ul>
         </div>
       )}

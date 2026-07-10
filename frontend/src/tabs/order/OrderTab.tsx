@@ -22,15 +22,18 @@ import { HighlightBar } from './HighlightBar'
 import { ALL_HIGHLIGHTS_ON, CLEARABLE_FLAG_KIND, flagCategory, type HighlightKey } from './lib/highlights'
 import { SelectionToolbar } from './SelectionToolbar'
 import { Subtabs } from './subtabs/Subtabs'
-import { ConflictsView } from './subtabs/ConflictsView'
-import { RequirementsView } from './subtabs/RequirementsView'
-import { Mo2View } from './subtabs/Mo2View'
+import { ConflictsView, conflictKey } from './subtabs/ConflictsView'
+import { RequirementsView, requirementKey } from './subtabs/RequirementsView'
+import { Mo2View, mo2Key } from './subtabs/Mo2View'
+import { DismissX, RestoreDismissed } from './Dismiss'
+import type { Dismissed } from './hooks/useDismissed'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { LoadingOverlay } from '../../components/LoadingOverlay'
 
-function NotesList({ notes }: { notes: string[] }) {
-  const dupes = notes.filter((x) => x.toUpperCase().startsWith('DUPLICATE:'))
-  const rest = notes.filter((x) => !x.toUpperCase().startsWith('DUPLICATE:'))
+function NotesList({ notes, d }: { notes: string[]; d: Dismissed }) {
+  const shown = notes.filter((x) => !d.has(x))
+  const dupes = shown.filter((x) => x.toUpperCase().startsWith('DUPLICATE:'))
+  const rest = shown.filter((x) => !x.toUpperCase().startsWith('DUPLICATE:'))
   return (
     <>
       {dupes.length > 0 && (
@@ -40,9 +43,12 @@ function NotesList({ notes }: { notes: string[] }) {
               Possible duplicate mods · {dupes.length}
             </span>
           </h2>
-          <ul style={{ margin: '6px 0 0 20px' }} className="dim">
+          <ul className="dim dismiss-list">
             {dupes.map((x, i) => (
-              <li key={i}>{x.replace(/^duplicate:\s*/i, '')}</li>
+              <li key={i}>
+                <DismissX onDismiss={() => d.dismiss(x)} />
+                {x.replace(/^duplicate:\s*/i, '')}
+              </li>
             ))}
           </ul>
         </div>
@@ -54,9 +60,12 @@ function NotesList({ notes }: { notes: string[] }) {
               Conflict notes · {rest.length}
             </span>
           </h2>
-          <ul style={{ margin: '6px 0 0 20px' }} className="dim">
+          <ul className="dim dismiss-list">
             {rest.map((x, i) => (
-              <li key={i}>{x}</li>
+              <li key={i}>
+                <DismissX onDismiss={() => d.dismiss(x)} />
+                {x}
+              </li>
             ))}
           </ul>
         </div>
@@ -76,8 +85,14 @@ export function OrderTab() {
   const [confirmCommit, setConfirmCommit] = useState(false)
 
   const mo2WrongIds = useMemo(
-    () => new Set(jobs.mo2.out_of_order.map((e) => e.mod_id).filter((x): x is number => x != null)),
-    [jobs.mo2],
+    () =>
+      new Set(
+        jobs.mo2.out_of_order
+          .filter((e) => !jobs.dismissed.mo2.keys.has(mo2Key('out', e)))
+          .map((e) => e.mod_id)
+          .filter((x): x is number => x != null),
+      ),
+    [jobs.mo2, jobs.dismissed.mo2.keys],
   )
 
   const toggleHl = (key: HighlightKey) => setHl((h) => ({ ...h, [key]: !h[key] }))
@@ -237,7 +252,11 @@ export function OrderTab() {
         <Subtabs
           tabs={[
             { id: 'heuristic', label: 'Sort' },
-            { id: 'bulk', label: 'Refine with Claude', count: data.notes.length || undefined },
+            {
+              id: 'bulk',
+              label: 'Refine with Claude',
+              count: data.notes.filter((n) => !jobs.dismissed.notes.keys.has(n)).length || undefined,
+            },
             { id: 'desc', label: 'Refine uncertain' },
             { id: 'rules', label: 'Collection rules' },
           ]}
@@ -247,19 +266,28 @@ export function OrderTab() {
               {active === 'heuristic' && <div className="dim">{jobs.heuristicLog}</div>}
               {active === 'bulk' && (
                 <div>
-                  <div className="dim">{jobs.bulkMsg}</div>
-                  <NotesList notes={data.notes} />
+                  <div className="dim">
+                    {jobs.bulkMsg} <RestoreDismissed d={jobs.dismissed.notes} />
+                  </div>
+                  <NotesList notes={data.notes} d={jobs.dismissed.notes} />
                 </div>
               )}
               {active === 'desc' && <div className="dim">{jobs.descMsg}</div>}
               {active === 'rules' && (
                 <div>
-                  <div className="dim">{jobs.enforceMsg}</div>
+                  <div className="dim">
+                    {jobs.enforceMsg} <RestoreDismissed d={jobs.dismissed.rules} />
+                  </div>
                   {jobs.enforceLog.length > 0 && (
-                    <ul style={{ margin: '6px 0 0 20px' }} className="dim">
-                      {jobs.enforceLog.map((e, i) => (
-                        <li key={i}>{e}</li>
-                      ))}
+                    <ul className="dim dismiss-list">
+                      {jobs.enforceLog
+                        .filter((e) => !jobs.dismissed.rules.keys.has(e))
+                        .map((e, i) => (
+                          <li key={i}>
+                            <DismissX onDismiss={() => jobs.dismissed.rules.dismiss(e)} />
+                            {e}
+                          </li>
+                        ))}
                     </ul>
                   )}
                 </div>
@@ -351,18 +379,37 @@ export function OrderTab() {
         )}
         <Subtabs
           tabs={[
-            { id: 'conflicts', label: 'Conflicts', count: jobs.conflicts.pairs.filter((p) => !p.expected).length || undefined },
-            { id: 'requirements', label: 'Requirements', count: jobs.missing.length || undefined },
+            {
+              id: 'conflicts',
+              label: 'Conflicts',
+              count:
+                jobs.conflicts.pairs.filter((p) => !p.expected && !jobs.dismissed.conflicts.keys.has(conflictKey(p)))
+                  .length || undefined,
+            },
+            {
+              id: 'requirements',
+              label: 'Requirements',
+              count: jobs.missing.filter((m) => !jobs.dismissed.requirements.keys.has(requirementKey(m))).length || undefined,
+            },
             { id: 'drift', label: 'Check for drift', count: jobs.wrongById.size || undefined },
-            { id: 'mo2', label: 'vs MO2', count: jobs.mo2.out_of_order.length || undefined },
+            {
+              id: 'mo2',
+              label: 'vs MO2',
+              count:
+                jobs.mo2.out_of_order.filter((e) => !jobs.dismissed.mo2.keys.has(mo2Key('out', e))).length || undefined,
+            },
           ]}
         >
           {(active) => (
             <>
-              {active === 'conflicts' && <ConflictsView msg={jobs.scanMsg} pairs={jobs.conflicts.pairs} />}
-              {active === 'requirements' && <RequirementsView msg={jobs.reqMsg} missing={jobs.missing} />}
+              {active === 'conflicts' && (
+                <ConflictsView msg={jobs.scanMsg} pairs={jobs.conflicts.pairs} d={jobs.dismissed.conflicts} />
+              )}
+              {active === 'requirements' && (
+                <RequirementsView msg={jobs.reqMsg} missing={jobs.missing} d={jobs.dismissed.requirements} />
+              )}
               {active === 'drift' && <div className="dim">{jobs.driftMsg}</div>}
-              {active === 'mo2' && <Mo2View msg={jobs.mo2Msg} mo2={jobs.mo2} />}
+              {active === 'mo2' && <Mo2View msg={jobs.mo2Msg} mo2={jobs.mo2} d={jobs.dismissed.mo2} />}
             </>
           )}
         </Subtabs>
