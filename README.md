@@ -4,13 +4,12 @@ Downloads Skyrim SE mods from Nexus collections and tracks them in a local
 SQLite library. Works with a free Nexus account by generating download links
 through your own logged-in browser session.
 
-## Requirements
+## Setup
 
-- System Chromium (`pacman -S chromium`) — start it with `./browser.sh`
+- System Chromium (`pacman -S chromium`) — start with `./browser.sh`
   (dedicated profile + CDP on port 9223) and log into nexusmods.com once
 - `python -m venv .venv && .venv/bin/pip install -r requirements.txt`
-- Node 20+ for the frontend build:
-  `cd frontend && npm install && npm run build`
+- Node 20+: `cd frontend && npm install && npm run build`
 
 ## Web app
 
@@ -19,169 +18,68 @@ cd frontend && npm run build   # once, and after frontend changes
 .venv/bin/python webapp.py     # http://127.0.0.1:7788/
 ```
 
-Frontend development (Vite dev server with hot reload, proxying `/api` to the
-backend — point it at a throwaway backend with `MODMAN_BACKEND=http://127.0.0.1:7799`):
+Frontend development:
 
 ```
 cd frontend
-npm run dev     # http://localhost:5173
+npm run dev     # Vite dev server on :5173, proxies /api to the backend
 npm run check   # typecheck + unit tests + build
-npm run e2e     # Playwright suite (spawns its own backend on 7799 with a DB copy)
+npm run e2e     # Playwright suite (own backend on 7799, DB copy)
 ```
 
+## Tabs
 
-- **Library** — browse/search everything in `mods.db`; validate, redownload,
-  or delete selected files. `Import from disk` adopts archives already in the
-  downloads folder (installed straight through MO2 or from other sites) into
-  the library via their `.meta` sidecars. `Show deleted` switches to a
-  deleted-only view where Delete becomes `Purge` (permanent, unrecoverable).
+- **Library** — browse/search `mods.db`; validate, redownload, or delete
+  files. `Import from disk` adopts archives already in the downloads folder
+  via their `.meta` sidecars. `Show deleted` switches to a deleted-only view
+  where Delete becomes `Purge` (permanent).
 
   ![Library tab](img/library.png)
 
-- **Install Order** — loose MO2 left-panel install order for the library
-  (which mod's files overwrite which on disk — not plugin load order).
-  Two rows of tools:
-  - **Ordering** — changes the order. `Sort (heuristic)` classifies every
-    unlocked mod into one of the STEP SkyrimSE 2.3 guide's 20 groups
-    (name keywords first, Nexus category as fallback), instant, no AI.
-    `Refine with Claude` sends every unlocked mod plus any real scanned
-    file conflicts to Claude (model picked via the dropdown: Haiku/Sonnet/
-    Opus) and asks it to correct misfits — a safety valve rejects the whole
-    reply if it tries to reshuffle too much. `Refine uncertain` is a
-    second, smaller pass that only re-checks mods still flagged
-    `UNCERTAIN`, with each mod's real Nexus description as extra signal.
-    `Apply collection order rules` repositions only mods that violate a
-    curator-authored before/after/requires rule pulled from an imported
-    collection's own manifest. Each action's result shows in its own log
-    tab (Sort / Refine with Claude / Refine uncertain / Collection rules).
-    The Claude prompt used by the two Claude buttons is editable inline
-    (collapsible) and resettable to default.
-  - **Analysis** — read-only, changes nothing by itself. `Scan archives`
-    lists every downloaded archive's real file paths (via `7z`) and finds
-    genuine path overlaps between mods. `Sync requirements` pulls each
-    mod's real Nexus "requires" data and flags anything required but
-    missing from the library. `Check for drift` flags mods whose current
-    group disagrees with the last sorter opinion (usually means a manual
-    drag moved it). `Check vs MO2 order` (enabled only after the order is
-    committed to disk) compares the list against what MO2 actually has
-    installed and enabled on disk — reading the active profile's
-    `modlist.txt` and each installed mod's `meta.ini` — and flags mods that
-    are out of order, installed-in-MO2-but-not-listed, or listed-but-not-yet-
-    installed. Results show in Conflicts / Requirements / Check for drift /
-    vs MO2 tabs.
-
-  Reordering the table: drag the ≡ handle, or click a position number to
-  type an exact position. Select rows by clicking (Ctrl/Cmd toggles,
-  Shift ranges) or by dragging a box across rows — a sticky toolbar then
-  locks/unlocks or moves the whole selection (to a position, top, bottom,
-  or the end of a group), and dragging any selected row's handle carries
-  the block. The 🔒 button pins a mod — locked mods are skipped by every
-  sort/refine pass. Rows group under collapsible STEP-bucket headers that
-  always preserve the real rank order. When signals disagree, priority is
-  locked position > manual drag/move > collection curated rule > Claude
-  correction > heuristic guess.
-
-  Everything is persisted per mod in `mods.db` (`mod_sort` table), so
-  order, locks and flags survive restarts and file redownloads.
+- **Install Order** — MO2 left-panel install order (which mod overwrites
+  which — not plugin load order), persisted in `mods.db` so order, locks and
+  flags survive restarts. **Ordering** tools change the order:
+  `Sort (heuristic)` classifies mods into the STEP SkyrimSE 2.3 guide's 20
+  groups; `Refine with Claude` / `Refine uncertain` send mods (plus real
+  scanned file conflicts) to Claude for corrections, with an editable prompt
+  and a safety valve that rejects replies reshuffling too much; `Apply
+  collection order rules` enforces curator before/after rules from imported
+  collections. **Analysis** tools are read-only: `Scan archives` finds real
+  file-path overlaps (via `7z`), `Sync requirements` flags missing Nexus
+  dependencies, `Check for drift` flags manually-moved mods, `Check vs MO2
+  order` compares against what MO2 actually has installed. Drag rows,
+  multi-select for bulk lock/move, lock (🔒) pins a mod against every
+  sort pass. Priority when signals disagree: locked > manual move >
+  collection rule > Claude > heuristic.
 
   ![Install Order tab](img/order.png)
 
-- **Collections** — collections you've imported and which of their mods are
-  in your library, in their current real install order. Disable a
-  collection to exclude its curated ordering rules from "Apply collection
-  order rules" (Install Order tab) without losing its data.
+- **Collections** — imported collections and which of their mods are in the
+  library. Disable one to exclude its ordering rules without losing data.
 
   ![Collections tab](img/collections.png)
 
-- **Import** — paste a collection URL or a single mod page URL (fetched via
-  Nexus GraphQL), or paste/upload a `modlist.json`; diffed against the
-  library into new / updated / unchanged
+- **Import** — paste a collection URL, mod page URL, or `modlist.json`;
+  diffed against the library into new / updated / unchanged.
 
   ![Import tab](img/import.png)
 
-- **Progress** — live download dashboard
+- **Progress** — live download dashboard.
 
   ![Progress tab](img/progress.png)
 
-- **Guide** — in-app reference explaining what each tab does and how the
-  Install Order sorting actually works
+- **Guide** — in-app reference for every tab and how sorting works.
 
   ![Guide tab](img/guide.png)
 
 ## Sorter prompt
 
-The "Refine with Claude" pass sends the prompt below (the built-in default in
-`modman/llm_refine.py`, so a fresh installation works out of the box). It is
-editable in the Install Order tab — a custom version is stored in the `meta`
-table and an empty save resets to this default. Locked mods are excluded from
-the prompt and spliced back at their pinned position afterwards.
-
-```
-You are a Skyrim SE mod install order sorter for the MO2 left panel
-(top to bottom, bottom = highest priority / overwrites above). The scheme is
-the STEP SkyrimSE 2.3 guide (stepmodifications.org/wiki/SkyrimSE:2.3): mods
-are installed in the guide's group order so that each group's files overwrite
-the groups above it, and compatibility patches overwrite everything they
-patch.
-
-Groups, in install order, with what STEP puts in each:
-{{BUCKETS}}
-
-Rules:
-- A patch always goes below every mod it patches.
-- More specific mods go below general ones.
-- A mod's primary function decides its group when several could apply.
-- Keep STEP's counterintuitive placements: USSEP and base overhauls are
-  Foundation (early, meant to be overwritten); generic bug-fix mods are
-  Fixes (mid-list, after asset mods); Nemesis/DynDOLOD/LOD tools are
-  Utilities (late); ENB and particle lights are Post-Processing, below
-  Patches.
-- The Nexus category is a hint only; it is often wrong (e.g. 'Bug Fixes'
-  for SKSE plugins that belong in Extenders).
-
-Known file conflicts (ground truth: these mods' archives were actually
-inspected and share real file paths — not a guess). Use these instead of
-inventing your own; you may still flag a mod CONFLICT if you're separately
-confident of a real incompatibility, but prefer this list:
-{{CONFLICTS}}
-
-The mods below are listed under their current group heading — a heuristic
-guess. Most are already right. Each line: mod_id|mod name|nexus category.
-
-Reply with ONLY corrections — one line per mod whose group should change
-from the heading it's shown under. Do NOT list a mod that's already
-correctly placed: omitting a mod means "leave it exactly where the
-heading shows it." No prose, no code fences. Format:
-<mod_id>|<correct bucket 1-20>
-Append |<flags> only when flagged (comma-separated). Allowed flags:
-UNCERTAIN, CONFLICT:<mod_id of the mod it conflicts with>,
-DUPLICATE:<mod_id of the mod it's a duplicate of>
-Then, if any mods conflict or duplicate, a final section:
-CONFLICTS:
-<mod_id A> (<name A>) vs <mod_id B> (<name B>): <which should win and why>
-DUPLICATE: <mod_id A> (<name A>) vs <mod_id B> (<name B>): <why they're the same mod, which to keep>
-Use the DUPLICATE flag/line specifically when two entries are likely THE
-SAME mod under a different name or rerelease (e.g. "X" vs "X NG", "X SE" vs
-"X AE", "X Redux", an author's old version next to their replacement) —
-that's a real duplicate-install problem the user should resolve, not an
-install-order conflict. Use plain CONFLICT for mods that merely share files
-or don't play well together but are genuinely different mods.
-If nothing needs correcting, reply with just the CONFLICTS section, or
-nothing at all.
-
-Mods:
-{{MODS}}
-```
-
-`{{BUCKETS}}` expands to the 20 groups annotated with STEP's description of
-each (`BUCKET_HINTS` in `modman/buckets.py`); `{{CONFLICTS}}` is the real
-file-path overlaps found by "Scan archives"; `{{MODS}}` groups the mods
-under their current heuristic heading. The reply is corrections-only (not
-a full reorder) to keep it small and cheap to parse — if Claude tries to
-"correct" more than 40% of the mods shown, the whole reply is rejected as
-a safety valve (looks like a full reorder in disguise) and the existing
-order is left untouched. `modman/llm_refine.py` builds the prompt and
-parses the reply server-side.
+"Refine with Claude" uses the default prompt built into
+`modman/llm_refine.py` (STEP 2.3 group scheme, corrections-only reply
+format, UNCERTAIN/CONFLICT/DUPLICATE flags). It's editable inline in the
+Install Order tab — stored in the `meta` table, empty save resets to
+default. Locked mods are excluded and spliced back afterwards; a reply
+that tries to "correct" more than 40% of the mods is rejected outright.
 
 ## CLI
 
@@ -194,24 +92,24 @@ parses the reply server-side.
 
 ```
 modman/
-  config.py   game/paths/constants
-  db.py       sqlite library (mods.db: mods = files, mod_sort = install order)
-  nexus.py    GraphQL collection fetch, CDP link generation, file transfer
-  engine.py   diff + download pipeline, progress state
-  mo2.py      MO2 .meta interop (installed state)
-  mo2_order.py      compares the list vs MO2's real installed order (modlist.txt + meta.ini)
-  importlocal.py    adopts on-disk archives into the library via their .meta
-  buckets.py  STEP 2.3 group scheme + name/category heuristic classifier
-  order_store.py    mod_sort table CRUD, heuristic sort, locks, moves
-  llm_refine.py     claude -p bulk + uncertain-only refine passes
+  config.py         game/paths/constants
+  db.py             sqlite library (mods = files, mod_sort = install order)
+  nexus.py          GraphQL fetch, CDP link generation, file transfer
+  engine.py         diff + download pipeline, progress state
+  mo2.py            MO2 .meta interop (installed state)
+  mo2_order.py      compares the list vs MO2's real installed order
+  importlocal.py    adopts on-disk archives into the library
+  buckets.py        STEP 2.3 groups + heuristic classifier
+  order_store.py    mod_sort CRUD, heuristic sort, locks, moves
+  llm_refine.py     claude -p refine passes
   conflicts.py      real archive file-path overlap scan (7z)
-  requirements.py   real Nexus "requires" edges, missing-dependency check
-  collection_rules.py  curator before/after/requires rules from a collection manifest
-  precedence.py     applies collection_rules as a final position adjustment
+  requirements.py   Nexus "requires" edges, missing-dependency check
+  collection_rules.py  curator rules from a collection manifest
+  precedence.py     applies collection_rules as final adjustment
 webapp.py     FastAPI server + JSON API
 cli.py        command-line downloader
 browser.sh    launches the dedicated Chromium (profile + debug port)
-frontend/     React + TypeScript frontend (Vite; unit tests in src/, Playwright e2e in e2e/)
+frontend/     React + TS (Vite; unit tests in src/, Playwright e2e in e2e/)
 ```
 
 Files land in `/games/modding/downloads/`. Downloads resume on re-run;
