@@ -64,9 +64,15 @@ select {
 }
 
 table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+/* a too-wide table scrolls inside its wrapper instead of stretching the page
+   sideways (which made the centered layout look shifted) */
+.tablewrap { overflow-x: auto; }
 th { text-align: left; color: var(--dim); font-size: 11px; text-transform: uppercase;
      letter-spacing: .05em; padding: 6px 10px; border-bottom: 1px solid var(--border); }
-td { padding: 6px 10px; border-bottom: 1px solid #1c202a; }
+/* overflow-wrap: long unbreakable tokens (LSARNG_for_AE_…1130 filenames) set
+   the column's min width and push the table past the centered 1200px main;
+   .num cells are white-space:nowrap so this never touches ids/sizes/dates */
+td { padding: 6px 10px; border-bottom: 1px solid #1c202a; overflow-wrap: anywhere; }
 tr:hover td { background: #141720; }
 .dim { color: var(--dim); font-size: 12px; }
 .num { text-align: right; white-space: nowrap; }

@@ -15,18 +15,20 @@ function SourceBadges({ collections }: { collections: CollectionRef[] }) {
   const shown = collections.slice(0, 2)
   const rest = collections.slice(2)
   return (
-    <>
+    // flex-wrap: two long badge names side by side otherwise force a ~350px
+    // min column width, pushing the whole table past the centered 1200px main
+    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
       {shown.map((c) => (
         <span key={c.slug} className="badge b-same" title={c.slug}>
           {c.name || c.slug}
         </span>
-      ))}{' '}
+      ))}
       {rest.length > 0 && (
         <span className="badge b-same" title={rest.map((c) => c.name || c.slug).join(', ')}>
           +{rest.length}
         </span>
       )}
-    </>
+    </span>
   )
 }
 
@@ -239,6 +241,7 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
           </div>
         )}
       </div>
+      <div className="tablewrap">
       <table>
         <thead>
           <tr>
@@ -316,6 +319,7 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
           ))}
         </tbody>
       </table>
+      </div>
     </section>
   )
 }
