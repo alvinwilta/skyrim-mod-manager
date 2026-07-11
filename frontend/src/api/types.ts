@@ -115,8 +115,8 @@ export interface SortPrompt {
 
 /** GET /api/conflicts */
 export interface ConflictPair {
-  a: { mod_name: string }
-  b: { mod_name: string }
+  a: { mod_id: number; mod_name: string }
+  b: { mod_id: number; mod_name: string }
   paths: string[]
   expected: boolean
 }
@@ -128,6 +128,7 @@ export interface ConflictsResult {
 
 /** GET /api/requirements-missing item */
 export interface MissingRequirement {
+  mod_id: number
   mod_name: string
   requires_url: string
   requires_mod_id: number

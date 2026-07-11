@@ -97,6 +97,13 @@ tr.ordrow[draggable="false"] { cursor: default; }
 tr.r-locked td { background: #1d2a45; }
 tr.r-sel td:first-child { border-left: 3px solid var(--blue); border-radius: 4px 0 0 4px; }
 tr.dropmark td { border-top: 2px solid var(--blue); }
+/* in-page jump to a mod's row (green = stays in the app)… */
+a.modjump { color: var(--green); text-decoration: none; border-bottom: 1px dotted var(--green); }
+a.modjump:hover { color: var(--text); border-bottom-color: var(--text); }
+/* …vs blue = opens the browser (Nexus page) */
+a.extlink { color: var(--blue); }
+@keyframes rowflash { 0%, 100% { background: transparent; } 30%, 70% { background: #33421f; } }
+tr.row-flash td { animation: rowflash 0.8s ease-in-out 3; }
 .posnum { color: var(--dim); text-decoration: none; }
 .posnum:hover { color: var(--blue); text-decoration: underline; }
 .grp h2 { font-size: 14px; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }

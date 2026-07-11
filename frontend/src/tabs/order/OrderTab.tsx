@@ -1,8 +1,9 @@
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
+  MeasuringStrategy,
   PointerSensor,
   useSensor,
   useSensors,
@@ -24,13 +25,26 @@ import { SelectionToolbar } from './SelectionToolbar'
 import { Subtabs } from './subtabs/Subtabs'
 import { ConflictsView, conflictKey } from './subtabs/ConflictsView'
 import { RequirementsView, requirementKey } from './subtabs/RequirementsView'
+import { DriftView, type DriftEntry } from './subtabs/DriftView'
 import { Mo2View, mo2Key } from './subtabs/Mo2View'
+import { NoteText } from './ModJump'
+import { scrollToMod } from './lib/scrollToMod'
 import { DismissX, RestoreDismissed } from './Dismiss'
 import type { Dismissed } from './hooks/useDismissed'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { LoadingOverlay } from '../../components/LoadingOverlay'
 
-function NotesList({ notes, d }: { notes: string[]; d: Dismissed }) {
+function NotesList({
+  notes,
+  d,
+  names,
+  onJump,
+}: {
+  notes: string[]
+  d: Dismissed
+  names: ReadonlyMap<number, string>
+  onJump: (id: number) => void
+}) {
   const shown = notes.filter((x) => !d.has(x))
   const dupes = shown.filter((x) => x.toUpperCase().startsWith('DUPLICATE:'))
   const rest = shown.filter((x) => !x.toUpperCase().startsWith('DUPLICATE:'))
@@ -47,7 +61,7 @@ function NotesList({ notes, d }: { notes: string[]; d: Dismissed }) {
             {dupes.map((x, i) => (
               <li key={i}>
                 <DismissX onDismiss={() => d.dismiss(x)} />
-                {x.replace(/^duplicate:\s*/i, '')}
+                <NoteText text={x.replace(/^duplicate:\s*/i, '')} names={names} onJump={onJump} />
               </li>
             ))}
           </ul>
@@ -64,7 +78,7 @@ function NotesList({ notes, d }: { notes: string[]; d: Dismissed }) {
             {rest.map((x, i) => (
               <li key={i}>
                 <DismissX onDismiss={() => d.dismiss(x)} />
-                {x}
+                <NoteText text={x} names={names} onJump={onJump} />
               </li>
             ))}
           </ul>
@@ -97,6 +111,37 @@ export function OrderTab() {
   )
 
   const toggleHl = (key: HighlightKey) => setHl((h) => ({ ...h, [key]: !h[key] }))
+
+  // Shared by every result list (refine notes, conflicts, requirements,
+  // drift): scroll the table to the named mod; if a filter hides its row,
+  // say so instead of silently doing nothing.
+  const setMsg = jobs.setMsg
+  const jumpToMod = useCallback(
+    (id: number) => {
+      if (!scrollToMod(id)) setMsg(`mod ${id} is hidden by the current filter — clear filters to jump to it`)
+    },
+    [setMsg],
+  )
+
+  // Resolve the drift check's {mod_id → expected bucket} map against the
+  // order cache so the panel can list the drifted mods by name/position.
+  const driftEntries: DriftEntry[] = useMemo(
+    () =>
+      data.mods.flatMap((m, i) =>
+        jobs.wrongById.has(m.mod_id)
+          ? [
+              {
+                pos: i + 1,
+                mod_id: m.mod_id,
+                mod_name: m.mod_name,
+                bucket: m.bucket,
+                expected: jobs.wrongById.get(m.mod_id) ?? null,
+              },
+            ]
+          : [],
+      ),
+    [data.mods, jobs.wrongById],
+  )
 
   // × on a chip: drift is session state (just reset the check result); the
   // rest are stored mod_sort flags — strip them in the db, then reload.
@@ -160,8 +205,20 @@ export function OrderTab() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
+  // dnd-kit's default (WhileDragging) remeasures every row's rect continuously
+  // for the whole drag, in case a droppable resizes mid-drag — rows here never
+  // do, and remeasuring hundreds of <tr>s inside an auto-layout <table> (column
+  // widths depend on every row) is what causes the stutter right at pickup.
+  // Measure once at drag start instead.
+  const measuring = useMemo(() => ({ droppable: { strategy: MeasuringStrategy.BeforeDragging } }), [])
+
   const doMove = async (ids: number[], position: number) => {
     if (frozen) return
+    // Reorder the local cache first so the table's row order already matches
+    // the drop target when dnd-kit resets the dragged row's transform — the
+    // await below would otherwise leave the array stale for a network
+    // round-trip, and the row visibly snaps back to its old spot first.
+    data.reorderLocal(ids, position)
     try {
       const r = await api.orderMove(ids, position)
       jobs.setMsg(`moved ${ids.length > 1 ? ids.length + ' mods ' : ''}to #${r.position}`)
@@ -169,6 +226,7 @@ export function OrderTab() {
       await data.reload()
     } catch (e) {
       jobs.setMsg(errText(e))
+      await data.reload() // undo the optimistic reorder — the move never landed
     }
   }
 
@@ -285,7 +343,7 @@ export function OrderTab() {
                   <div className="dim">
                     {jobs.bulkMsg} <RestoreDismissed d={jobs.dismissed.notes} />
                   </div>
-                  <NotesList notes={data.notes} d={jobs.dismissed.notes} />
+                  <NotesList notes={data.notes} d={jobs.dismissed.notes} names={data.names} onJump={jumpToMod} />
                 </div>
               )}
               {active === 'desc' && <div className="dim">{jobs.descMsg}</div>}
@@ -419,12 +477,24 @@ export function OrderTab() {
           {(active) => (
             <>
               {active === 'conflicts' && (
-                <ConflictsView msg={jobs.scanMsg} pairs={jobs.conflicts.pairs} d={jobs.dismissed.conflicts} />
+                <ConflictsView
+                  msg={jobs.scanMsg}
+                  pairs={jobs.conflicts.pairs}
+                  d={jobs.dismissed.conflicts}
+                  onJump={jumpToMod}
+                />
               )}
               {active === 'requirements' && (
-                <RequirementsView msg={jobs.reqMsg} missing={jobs.missing} d={jobs.dismissed.requirements} />
+                <RequirementsView
+                  msg={jobs.reqMsg}
+                  missing={jobs.missing}
+                  d={jobs.dismissed.requirements}
+                  onJump={jumpToMod}
+                />
               )}
-              {active === 'drift' && <div className="dim">{jobs.driftMsg}</div>}
+              {active === 'drift' && (
+                <DriftView msg={jobs.driftMsg} entries={driftEntries} buckets={data.buckets} onJump={jumpToMod} />
+              )}
               {active === 'mo2' && <Mo2View msg={jobs.mo2Msg} mo2={jobs.mo2} d={jobs.dismissed.mo2} />}
             </>
           )}
@@ -488,7 +558,7 @@ export function OrderTab() {
       )}
 
       {visible.length ? (
-        <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+        <DndContext sensors={sensors} measuring={measuring} onDragStart={onDragStart} onDragEnd={onDragEnd}>
           <SortableContext items={visible.map((r) => r.mod.mod_id)} strategy={verticalListSortingStrategy}>
             <div
               onClick={(e) => {
@@ -532,7 +602,11 @@ export function OrderTab() {
             </table>
             </div>
           </SortableContext>
-          <DragOverlay>
+          {/* dropAnimation=null: the row already reflects its final position
+              (reorderLocal ran synchronously in onDragEnd/doMove) by the time
+              this unmounts, so animating the overlay back to a DOM position
+              would just be motion for its own sake. */}
+          <DragOverlay dropAnimation={null}>
             {dragId !== null && (
               <div className="dragoverlay">{blockDrag ? `${sel.selected.size} mods` : dragName}</div>
             )}

@@ -1,25 +1,44 @@
 import type { ConflictPair } from '../../../api/types'
 import type { Dismissed } from '../hooks/useDismissed'
 import { DismissX, RestoreDismissed } from '../Dismiss'
+import { ModJumpLink } from '../ModJump'
 
 /** Stable identity for a pair regardless of a/b order. */
 export const conflictKey = (p: ConflictPair) => [p.a.mod_name, p.b.mod_name].sort().join(' vs ')
 
-function ConflictList({ pairs, d }: { pairs: ConflictPair[]; d: Dismissed }) {
+function Side({ side, onJump }: { side: ConflictPair['a']; onJump: (id: number) => void }) {
+  return (
+    <>
+      <span style={{ color: 'var(--text)' }}>{side.mod_name}</span> (
+      <ModJumpLink id={side.mod_id} name={side.mod_name} onJump={onJump} />)
+    </>
+  )
+}
+
+function ConflictList({ pairs, d, onJump }: { pairs: ConflictPair[]; d: Dismissed; onJump: (id: number) => void }) {
   return (
     <ul className="dim dismiss-list">
       {pairs.map((p, i) => (
         <li key={i}>
           <DismissX onDismiss={() => d.dismiss(conflictKey(p))} />
-          <span style={{ color: 'var(--text)' }}>{p.a.mod_name}</span> vs{' '}
-          <span style={{ color: 'var(--text)' }}>{p.b.mod_name}</span>: {p.paths.length} shared file(s)
+          <Side side={p.a} onJump={onJump} /> vs <Side side={p.b} onJump={onJump} />: {p.paths.length} shared file(s)
         </li>
       ))}
     </ul>
   )
 }
 
-export function ConflictsView({ msg, pairs, d }: { msg: string; pairs: ConflictPair[]; d: Dismissed }) {
+export function ConflictsView({
+  msg,
+  pairs,
+  d,
+  onJump,
+}: {
+  msg: string
+  pairs: ConflictPair[]
+  d: Dismissed
+  onJump: (id: number) => void
+}) {
   const shown = pairs.filter((p) => !d.has(conflictKey(p)))
   const unexpected = shown.filter((p) => !p.expected)
   const expected = shown.filter((p) => p.expected)
@@ -35,7 +54,7 @@ export function ConflictsView({ msg, pairs, d }: { msg: string; pairs: ConflictP
               Real file conflicts · {unexpected.length} pair(s)
             </span>
           </summary>
-          <ConflictList pairs={unexpected} d={d} />
+          <ConflictList pairs={unexpected} d={d} onJump={onJump} />
         </details>
       )}
       {expected.length > 0 && (
@@ -43,7 +62,7 @@ export function ConflictsView({ msg, pairs, d }: { msg: string; pairs: ConflictP
           <summary className="dim" style={{ cursor: 'pointer' }}>
             Expected overwrites (Foundation/Patches) · {expected.length} pair(s)
           </summary>
-          <ConflictList pairs={expected} d={d} />
+          <ConflictList pairs={expected} d={d} onJump={onJump} />
         </details>
       )}
     </div>

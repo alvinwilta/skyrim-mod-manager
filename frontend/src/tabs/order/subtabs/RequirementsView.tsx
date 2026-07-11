@@ -1,10 +1,21 @@
 import type { MissingRequirement } from '../../../api/types'
 import type { Dismissed } from '../hooks/useDismissed'
 import { DismissX, RestoreDismissed } from '../Dismiss'
+import { ModJumpLink } from '../ModJump'
 
 export const requirementKey = (m: MissingRequirement) => `${m.mod_name}|${m.requires_mod_id}`
 
-export function RequirementsView({ msg, missing, d }: { msg: string; missing: MissingRequirement[]; d: Dismissed }) {
+export function RequirementsView({
+  msg,
+  missing,
+  d,
+  onJump,
+}: {
+  msg: string
+  missing: MissingRequirement[]
+  d: Dismissed
+  onJump: (id: number) => void
+}) {
   const shown = missing.filter((m) => !d.has(requirementKey(m)))
   return (
     <div>
@@ -22,9 +33,16 @@ export function RequirementsView({ msg, missing, d }: { msg: string; missing: Mi
             {shown.map((m, i) => (
               <li key={i}>
                 <DismissX onDismiss={() => d.dismiss(requirementKey(m))} />
-                {m.mod_name} requires{' '}
-                <a href={m.requires_url} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
-                  mod {m.requires_mod_id}
+                <span style={{ color: 'var(--text)' }}>{m.mod_name}</span> (
+                <ModJumpLink id={m.mod_id} name={m.mod_name} onJump={onJump} />) requires{' '}
+                <a
+                  href={m.requires_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="extlink"
+                  title="opens the Nexus page in your browser"
+                >
+                  mod {m.requires_mod_id} ↗
                 </a>
                 {m.notes ? ` — ${m.notes}` : ''} — not in your library
               </li>

@@ -43,7 +43,42 @@ export function useOrderData() {
   const names = useMemo(() => new Map(mods.map((m) => [m.mod_id, m.mod_name])), [mods])
   const categories = useMemo(() => [...new Set(mods.map((m) => m.category).filter(Boolean))].sort() as string[], [mods])
 
-  return { mods, buckets, notes, names, categories, refining, setRefining, committed, setCommitted, hidden, setHidden, error, setError, reload }
+  // Optimistic client-side mirror of order_store.move: splice the moving block
+  // (kept in its current relative order) out and back in at `position` (1-based,
+  // over the FULL pre-move list — same semantics resolveMove already computes).
+  // Without this, the row's array index doesn't change until the reload
+  // round-trip completes, so dnd-kit's transform resets to 0 the instant the
+  // drop lands — visually snapping the row back to its old spot before the
+  // reload snaps it again to the real one.
+  const reorderLocal = useCallback((ids: number[], position: number) => {
+    setMods((prev) => {
+      const movingSet = new Set(ids)
+      const moving = prev.filter((m) => movingSet.has(m.mod_id))
+      const rest = prev.filter((m) => !movingSet.has(m.mod_id))
+      const pos = Math.max(0, Math.min(rest.length, position - 1))
+      const next = rest.slice()
+      next.splice(pos, 0, ...moving)
+      return next
+    })
+  }, [])
+
+  return {
+    mods,
+    buckets,
+    notes,
+    names,
+    categories,
+    refining,
+    setRefining,
+    committed,
+    setCommitted,
+    hidden,
+    setHidden,
+    error,
+    setError,
+    reload,
+    reorderLocal,
+  }
 }
 
 export function matchesFilter(m: OrderMod, cat: string, grp: string): boolean {
