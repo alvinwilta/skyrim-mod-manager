@@ -175,6 +175,18 @@ DEAD_FILE_CATEGORIES = {"OLD_VERSION", "REMOVED", "ARCHIVED"}
 _game_ids = {GAME: int(GAME_ID)}
 
 
+def live_file_ids(mod_id, domain=GAME):
+    """fileIds the mod currently offers (category outside DEAD_FILE_CATEGORIES).
+    A library file missing from this set was retired by the author (old
+    version/removed/archived) — ground truth for the import diff's 'is this
+    still a distinct, current file?' replacement decision."""
+    files = _graphql(
+        "query($m: ID!, $g: ID!) { modFiles(modId: $m, gameId: $g) { fileId category } }",
+        {"m": mod_id, "g": game_id_for(domain)},
+    )["modFiles"]
+    return {int(f["fileId"]) for f in files if f["category"] not in DEAD_FILE_CATEGORIES}
+
+
 def game_id_for(domain):
     if domain not in _game_ids:
         game = _graphql("query($d: String!) { game(domainName: $d) { id } }", {"d": domain})["game"]

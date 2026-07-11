@@ -57,18 +57,62 @@ def _version_key(v):
 
 def _norm_file_name(name):
     """File title with version-ish tokens stripped, for matching an incoming
-    file to the library file it succeeds ('SkySA 2.5' == 'SkySA v2.8.3')."""
-    s = re.sub(r"\bv?\d\S*", "", (name or "").lower())
-    return re.sub(r"[\s\-_.]+", " ", s).strip()
+    file to the library file it succeeds ('SkySA 2.5' == 'SkySA v2.8.3').
+    Separators collapse first so underscore-glued versions ('SkyUI_5_2_SE')
+    still shed their digits."""
+    s = re.sub(r"[\s\-_.]+", " ", (name or "").lower())
+    return re.sub(r"\bv?\d\S*", "", s).strip()
 
 
-def _predecessor(rows, file_name):
-    """The library row an incoming file supersedes: the unique same-titled file
-    of the same mod. No unique title match (a sibling file — patch, optional,
-    addon — or an ambiguous one) means no predecessor: the incoming file is an
-    addition, not a replacement."""
-    matches = [r for r in rows if _norm_file_name(r["file_name"]) == _norm_file_name(file_name)]
-    return matches[0] if len(matches) == 1 else None
+def _title_kin(a, b):
+    """True when one normalized title's words are a subset of the other's —
+    'papyrus extender' vs 'papyrus extender se' is the same file line renamed,
+    'ordinator vokrii patch' vs 'ordinator apocalypse patch' is not."""
+    ta, tb = set(a.split()), set(b.split())
+    return bool(ta) and bool(tb) and (ta <= tb or tb <= ta)
+
+
+def _row_recency(r):
+    """Sort key: newest version first, download time as tiebreak/fallback."""
+    return (_version_key(r["file_version"]) or (), r["downloaded_at"] or "")
+
+
+def _assign_predecessors(entries, rows, live_ids_fn=lambda: None):
+    """{fileId: [superseded rows]} for one mod's incoming files (exact
+    file_id matches already removed). Mod id confirms these are the same mod,
+    but a mod legitimately offers several distinct files (main, optionals,
+    patches, variants) — so titles pair files up within the mod:
+
+    - every row sharing an incoming file's title is superseded by it — a
+      library holding several old revisions of one file line gets ALL of
+      them replaced, not an 'ambiguous' shrug;
+    - one leftover incoming file claims the leftover rows when they are a
+      single title line kin to its own title (title drift between versions)
+      AND Nexus no longer lists them as current files (live_ids_fn — ground
+      truth: a still-current file is a distinct file, not someone's past;
+      returns None when unavailable = no veto, heuristic stands);
+      unrelated-titled leftovers (true sibling additions) stay unclaimed."""
+    out = {}
+    claimed = set()
+    unmatched = []
+    for f in entries:
+        want = _norm_file_name(f["name"])
+        matches = [r for r in rows if _norm_file_name(r["file_name"]) == want]
+        if matches:
+            out[f["fileId"]] = matches
+            claimed.update(r["file_id"] for r in matches)
+        else:
+            unmatched.append(f)
+    left = [r for r in rows if r["file_id"] not in claimed]
+    if len(unmatched) == 1 and left:
+        titles = {_norm_file_name(r["file_name"]) for r in left}
+        if len(titles) == 1 and _title_kin(titles.pop(), _norm_file_name(unmatched[0]["name"])):
+            live = live_ids_fn()
+            if live:
+                left = [r for r in left if r["file_id"] not in live]
+            if left:
+                out[unmatched[0]["fileId"]] = left
+    return out
 
 
 def _rows_by_mod(conn):
@@ -78,13 +122,106 @@ def _rows_by_mod(conn):
     return by_mod
 
 
+def _name_keys(name):
+    """Match keys for one title/filename: the full normalized form plus the
+    part before the first digit, so an MO2-style archive name
+    ('SkyUI_5_2_SE-3863-5-2-SE-1573234894') still meets the Nexus file title
+    ('SkyUI_5_2_SE') despite the id/version/timestamp tail."""
+    keys = set()
+    full = _norm_file_name(name)
+    if full:
+        keys.add(full)
+    head = re.split(r"\d", (name or "").lower(), maxsplit=1)[0]
+    head = re.sub(r"[\s\-_.]+", " ", head).strip()
+    if len(head) > 2:
+        keys.add(head)
+    return keys
+
+
+def _local_name_index(by_mod):
+    """Name index of local/non-Nexus adoptions (negative synthetic mod ids).
+    These rows can never match an incoming Nexus file by id, so they get the
+    name-based fallback: keyed by every _name_keys of their archive stem and
+    mod_name."""
+    idx = {}
+    for mid, rows in by_mod.items():
+        if mid >= 0:
+            continue
+        for r in rows:
+            stem = os.path.splitext(r["file_name"] or "")[0]
+            for key in _name_keys(stem) | _name_keys(r["mod_name"]):
+                idx.setdefault(key, {})[r["file_id"]] = r
+    return idx
+
+
+def _local_match(local_idx, file_name):
+    """The unique locally-adopted row an incoming file's name resolves to,
+    or None (no match / ambiguous)."""
+    found = {}
+    for key in _name_keys(file_name):
+        found.update(local_idx.get(key, {}))
+    rows = list(found.values())
+    return rows[0] if len(rows) == 1 else None
+
+
+def _candidates(by_mod, mod_id, incoming_ids):
+    """Candidate predecessor rows for one mod. Rows the modlist itself claims
+    exactly (their file_id is another incoming entry) can't be anyone's
+    predecessor — without this, a collection listing a mod's main file + a
+    patch would let the patch claim the main file as its past."""
+    all_rows = by_mod.get(mod_id, [])
+    return [r for r in all_rows if r["file_id"] not in incoming_ids]
+
+
+def _match_all(modfiles, by_mod, local_idx, have_all_ids):
+    """{fileId: [superseded rows]} across a whole modlist. Id first: incoming
+    files grouped per known mod_id and paired against that mod's rows
+    (_assign_predecessors). The name fallback runs only when the mod id is
+    absent from the library entirely — the mod may still be there as a local
+    adoption whose synthetic id can never match."""
+    incoming_ids = {m["file"]["fileId"] for m in modfiles}
+    per_mod = {}
+    matched = {}
+    for m in modfiles:
+        f, mod = m["file"], m["file"]["mod"]
+        if f["fileId"] in have_all_ids:
+            continue  # exact re-record/redownload — never a replacement
+        if mod["modId"] in by_mod:
+            per_mod.setdefault(mod["modId"], []).append(f)
+        else:
+            local = _local_match(local_idx, f["name"])
+            if local:
+                matched[f["fileId"]] = [local]
+    for mod_id, entries in per_mod.items():
+        domain = ((entries[0].get("mod") or {}).get("game") or {}).get("domainName")
+        matched.update(_assign_predecessors(
+            entries, _candidates(by_mod, mod_id, incoming_ids), _live_ids_lazy(mod_id, domain)))
+    return matched
+
+
+def _live_ids_lazy(mod_id, domain):
+    """Deferred nexus.live_file_ids for one mod — only hit the network if the
+    assignment actually reaches the drift-claim branch. None on any failure
+    (offline pasted-modlist diffs must keep working on the heuristic alone)."""
+    def get():
+        if mod_id <= 0:
+            return None
+        try:
+            return nexus.live_file_ids(mod_id, domain or GAME)
+        except Exception as e:
+            log.warning("no live file list for mod %s (%s) — using name heuristic", mod_id, e)
+            return None
+    return get
+
+
 def diff_modlist(modfiles):
     """Compare a modlist against the local DB.
 
     new: file not in the library (unknown mod, or a sibling file of a known
-    mod). updated/downgraded: a different revision of a file we have — matched
-    per file title, not per mod, so a mod's main file and its patches diff
-    independently; the direction comes from comparing version strings
+    mod). updated/downgraded: a different revision of a file we have — id
+    first (mod_id scopes to that mod's rows, title disambiguates between
+    them), falling back to name-matching locally-adopted rows when the mod id
+    is absent; the direction comes from comparing version strings
     (unparseable versions land in updated). unchanged: exact file recorded.
     Updated/downgraded items carry old_file_id — downloading them replaces
     that file (see _plan_replacements)."""
@@ -92,6 +229,7 @@ def diff_modlist(modfiles):
         have_files = {r["file_id"] for r in conn.execute("SELECT file_id FROM mods WHERE status = 'ok'")}
         by_mod = _rows_by_mod(conn)
 
+    matched = _match_all(modfiles, by_mod, _local_name_index(by_mod), have_files)
     out = {"new": [], "updated": [], "downgraded": [], "unchanged": []}
     for m in modfiles:
         f, mod = m["file"], m["file"]["mod"]
@@ -108,8 +246,9 @@ def diff_modlist(modfiles):
         if f["fileId"] in have_files:
             out["unchanged"].append(item)
             continue
-        old = _predecessor(by_mod.get(mod["modId"], []), f["name"])
-        if old:
+        olds = matched.get(f["fileId"])
+        if olds:
+            old = max(olds, key=_row_recency)  # newest superseded revision is the one shown
             item["old_version"] = old["file_version"]
             item["old_file_id"] = old["file_id"]
             new_key, old_key = _version_key(f["version"]), _version_key(old["file_version"])
@@ -121,23 +260,17 @@ def diff_modlist(modfiles):
 
 
 def _plan_replacements(modfiles):
-    """{incoming file_id: superseded file_id} for the files this download will
-    replace. Computed against the DB *before* record_downloads inserts the new
-    rows; after a replacement lands, the superseded archive is soft-deleted.
+    """{incoming file_id: [superseded file_ids]} for the files this download
+    will replace — every old revision of the same file line, not just the
+    newest. Computed against the DB *before* record_downloads inserts the new
+    rows; after a replacement lands, the superseded archives are soft-deleted.
     A file_id already known to the DB (any status) is a redownload — never a
     replacement, so a mod's sibling file can't be mistaken for its past."""
     with db.connect() as conn:
         known = {r["file_id"] for r in conn.execute("SELECT file_id FROM mods")}
         by_mod = _rows_by_mod(conn)
-    plan = {}
-    for m in modfiles:
-        f, mod = m["file"], m["file"]["mod"]
-        if f["fileId"] in known:
-            continue
-        old = _predecessor(by_mod.get(mod["modId"], []), f["name"])
-        if old:
-            plan[f["fileId"]] = old["file_id"]
-    return plan
+    matched = _match_all(modfiles, by_mod, _local_name_index(by_mod), known)
+    return {fid: [r["file_id"] for r in olds] for fid, olds in matched.items() if olds}
 
 
 def _progress_entry(modfile):
@@ -252,7 +385,7 @@ def run_job(modfiles, file_ids, collection_id=None):
         # a landed update supersedes its predecessor: drop the old archive
         # (soft-delete — the row stays recoverable, the disk file goes)
         done_fids = {e["meta"]["file_id"] for e in progress.values() if e["status"] == "done"}
-        old_ids = sorted({replacements[fid] for fid in done_fids if fid in replacements} - done_fids)
+        old_ids = sorted({oid for fid in done_fids for oid in replacements.get(fid, ())} - done_fids)
         if old_ids:
             try:
                 res = delete_files(old_ids)

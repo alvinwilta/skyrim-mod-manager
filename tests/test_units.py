@@ -149,25 +149,79 @@ class DiffHelpers(unittest.TestCase):
             engine._norm_file_name("Ordinator - Vokrii Patch"),
         )
 
-    def test_predecessor_unique_title_match(self):
-        rows = [
-            {"file_id": 1, "file_name": "Main File 1.0"},
-            {"file_id": 2, "file_name": "Optional Patch 1.0"},
-        ]
-        self.assertEqual(engine._predecessor(rows, "Main File 2.0")["file_id"], 1)
+    def test_norm_file_name_underscore_glued_versions(self):
+        # underscores are word chars: without separator-collapse first,
+        # \b never fires and SkyUI_5_2_SE kept its digits
+        self.assertEqual(engine._norm_file_name("SkyUI_5_2_SE"), engine._norm_file_name("SkyUI 5.2 SE"))
 
-    def test_predecessor_sibling_is_none(self):
-        # a patch for a mod we only have the main file of must NOT claim
-        # the main file as its past — it's an addition, not a replacement
-        rows = [{"file_id": 1, "file_name": "Main File"}]
-        self.assertIsNone(engine._predecessor(rows, "Hotfix ESL"))
-
-    def test_predecessor_ambiguous_is_none(self):
+    def test_assign_title_match_takes_every_old_revision(self):
+        # the reported Papyrus Extender case: two kept revisions of one file
+        # line, both must be superseded — not an 'ambiguous' shrug into "new"
         rows = [
-            {"file_id": 1, "file_name": "Patch 1"},
-            {"file_id": 2, "file_name": "Patch 2"},
+            {"file_id": 1, "file_name": "Papyrus Extender", "file_version": "6.3.0", "downloaded_at": "a"},
+            {"file_id": 2, "file_name": "Papyrus Extender", "file_version": "6.4.0", "downloaded_at": "b"},
         ]
-        self.assertIsNone(engine._predecessor(rows, "Patch 3"))
+        got = engine._assign_predecessors([{"fileId": 9, "name": "Papyrus Extender"}], rows)
+        self.assertEqual(sorted(r["file_id"] for r in got[9]), [1, 2])
+
+    def test_assign_leftover_claims_kin_title_drift(self):
+        rows = [{"file_id": 1, "file_name": "SkyUI", "file_version": "5.1", "downloaded_at": "a"}]
+        got = engine._assign_predecessors([{"fileId": 9, "name": "SkyUI SE"}], rows)
+        self.assertEqual([r["file_id"] for r in got[9]], [1])
+
+    def test_assign_unrelated_sibling_stays_unclaimed(self):
+        # Vokrii patch is not the Apocalypse patch's past, id kinship or not
+        rows = [{"file_id": 1, "file_name": "Ordinator - Vokrii Patch", "file_version": "1.1", "downloaded_at": "a"}]
+        got = engine._assign_predecessors([{"fileId": 9, "name": "Ordinator - Apocalypse Patch"}], rows)
+        self.assertEqual(got, {})
+
+    def test_assign_drift_claim_vetoed_when_file_still_live(self):
+        # Nexus still lists the row as a current file → it's a distinct file
+        # of a multi-file mod, not this incoming file's past
+        rows = [{"file_id": 1, "file_name": "SkyUI", "file_version": "5.1", "downloaded_at": "a"}]
+        got = engine._assign_predecessors([{"fileId": 9, "name": "SkyUI SE"}], rows, live_ids_fn=lambda: {1})
+        self.assertEqual(got, {})
+
+    def test_assign_drift_claim_allowed_when_file_retired(self):
+        rows = [{"file_id": 1, "file_name": "SkyUI", "file_version": "5.1", "downloaded_at": "a"}]
+        got = engine._assign_predecessors([{"fileId": 9, "name": "SkyUI SE"}], rows, live_ids_fn=lambda: {77})
+        self.assertEqual([r["file_id"] for r in got[9]], [1])
+
+    def test_assign_two_unmatched_claim_nothing(self):
+        rows = [{"file_id": 1, "file_name": "Old Thing", "file_version": "1", "downloaded_at": "a"}]
+        got = engine._assign_predecessors(
+            [{"fileId": 8, "name": "Alpha"}, {"fileId": 9, "name": "Beta"}], rows
+        )
+        self.assertEqual(got, {})
+
+    def test_candidates_excludes_incoming_claimed_rows(self):
+        # main file present in the modlist itself → the patch can't claim it
+        by_mod = {10: [{"file_id": 1, "file_name": "Main File"}]}
+        self.assertEqual(engine._candidates(by_mod, 10, incoming_ids={1, 2}), [])
+
+    def test_name_keys_head_meets_mo2_archive_tail(self):
+        # MO2 archive stem and Nexus file title share the before-first-digit key
+        self.assertTrue(
+            engine._name_keys("SkyUI_5_2_SE-3863-5-2-SE-1573234894") & engine._name_keys("SkyUI_5_2_SE")
+        )
+
+    def test_local_match_only_negative_ids_and_unique(self):
+        by_mod = {
+            -123: [{"file_id": -123, "mod_id": -123, "file_name": "SkyUI_5_2_SE-3863-5-2-SE.7z",
+                    "mod_name": "SkyUI_5_2_SE-3863-5-2-SE"}],
+            50: [{"file_id": 9, "mod_id": 50, "file_name": "SkyUI_5_2_SE", "mod_name": "SkyUI"}],
+        }
+        idx = engine._local_name_index(by_mod)
+        # positive-id rows never enter the name index
+        self.assertEqual(engine._local_match(idx, "SkyUI_5_2_SE")["file_id"], -123)
+
+    def test_local_match_ambiguous_is_none(self):
+        by_mod = {
+            -1: [{"file_id": -1, "mod_id": -1, "file_name": "Cool Mod 1.7z", "mod_name": "Cool Mod 1"}],
+            -2: [{"file_id": -2, "mod_id": -2, "file_name": "Cool Mod 2.7z", "mod_name": "Cool Mod 2"}],
+        }
+        idx = engine._local_name_index(by_mod)
+        self.assertIsNone(engine._local_match(idx, "Cool Mod 3"))
 
 
 if __name__ == "__main__":
