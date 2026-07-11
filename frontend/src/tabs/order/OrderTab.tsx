@@ -3,7 +3,6 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  MeasuringStrategy,
   PointerSensor,
   useSensor,
   useSensors,
@@ -11,6 +10,7 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core'
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { useWindowVirtualizer } from '@tanstack/react-virtual'
 import { api } from '../../api/endpoints'
 import { useRowSelection } from '../library/useRowSelection'
 import { useOrderData, matchesFilter, errText } from './hooks/useOrderData'
@@ -112,16 +112,7 @@ export function OrderTab() {
 
   const toggleHl = (key: HighlightKey) => setHl((h) => ({ ...h, [key]: !h[key] }))
 
-  // Shared by every result list (refine notes, conflicts, requirements,
-  // drift): scroll the table to the named mod; if a filter hides its row,
-  // say so instead of silently doing nothing.
   const setMsg = jobs.setMsg
-  const jumpToMod = useCallback(
-    (id: number) => {
-      if (!scrollToMod(id)) setMsg(`mod ${id} is hidden by the current filter — clear filters to jump to it`)
-    },
-    [setMsg],
-  )
 
   // Resolve the drift check's {mod_id → expected bucket} map against the
   // order cache so the panel can list the drifted mods by name/position.
@@ -200,17 +191,63 @@ export function OrderTab() {
 
   const visibleIndex = useMemo(() => new Map(visible.map((r, i) => [r.mod.mod_id, i])), [visible])
 
+  // Stable reference: SortableContext re-derives its internal `items` off this
+  // array's identity, not its contents — an inline `.map()` here would hand it
+  // a new array (and force that recompute) on every OrderTab re-render for any
+  // unrelated reason (job polling, a message update) while a drag is in flight.
+  const visibleIds = useMemo(() => visible.map((r) => r.mod.mod_id), [visible])
+
+  // Real row count runs into the hundreds — mounting every row keeps every one
+  // of them subscribed to dnd-kit's SortableContext, which re-renders every
+  // subscriber on each row the pointer crosses while dragging (React Context
+  // has no per-consumer filtering). Only mounting rows near the viewport is
+  // what actually bounds that cost. useWindowVirtualizer (not an inner
+  // overflow div) keeps the page scrolling exactly as before — no new inner
+  // scrollbar — and happens to be what dnd-kit's own auto-scroll already
+  // targets by default (window/document) when it finds no scrollable ancestor.
+  const listRef = useRef<HTMLDivElement>(null)
+  const rowVirtualizer = useWindowVirtualizer({
+    count: visible.length,
+    // Matches the real single-line row height (padding 6px×2 + 14px/1.5
+    // line-height, measured ~35.5px rendered). A mismatched estimate is
+    // fine at rest — tanstack corrects it via ResizeObserver on measurement —
+    // but the correction is a real layout shift, and if it lands mid-drag
+    // (a settle race, not fully deterministic) dnd-kit's collision rects
+    // land on a different row than the one under the cursor. Matching the
+    // estimate closely shrinks that window to sub-pixel and out of range.
+    estimateSize: () => 35.5,
+    overscan: 15,
+    scrollMargin: listRef.current?.offsetTop ?? 0,
+  })
+
+  // Shared by every result list (refine notes, conflicts, requirements,
+  // drift): scroll to the named mod's row; if a filter hides it, say so
+  // instead of silently doing nothing. Virtualized rows outside the current
+  // window aren't mounted yet, so scrollToIndex first, then poll a few
+  // frames for the row to land in the DOM before flashing it — scrollToMod
+  // itself is a harmless no-op re-scroll once the row is already in view.
+  const jumpToMod = useCallback(
+    (id: number) => {
+      const idx = visibleIndex.get(id)
+      if (idx === undefined) {
+        setMsg(`mod ${id} is hidden by the current filter — clear filters to jump to it`)
+        return
+      }
+      rowVirtualizer.scrollToIndex(idx, { align: 'center' })
+      let tries = 0
+      const tick = () => {
+        if (scrollToMod(id) || ++tries > 20) return
+        requestAnimationFrame(tick)
+      }
+      requestAnimationFrame(tick)
+    },
+    [visibleIndex, rowVirtualizer, setMsg],
+  )
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
-
-  // dnd-kit's default (WhileDragging) remeasures every row's rect continuously
-  // for the whole drag, in case a droppable resizes mid-drag — rows here never
-  // do, and remeasuring hundreds of <tr>s inside an auto-layout <table> (column
-  // widths depend on every row) is what causes the stutter right at pickup.
-  // Measure once at drag start instead.
-  const measuring = useMemo(() => ({ droppable: { strategy: MeasuringStrategy.BeforeDragging } }), [])
 
   const doMove = async (ids: number[], position: number) => {
     if (frozen) return
@@ -558,48 +595,61 @@ export function OrderTab() {
       )}
 
       {visible.length ? (
-        <DndContext sensors={sensors} measuring={measuring} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-          <SortableContext items={visible.map((r) => r.mod.mod_id)} strategy={verticalListSortingStrategy}>
+        <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+          <SortableContext items={visibleIds} strategy={verticalListSortingStrategy}>
             <div
+              role="table"
               onClick={(e) => {
                 // click on empty space (not a row / interactive el) clears selection
-                if (!(e.target as Element).closest('tr.ordrow, button, a, input, select')) sel.clear()
+                if (!(e.target as Element).closest('.ordrow, button, a, input, select')) sel.clear()
               }}
             >
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ width: 30 }}></th>
-                  <th style={{ width: 70 }}>#</th>
-                  <th>Mod</th>
-                  <th className="num">Mod ID</th>
-                  <th className="hide-sm">Category</th>
-                  <th className="num">Group</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((r) => (
-                  <OrderRow
-                    key={r.mod.mod_id}
-                    mod={r.mod}
-                    pos={r.pos}
-                    names={data.names}
-                    buckets={data.buckets}
-                    hl={hl}
-                    selected={sel.selected.has(r.mod.mod_id)}
-                    wrongExpected={
-                      hl.drift && jobs.wrongById.has(r.mod.mod_id) ? jobs.wrongById.get(r.mod.mod_id) : undefined
-                    }
-                    mo2Wrong={data.committed && mo2WrongIds.has(r.mod.mod_id)}
-                    justChanged={jobs.justChanged.has(r.mod.mod_id)}
-                    disabled={frozen}
-                    onRowClick={rowHandlers.click}
-                    onToggleLock={rowHandlers.lock}
-                    onMoveTo={rowHandlers.moveTo}
-                  />
-                ))}
-              </tbody>
-            </table>
+              <div className="ordtable-head" role="row">
+                <div role="columnheader"></div>
+                <div role="columnheader">#</div>
+                <div role="columnheader">Mod</div>
+                <div className="num" role="columnheader">Mod ID</div>
+                <div className="hide-sm" role="columnheader">Category</div>
+                <div className="num" role="columnheader">Group</div>
+              </div>
+              <div ref={listRef} style={{ position: 'relative', height: rowVirtualizer.getTotalSize() }}>
+                {rowVirtualizer.getVirtualItems().map((vRow) => {
+                  const r = visible[vRow.index]
+                  if (!r) return null
+                  return (
+                    <div
+                      key={r.mod.mod_id}
+                      data-index={vRow.index}
+                      ref={rowVirtualizer.measureElement}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${vRow.start - rowVirtualizer.options.scrollMargin}px)`,
+                      }}
+                    >
+                      <OrderRow
+                        mod={r.mod}
+                        pos={r.pos}
+                        names={data.names}
+                        buckets={data.buckets}
+                        hl={hl}
+                        selected={sel.selected.has(r.mod.mod_id)}
+                        wrongExpected={
+                          hl.drift && jobs.wrongById.has(r.mod.mod_id) ? jobs.wrongById.get(r.mod.mod_id) : undefined
+                        }
+                        mo2Wrong={data.committed && mo2WrongIds.has(r.mod.mod_id)}
+                        justChanged={jobs.justChanged.has(r.mod.mod_id)}
+                        disabled={frozen}
+                        onRowClick={rowHandlers.click}
+                        onToggleLock={rowHandlers.lock}
+                        onMoveTo={rowHandlers.moveTo}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           </SortableContext>
           {/* dropAnimation=null: the row already reflects its final position

@@ -79,7 +79,7 @@ function PosCell({ pos, disabled, onMoveTo }: { pos: number; disabled: boolean; 
  * refresh transforms — but none of THESE props change mid-drag (the parent
  * doesn't re-render, so the inline handlers keep their identity), so this whole
  * subtree — the flag filtering, badges and links — is skipped. Only the cheap
- * <tr> transform style recomputes per frame. Kept out of the memo boundary:
+ * row transform style recomputes per frame. Kept out of the memo boundary:
  * dnd-kit's attributes/listeners, which get fresh identities each render.
  */
 const RowCells = memo(function RowCells({
@@ -113,7 +113,7 @@ const RowCells = memo(function RowCells({
   })
   return (
     <>
-      <td className="num" style={{ width: 70, whiteSpace: 'nowrap' }}>
+      <div className="num">
         <button
           className={`lockbtn${mod.locked ? ' on' : ''}`}
           disabled={disabled}
@@ -126,8 +126,8 @@ const RowCells = memo(function RowCells({
           {mod.locked ? '🔒' : '🔓'}
         </button>
         <PosCell pos={pos} disabled={disabled} onMoveTo={(p) => onMoveTo(mod.mod_id, p)} />
-      </td>
-      <td>
+      </div>
+      <div>
         {mod.installed && <span className="badge b-new">installed </span>}
         {mod.file_type === 'bsa' && (
           <span
@@ -167,8 +167,8 @@ const RowCells = memo(function RowCells({
             MO2 ORDER{' '}
           </span>
         )}
-      </td>
-      <td className="num">
+      </div>
+      <div className="num">
         {mod.mod_url ? (
           <a href={mod.mod_url} target="_blank" rel="noreferrer" className="dim">
             {mod.mod_id}
@@ -178,11 +178,11 @@ const RowCells = memo(function RowCells({
           // duplicate copy of this app
           <span className="dim">{mod.mod_id}</span>
         )}
-      </td>
-      <td className="hide-sm dim">{mod.category || ''}</td>
-      <td className="num">
+      </div>
+      <div className="hide-sm dim">{mod.category || ''}</div>
+      <div className="num">
         <GroupBadge bucket={mod.bucket} buckets={buckets} />
-      </td>
+      </div>
     </>
   )
 })
@@ -221,7 +221,7 @@ export const OrderRow = memo(function OrderRow({
     : undefined
 
   return (
-    <tr
+    <div
       ref={setNodeRef}
       className={rowCls}
       title={hint}
@@ -246,11 +246,11 @@ export const OrderRow = memo(function OrderRow({
         onRowClick(mod.mod_id, e)
       }}
     >
-      <td style={{ width: 30 }}>
+      <div>
         <span className="draghandle" title={disabled ? 'reordering locked while Claude refines' : 'drag anywhere on the row to reorder'}>
           ≡
         </span>
-      </td>
+      </div>
       <RowCells
         mod={mod}
         pos={pos}
@@ -264,6 +264,6 @@ export const OrderRow = memo(function OrderRow({
         onToggleLock={onToggleLock}
         onMoveTo={onMoveTo}
       />
-    </tr>
+    </div>
   )
 })

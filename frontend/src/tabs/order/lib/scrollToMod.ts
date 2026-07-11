@@ -23,7 +23,7 @@ function flash(el: HTMLElement) {
  * isn't rendered — i.e. hidden by the current category/group/locked filter.
  */
 export function scrollToMod(modId: number): boolean {
-  const el = document.querySelector(`tr.ordrow[data-mid="${modId}"]`)
+  const el = document.querySelector(`.ordrow[data-mid="${modId}"]`)
   if (!(el instanceof HTMLElement)) return false
   el.scrollIntoView({ behavior: 'smooth', block: 'center' })
   // The smooth scroll takes time — flashing now would finish before the row

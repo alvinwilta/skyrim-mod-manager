@@ -90,18 +90,12 @@ tr.r-upd td { background: #241d0f; }
 tr.r-upd:hover td { background: #2e2513; }
 tr.r-down td { background: #241012; }
 tr.r-down:hover td { background: #2e1518; }
-tr.r-wrong td { background: #2a1215; }
-tr.r-wrong:hover td { background: #341a1d; }
 tr.r-deleted td { background: #2a1215; color: var(--dim); }
 tr.r-deleted:hover td { background: #341a1d; }
-tr.ordrow { cursor: grab; }
-tr.ordrow[draggable="false"] { cursor: default; }
 .lockbtn { background: none; border: none; cursor: pointer; font-size: 13px;
   opacity: .25; padding: 0 4px; }
 .lockbtn:hover { opacity: .8; }
 .lockbtn.on { opacity: 1; }
-tr.r-locked td { background: #1d2a45; }
-tr.r-sel td:first-child { border-left: 3px solid var(--blue); border-radius: 4px 0 0 4px; }
 tr.dropmark td { border-top: 2px solid var(--blue); }
 /* in-page jump to a mod's row (green = stays in the app)… */
 a.modjump { color: var(--green); text-decoration: none; border-bottom: 1px dotted var(--green); }
@@ -109,7 +103,6 @@ a.modjump:hover { color: var(--text); border-bottom-color: var(--text); }
 /* …vs blue = opens the browser (Nexus page) */
 a.extlink { color: var(--blue); }
 @keyframes rowflash { 0%, 100% { background: transparent; } 30%, 70% { background: #33421f; } }
-tr.row-flash td { animation: rowflash 0.8s ease-in-out 3; }
 .posnum { color: var(--dim); text-decoration: none; }
 .posnum:hover { color: var(--blue); text-decoration: underline; }
 .grp h2 { font-size: 14px; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
@@ -200,7 +193,42 @@ tr.runhead:hover td { background: #161a23; }
   box-shadow: 0 10px 40px rgba(0,0,0,.6);
 }
 .dlg-title { font-size: 15px; font-weight: 600; }
-tr.ordrow td { user-select: none; } /* text selection must not steal the drag gesture */
+
+/* Order tab rows: a CSS Grid, not a <table> — @tanstack/react-virtual
+   absolutely-positions each row (hundreds of mods, only the ones near the
+   viewport get mounted), and `transform` on a real <tr> takes it out of
+   table flow entirely. Head/row share one column template so they line up;
+   a hidden .hide-sm cell is skipped by grid auto-placement (display:none
+   items aren't part of the box tree), so the mobile override below just
+   drops its track rather than fighting to collapse it. */
+:root { --ord-cols: 30px 70px minmax(260px, 1fr) 90px 160px 130px; }
+/* default grid `align-items`/`justify-items` is stretch, so a plain block
+   cell still fills its row's full height for a solid hover/state background
+   — no flex needed, and .num's existing text-align:right keeps working
+   unchanged on a block box (it would stop working on a flex item). */
+.ordtable-head, .ordrow { display: grid; grid-template-columns: var(--ord-cols); }
+.ordtable-head { margin-top: 14px; }
+.ordtable-head > div {
+  text-align: left; color: var(--dim); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .05em; padding: 6px 10px; border-bottom: 1px solid var(--border);
+}
+.ordrow > div {
+  padding: 6px 10px; border-bottom: 1px solid #1c202a; overflow-wrap: anywhere;
+  user-select: none; /* text selection must not steal the drag gesture */
+}
+.ordrow:hover > div { background: #141720; }
+.ordrow { cursor: grab; }
+.ordrow[draggable="false"] { cursor: default; }
+.ordrow.r-upd > div { background: #241d0f; }
+.ordrow.r-upd:hover > div { background: #2e2513; }
+.ordrow.r-wrong > div { background: #2a1215; }
+.ordrow.r-wrong:hover > div { background: #341a1d; }
+.ordrow.r-locked > div { background: #1d2a45; }
+.ordrow.r-sel > div:first-child { border-left: 3px solid var(--blue); border-radius: 4px 0 0 4px; }
+.ordrow.row-flash > div { animation: rowflash 0.8s ease-in-out 3; }
+@media (max-width: 640px) {
+  :root { --ord-cols: 30px 70px minmax(200px, 1fr) 90px 110px; }
+}
 
 /* Guide tab */
 .guide { display: grid; gap: 14px; max-width: 880px; margin: 0 auto; }

@@ -126,7 +126,7 @@ describe('OrderTab highlight + locked toggles', () => {
     expect(screen.queryByText('MoreHUD')).not.toBeInTheDocument()
     expect(screen.getByText('SkyUI')).toBeInTheDocument()
     // USSEP keeps its real rank #3 even though the locked row above is hidden
-    expect(screen.getByText('USSEP').closest('tr')).toHaveTextContent('3')
+    expect(screen.getByText('USSEP').closest('.ordrow')).toHaveTextContent('3')
     expect(screen.getByText('(2 of 3 shown)')).toBeInTheDocument()
   })
 })
@@ -143,13 +143,13 @@ describe('OrderTab selection + bulk actions', () => {
     expect(screen.getByText('1 selected')).toBeInTheDocument()
     await user.click(screen.getByText('MoreHUD'))
     expect(screen.getByText('2 selected')).toBeInTheDocument()
-    expect(screen.getByText('SkyUI').closest('tr')).toHaveClass('r-sel')
-    expect(screen.getByText('MoreHUD').closest('tr')).toHaveClass('r-sel')
+    expect(screen.getByText('SkyUI').closest('.ordrow')).toHaveClass('r-sel')
+    expect(screen.getByText('MoreHUD').closest('.ordrow')).toHaveClass('r-sel')
 
     // re-clicking a selected row removes it (checkbox toggle)
     await user.click(screen.getByText('SkyUI'))
     expect(screen.getByText('1 selected')).toBeInTheDocument()
-    expect(screen.getByText('SkyUI').closest('tr')).not.toHaveClass('r-sel')
+    expect(screen.getByText('SkyUI').closest('.ordrow')).not.toHaveClass('r-sel')
 
     // shift-click ranges from the last-clicked anchor (SkyUI, idx0) to USSEP (idx2)
     await user.keyboard('{Shift>}')
@@ -373,7 +373,7 @@ describe('OrderTab sort machinery', () => {
       // the drift panel now also lists the mod by name — pick the table row
       const row = screen
         .getAllByText('USSEP')
-        .map((el) => el.closest('tr.ordrow'))
+        .map((el) => el.closest('.ordrow'))
         .find(Boolean)
       expect(row).toHaveClass('r-wrong')
       expect(row?.getAttribute('title')).toMatch(/Sort\/Refine expected "Interface"/)
@@ -398,15 +398,17 @@ describe('OrderTab sort machinery', () => {
     await userEvent.click(subtabBtn(/Check for drift/))
     await screen.findByText(/Drifted mods · 1/)
 
+    // virtualized: the target row may not be mounted yet when the jump
+    // lands, so the retry-until-mounted loop settles a frame or two later
     await userEvent.click(screen.getByTitle('jump to USSEP in the list below'))
-    expect(scrolls[0]).toHaveAttribute('data-mid', '3')
+    await waitFor(() => expect(scrolls[0]).toHaveAttribute('data-mid', '3'))
     expect(scrolls[0]).toHaveClass('row-flash')
 
     // filter USSEP's row out → the jump can't land, message explains why
     await userEvent.selectOptions(screen.getByLabelText('filter group'), '3')
     await userEvent.click(screen.getByTitle('jump to USSEP in the list below'))
+    await waitFor(() => expect(screen.getByText(/mod 3 is hidden by the current filter/)).toBeInTheDocument())
     expect(scrolls).toHaveLength(1)
-    expect(screen.getByText(/mod 3 is hidden by the current filter/)).toBeInTheDocument()
   })
 
   it('scan archives starts the job, polls scan-state, then reloads conflicts', async () => {
