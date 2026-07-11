@@ -6,7 +6,7 @@ import { GroupBadge } from '../order/GroupBadge'
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : String(e))
 
-function CollectionCard({ c }: { c: Collection }) {
+function CollectionCard({ c, onImportMods }: { c: Collection; onImportMods: (url: string) => void }) {
   const [enabled, setEnabled] = useState(c.enabled)
   const [expanded, setExpanded] = useState(false)
   const [mods, setMods] = useState<CollectionMods | null>(null)
@@ -50,6 +50,14 @@ function CollectionCard({ c }: { c: Collection }) {
         <span className="dim" style={{ fontSize: 12 }}>
           {c.downloaded_count}/{c.mod_count} downloaded · {c.rule_count} order rule(s)
         </span>
+        <button
+          className="btn ghost"
+          style={{ padding: '2px 10px', fontSize: 12 }}
+          title="Fetch this collection in the Import tab and diff it against the library"
+          onClick={() => onImportMods(c.url)}
+        >
+          Import mods
+        </button>
         <a
           className="btn ghost"
           href={c.url}
@@ -106,7 +114,7 @@ function CollectionCard({ c }: { c: Collection }) {
   )
 }
 
-export function CollectionsTab() {
+export function CollectionsTab({ onImportMods }: { onImportMods: (url: string) => void }) {
   const [collections, setCollections] = useState<Collection[] | null>(null)
   const [err, setErr] = useState('')
 
@@ -127,7 +135,7 @@ export function CollectionsTab() {
       {err && <p className="c-red">{err}</p>}
       {collections &&
         (collections.length ? (
-          collections.map((c) => <CollectionCard key={c.id} c={c} />)
+          collections.map((c) => <CollectionCard key={c.id} c={c} onImportMods={onImportMods} />)
         ) : (
           <p className="dim">No collections imported yet — fetch one from the Import tab.</p>
         ))}

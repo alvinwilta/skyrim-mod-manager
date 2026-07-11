@@ -41,6 +41,7 @@ export interface DeleteResult {
 /** One row of a POST /api/diff group */
 export interface DiffItem {
   file_id: number
+  mod_id: number
   size: number
   mod_name: string
   name: string

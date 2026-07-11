@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ImportTab, __resetImportCache } from './ImportTab'
+import { ImportTab, __resetImportCache, requestCollectionImport } from './ImportTab'
 import { mockApi } from '../../test/mockApi'
 import type { DiffItem } from '../../api/types'
 
@@ -10,6 +10,7 @@ beforeEach(() => __resetImportCache()) // the diff cache deliberately survives r
 
 const item = (over: Partial<DiffItem>): DiffItem => ({
   file_id: 1,
+  mod_id: 100,
   size: 1024,
   mod_name: 'SkyUI',
   name: 'SkyUI_5_2.7z',
@@ -111,6 +112,29 @@ describe('ImportTab', () => {
     await waitFor(() => expect(go).toHaveBeenCalled())
     const dl = calls.find((c) => c.path === '/api/download')
     expect(dl?.body).toMatchObject({ modlist: { fromNexus: true }, collection_id: 42 })
+  })
+
+  it('requestCollectionImport queues a url that auto-fetches on mount', async () => {
+    const { calls } = mockApi({
+      'POST /api/fetch-collection': {
+        modlist: { fromNexus: true },
+        collection: { id: 7, slug: 'lorerim', name: 'Lorerim' },
+        count: 4,
+        diff: DIFF,
+      },
+    })
+    requestCollectionImport('https://nexus/collections/lorerim')
+    const { unmount } = render(<ImportTab onGoToProgress={vi.fn()} />)
+
+    expect(await screen.findByText('New · 2')).toBeInTheDocument()
+    const fetch = calls.find((c) => c.path === '/api/fetch-collection')
+    expect(fetch?.body).toEqual({ url: 'https://nexus/collections/lorerim' })
+
+    // one-shot: remounting (tab switch away and back) must not refetch
+    unmount()
+    render(<ImportTab onGoToProgress={vi.fn()} />)
+    expect(await screen.findByText('New · 2')).toBeInTheDocument()
+    expect(calls.filter((c) => c.path === '/api/fetch-collection').length).toBe(1)
   })
 
   it('empty url on fetch → inline hint', async () => {

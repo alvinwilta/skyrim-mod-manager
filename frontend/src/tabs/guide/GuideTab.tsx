@@ -391,6 +391,9 @@ export function GuideTab() {
             Every collection you've fetched — count shown is <span className="dim">downloaded / total</span>.
           </li>
           <li>
+            <b>Import mods</b> jumps to the Import tab and re-fetches the collection, diffed against your library.
+          </li>
+          <li>
             The checkbox excludes a collection's order rules from <b>Apply collection order rules</b>; nothing is
             deleted.
           </li>

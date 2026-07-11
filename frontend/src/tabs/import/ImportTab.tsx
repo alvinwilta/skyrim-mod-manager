@@ -36,7 +36,16 @@ const cache: {
   collection: FetchCollectionResult['collection']
   placeholder: string
   selected: number[] | null
-} = { url: '', diff: null, modlist: null, collection: null, placeholder: DEFAULT_PLACEHOLDER, selected: null }
+  pendingFetch: boolean
+} = {
+  url: '',
+  diff: null,
+  modlist: null,
+  collection: null,
+  placeholder: DEFAULT_PLACEHOLDER,
+  selected: null,
+  pendingFetch: false,
+}
 
 /** Test hook — reset the module cache between tests. */
 export const __resetImportCache = () => {
@@ -46,6 +55,14 @@ export const __resetImportCache = () => {
   cache.collection = null
   cache.placeholder = DEFAULT_PLACEHOLDER
   cache.selected = null
+  cache.pendingFetch = false
+}
+
+/** Queue a collection URL to be fetched as soon as the Import tab mounts —
+ * how "Import mods" on a Collections card hands off to this tab. */
+export const requestCollectionImport = (url: string) => {
+  cache.url = url
+  cache.pendingFetch = true
 }
 
 export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
@@ -72,6 +89,15 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   useEffect(() => {
     cache.selected = diff ? [...sel.selected] : null
   }, [sel.selected, diff])
+
+  // a Collections-tab "Import mods" click queued a url — fetch it now
+  useEffect(() => {
+    if (cache.pendingFetch) {
+      cache.pendingFetch = false
+      void doFetch()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const showDiff = (d: DiffResult) => {
     setDiff(d)
@@ -190,6 +216,16 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
         </button>
         <span className="c-red">{err}</span>
       </div>
+      {diff && (
+        <div className="toolbar" style={{ marginTop: 12 }}>
+          <button className="btn" disabled={!sel.selected.size} onClick={doDownload}>
+            Download selected
+          </button>
+          <span className="dim">
+            {sel.selected.size} files · {human(selBytes)}
+          </span>
+        </div>
+      )}
       <div>
         {groups.map(
           (g) =>
@@ -212,6 +248,7 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
                     <tr>
                       <th style={{ width: 30 }}></th>
                       <th>Mod — File</th>
+                      <th className="num">Mod ID</th>
                       <th className="num">Version</th>
                       <th className="num">Size</th>
                     </tr>
@@ -234,6 +271,7 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
                           <td>
                             {i.mod_name} <span className="dim">— {i.name}</span>
                           </td>
+                          <td className="num dim">{i.mod_id}</td>
                           <td className="num">
                             {i.old_version && <span className="dim">{i.old_version} → </span>}
                             {i.version}
@@ -248,16 +286,6 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
             ),
         )}
       </div>
-      {diff && (
-        <div className="toolbar">
-          <button className="btn" disabled={!sel.selected.size} onClick={doDownload}>
-            Download selected
-          </button>
-          <span className="dim">
-            {sel.selected.size} files · {human(selBytes)}
-          </span>
-        </div>
-      )}
     </section>
   )
 }

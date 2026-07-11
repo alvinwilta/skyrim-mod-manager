@@ -251,6 +251,7 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
               />
             </th>
             <th>Mod</th>
+            <th className="num">Mod ID</th>
             <th>File</th>
             <th className="num">Version</th>
             <th className="hide-sm">Author</th>
@@ -299,6 +300,7 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
                   r.mod_name
                 )}
               </td>
+              <td className="num dim">{r.mod_id}</td>
               <td className="dim">{r.file_name}</td>
               <td className="num">{r.file_version}</td>
               <td className="hide-sm dim">{r.author}</td>

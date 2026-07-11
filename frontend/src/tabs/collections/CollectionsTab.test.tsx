@@ -22,7 +22,7 @@ const coll = (over: Partial<Collection>): Collection => ({
 describe('CollectionsTab', () => {
   it('renders cards with counts; empty state otherwise', async () => {
     mockApi({ 'GET /api/collections': { collections: [coll({})] } })
-    render(<CollectionsTab />)
+    render(<CollectionsTab onImportMods={vi.fn()} />)
     expect(await screen.findByText('Lorerim')).toBeInTheDocument()
     expect(screen.getByText('4/10 downloaded · 3 order rule(s)')).toBeInTheDocument()
   })
@@ -32,12 +32,20 @@ describe('CollectionsTab', () => {
       'GET /api/collections': { collections: [coll({})] },
       'POST /api/collections/1/enabled': { error: 'db locked' },
     })
-    render(<CollectionsTab />)
+    render(<CollectionsTab onImportMods={vi.fn()} />)
     const cb = await screen.findByLabelText('enable Lorerim')
     await userEvent.click(cb)
     expect(calls.find((c) => c.path === '/api/collections/1/enabled')?.body).toEqual({ enabled: false })
     await waitFor(() => expect(cb).toBeChecked()) // reverted
     expect(await screen.findByText('db locked')).toBeInTheDocument()
+  })
+
+  it('Import mods hands the collection url to the callback', async () => {
+    mockApi({ 'GET /api/collections': { collections: [coll({})] } })
+    const onImport = vi.fn()
+    render(<CollectionsTab onImportMods={onImport} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Import mods' }))
+    expect(onImport).toHaveBeenCalledWith('https://nexus/collections/lorerim')
   })
 
   it('expanding lazy-loads mods exactly once', async () => {
@@ -51,7 +59,7 @@ describe('CollectionsTab', () => {
         buckets: { '3': 'Interface' },
       },
     })
-    render(<CollectionsTab />)
+    render(<CollectionsTab onImportMods={vi.fn()} />)
     const title = await screen.findByText('Lorerim')
 
     await userEvent.click(title) // expand
