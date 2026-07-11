@@ -407,7 +407,9 @@ export function GuideTab() {
             <code>modlist.json</code> → <b>Diff against DB</b>.
           </li>
           <li>
-            Result is diffed into new / updated / unchanged — tick what you want → <b>Download selected</b>.
+            Result is diffed into new / updated / downgrade / unchanged — tick what you want →{' '}
+            <b>Download selected</b>. An updated or downgraded file replaces the older archive it supersedes
+            (old file soft-deleted); downgrades are unchecked by default.
           </li>
         </ul>
       </Card>

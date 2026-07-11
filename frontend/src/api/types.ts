@@ -46,12 +46,15 @@ export interface DiffItem {
   name: string
   version: string
   old_version?: string
+  /** the library file this one supersedes — downloading replaces it */
+  old_file_id?: number
 }
 
 /** POST /api/diff */
 export interface DiffResult {
   new: DiffItem[]
   updated: DiffItem[]
+  downgraded: DiffItem[]
   unchanged: DiffItem[]
 }
 

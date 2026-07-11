@@ -44,7 +44,8 @@ def main():
     modfiles = engine.parse_modlist(load_modlist(args.source))
     diff = engine.diff_modlist(modfiles)
     print(f"{len(modfiles)} files in modlist: "
-          f"{len(diff['new'])} new, {len(diff['updated'])} updated, {len(diff['unchanged'])} unchanged")
+          f"{len(diff['new'])} new, {len(diff['updated'])} updated, "
+          f"{len(diff['downgraded'])} downgrades (skipped), {len(diff['unchanged'])} unchanged")
 
     groups = ["new", "updated"] + (["unchanged"] if args.include_unchanged else [])
     file_ids = [item["file_id"] for g in groups for item in diff[g]]

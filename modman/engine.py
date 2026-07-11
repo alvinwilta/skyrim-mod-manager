@@ -48,16 +48,51 @@ def base_for(modfile):
     return sanitize(f"{f['name']}-{mod['modId']}-{f['fileId']}-{mod['version']}-{f['version']}")
 
 
+def _version_key(v):
+    """Numeric tuple for ordering Nexus version strings ('2.5.1a' -> (2,5,1));
+    None when the string has no digits, i.e. not comparable."""
+    nums = re.findall(r"\d+", v or "")
+    return tuple(int(n) for n in nums) if nums else None
+
+
+def _norm_file_name(name):
+    """File title with version-ish tokens stripped, for matching an incoming
+    file to the library file it succeeds ('SkySA 2.5' == 'SkySA v2.8.3')."""
+    s = re.sub(r"\bv?\d\S*", "", (name or "").lower())
+    return re.sub(r"[\s\-_.]+", " ", s).strip()
+
+
+def _predecessor(rows, file_name):
+    """The library row an incoming file supersedes: the unique same-titled file
+    of the same mod. No unique title match (a sibling file — patch, optional,
+    addon — or an ambiguous one) means no predecessor: the incoming file is an
+    addition, not a replacement."""
+    matches = [r for r in rows if _norm_file_name(r["file_name"]) == _norm_file_name(file_name)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _rows_by_mod(conn):
+    by_mod = {}
+    for r in conn.execute("SELECT * FROM mods WHERE status = 'ok' ORDER BY downloaded_at"):
+        by_mod.setdefault(r["mod_id"], []).append(dict(r))
+    return by_mod
+
+
 def diff_modlist(modfiles):
     """Compare a modlist against the local DB.
 
-    new: mod not in DB at all. updated: mod present but with a different file.
-    unchanged: exact file already recorded."""
+    new: file not in the library (unknown mod, or a sibling file of a known
+    mod). updated/downgraded: a different revision of a file we have — matched
+    per file title, not per mod, so a mod's main file and its patches diff
+    independently; the direction comes from comparing version strings
+    (unparseable versions land in updated). unchanged: exact file recorded.
+    Updated/downgraded items carry old_file_id — downloading them replaces
+    that file (see _plan_replacements)."""
     with db.connect() as conn:
         have_files = {r["file_id"] for r in conn.execute("SELECT file_id FROM mods WHERE status = 'ok'")}
-        by_mod = {r["mod_id"]: dict(r) for r in conn.execute("SELECT * FROM mods WHERE status = 'ok' ORDER BY downloaded_at")}
+        by_mod = _rows_by_mod(conn)
 
-    out = {"new": [], "updated": [], "unchanged": []}
+    out = {"new": [], "updated": [], "downgraded": [], "unchanged": []}
     for m in modfiles:
         f, mod = m["file"], m["file"]["mod"]
         item = {
@@ -72,13 +107,37 @@ def diff_modlist(modfiles):
         }
         if f["fileId"] in have_files:
             out["unchanged"].append(item)
-        elif mod["modId"] in by_mod:
-            old = by_mod[mod["modId"]]
+            continue
+        old = _predecessor(by_mod.get(mod["modId"], []), f["name"])
+        if old:
             item["old_version"] = old["file_version"]
-            out["updated"].append(item)
+            item["old_file_id"] = old["file_id"]
+            new_key, old_key = _version_key(f["version"]), _version_key(old["file_version"])
+            group = "downgraded" if new_key and old_key and new_key < old_key else "updated"
+            out[group].append(item)
         else:
             out["new"].append(item)
     return out
+
+
+def _plan_replacements(modfiles):
+    """{incoming file_id: superseded file_id} for the files this download will
+    replace. Computed against the DB *before* record_downloads inserts the new
+    rows; after a replacement lands, the superseded archive is soft-deleted.
+    A file_id already known to the DB (any status) is a redownload — never a
+    replacement, so a mod's sibling file can't be mistaken for its past."""
+    with db.connect() as conn:
+        known = {r["file_id"] for r in conn.execute("SELECT file_id FROM mods")}
+        by_mod = _rows_by_mod(conn)
+    plan = {}
+    for m in modfiles:
+        f, mod = m["file"], m["file"]["mod"]
+        if f["fileId"] in known:
+            continue
+        old = _predecessor(by_mod.get(mod["modId"], []), f["name"])
+        if old:
+            plan[f["fileId"]] = old["file_id"]
+    return plan
 
 
 def _progress_entry(modfile):
@@ -147,6 +206,9 @@ def run_job(modfiles, file_ids, collection_id=None):
         state["phase"] = "Finished"
         return {"done": 0, "failed": 0}
 
+    # snapshot before record_downloads inserts the new rows
+    replacements = _plan_replacements(selected)
+
     session = requests.Session()
 
     def work(task):
@@ -187,6 +249,16 @@ def run_job(modfiles, file_ids, collection_id=None):
         # one worker raising (e.g. disk full mid-batch) must not discard the
         # records of every file that DID complete
         db.record_downloads(progress.values())
+        # a landed update supersedes its predecessor: drop the old archive
+        # (soft-delete — the row stays recoverable, the disk file goes)
+        done_fids = {e["meta"]["file_id"] for e in progress.values() if e["status"] == "done"}
+        old_ids = sorted({replacements[fid] for fid in done_fids if fid in replacements} - done_fids)
+        if old_ids:
+            try:
+                res = delete_files(old_ids)
+                log.info("replaced %d superseded file(s): %s", res["deleted"], old_ids)
+            except Exception as e:
+                log.warning("could not remove superseded file(s) %s: %s", old_ids, e)
         # park brand-new mods at the very END of the install order (Unsorted,
         # installed last = top of the overwrite stack) — appending shifts
         # nothing, so a refine running right now is completely undisturbed

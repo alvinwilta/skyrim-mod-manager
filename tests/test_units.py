@@ -133,5 +133,42 @@ class ResolveRules(unittest.TestCase):
         self.assertIsNone(collection_rules._resolve({"logicalFileName": "Nope.7z"}, by_md5, by_name))
 
 
+class DiffHelpers(unittest.TestCase):
+    def test_version_key_orders(self):
+        self.assertLess(engine._version_key("2.5"), engine._version_key("2.10"))
+        self.assertLess(engine._version_key("v1.2a"), engine._version_key("1.3"))
+
+    def test_version_key_unparseable(self):
+        self.assertIsNone(engine._version_key("beta"))
+        self.assertIsNone(engine._version_key(None))
+
+    def test_norm_file_name_strips_versions(self):
+        self.assertEqual(engine._norm_file_name("SkySA 2.5"), engine._norm_file_name("SkySA v2.8.3"))
+        self.assertNotEqual(
+            engine._norm_file_name("Ordinator Main File"),
+            engine._norm_file_name("Ordinator - Vokrii Patch"),
+        )
+
+    def test_predecessor_unique_title_match(self):
+        rows = [
+            {"file_id": 1, "file_name": "Main File 1.0"},
+            {"file_id": 2, "file_name": "Optional Patch 1.0"},
+        ]
+        self.assertEqual(engine._predecessor(rows, "Main File 2.0")["file_id"], 1)
+
+    def test_predecessor_sibling_is_none(self):
+        # a patch for a mod we only have the main file of must NOT claim
+        # the main file as its past — it's an addition, not a replacement
+        rows = [{"file_id": 1, "file_name": "Main File"}]
+        self.assertIsNone(engine._predecessor(rows, "Hotfix ESL"))
+
+    def test_predecessor_ambiguous_is_none(self):
+        rows = [
+            {"file_id": 1, "file_name": "Patch 1"},
+            {"file_id": 2, "file_name": "Patch 2"},
+        ]
+        self.assertIsNone(engine._predecessor(rows, "Patch 3"))
+
+
 if __name__ == "__main__":
     unittest.main()

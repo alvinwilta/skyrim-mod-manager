@@ -17,7 +17,8 @@ interface Group {
 function toGroups(d: DiffResult): Group[] {
   return [
     { title: 'New', badgeCls: 'b-new', rowCls: 'r-new', items: d.new },
-    { title: 'Updated', badgeCls: 'b-upd', rowCls: 'r-upd', items: d.updated },
+    { title: 'Updated — replaces your older file', badgeCls: 'b-upd', rowCls: 'r-upd', items: d.updated },
+    { title: 'Downgrade — older than your file', badgeCls: 'b-down', rowCls: 'r-down', items: d.downgraded ?? [] },
     { title: 'Already downloaded', badgeCls: 'b-same', items: d.unchanged },
   ]
 }
@@ -75,7 +76,7 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   const showDiff = (d: DiffResult) => {
     setDiff(d)
     cache.diff = d
-    // new + updated default-checked, unchanged not (legacy grp() defaults)
+    // new + updated default-checked; downgrades and unchanged opt-in
     const ids = [...d.new, ...d.updated].map((i) => i.file_id)
     sel.replace(ids)
     cache.selected = ids
@@ -163,7 +164,8 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
       <p className="dim" style={{ marginBottom: 8 }}>
         Paste a collection URL or a single mod page URL to fetch straight from Nexus — or paste/upload a{' '}
         <code>modlist.json</code> below. Either way it is diffed against the local database; only new and updated
-        files are selected by default.
+        files are selected by default. Downloading an updated (or downgraded) file replaces the older archive it
+        supersedes.
       </p>
       <div className="toolbar" style={{ margin: '0 0 12px' }}>
         <input

@@ -73,6 +73,7 @@ tr:hover td { background: #141720; }
 .badge { font-size: 11px; padding: 1px 8px; border-radius: 99px; white-space: nowrap; }
 .b-new { background: #14351f; color: var(--green); }
 .b-upd { background: #3a2b12; color: var(--amber); }
+.b-down { background: #2a1215; color: var(--red); }
 .b-same { background: #232833; color: var(--dim); }
 .b-bsa { background: #12283a; color: var(--blue); }
 
@@ -81,6 +82,8 @@ tr.r-new td { background: #10241a; }
 tr.r-new:hover td { background: #143024; }
 tr.r-upd td { background: #241d0f; }
 tr.r-upd:hover td { background: #2e2513; }
+tr.r-down td { background: #241012; }
+tr.r-down:hover td { background: #2e1518; }
 tr.r-wrong td { background: #2a1215; }
 tr.r-wrong:hover td { background: #341a1d; }
 tr.r-deleted td { background: #2a1215; color: var(--dim); }

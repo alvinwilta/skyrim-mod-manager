@@ -20,6 +20,7 @@ const item = (over: Partial<DiffItem>): DiffItem => ({
 const DIFF = {
   new: [item({ file_id: 1 }), item({ file_id: 2, mod_name: 'USSEP', name: 'ussep.7z' })],
   updated: [item({ file_id: 3, mod_name: 'SMIM', name: 'smim.7z', old_version: '1.0', version: '2.0' })],
+  downgraded: [item({ file_id: 5, mod_name: 'Noble', name: 'noble.7z', old_version: '3.0', version: '2.5' })],
   unchanged: [item({ file_id: 4, mod_name: 'ELFX', name: 'elfx.7z' })],
 }
 
@@ -33,13 +34,16 @@ describe('ImportTab', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Diff against DB' }))
 
     expect(await screen.findByText('New · 2')).toBeInTheDocument()
-    expect(screen.getByText('Updated · 1')).toBeInTheDocument()
+    expect(screen.getByText(/^Updated .* 1$/)).toBeInTheDocument()
+    expect(screen.getByText(/^Downgrade .* 1$/)).toBeInTheDocument()
     expect(screen.getByText('Already downloaded · 1')).toBeInTheDocument()
-    // 3 of 4 pre-checked (new + updated), 1024*3 bytes
+    // 3 of 5 pre-checked (new + updated; downgrade and unchanged opt-in), 1024*3 bytes
     expect(screen.getByText('3 files · 3.0 KB')).toBeInTheDocument()
     expect(screen.getByLabelText('select elfx.7z')).not.toBeChecked()
-    // updated shows old → new version
+    expect(screen.getByLabelText('select noble.7z')).not.toBeChecked()
+    // updated/downgraded show old → new version
     expect(screen.getByText('1.0 →')).toBeInTheDocument()
+    expect(screen.getByText('3.0 →')).toBeInTheDocument()
   })
 
   it('invalid JSON → inline error, no request', async () => {
