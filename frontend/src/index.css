@@ -163,6 +163,12 @@ tr.runhead:hover td { background: #161a23; }
   border: 1px solid var(--blue); border-radius: 10px;
   padding: 10px 16px; margin: 0; white-space: nowrap;
   box-shadow: 0 8px 30px rgba(0, 0, 0, .55);
+  /* one row while it fits; media query re-enables wrapping when the
+     viewport is narrower than the bar's natural width */
+  flex-wrap: nowrap; max-width: calc(100vw - 24px);
+}
+@media (max-width: 960px) {
+  .seltoolbar { flex-wrap: wrap; justify-content: center; }
 }
 .posedit {
   width: 80px; background: #12151c; border: 1px solid var(--border);

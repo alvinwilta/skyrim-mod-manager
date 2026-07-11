@@ -192,6 +192,27 @@ describe('OrderTab selection + bulk actions', () => {
     )
   })
 
+  it('bulk delete: confirm dialog → POST mod_ids → message + selection cleared', async () => {
+    const { calls } = mockApi(routes({ 'POST /api/delete': { deleted: 2, files_removed: 2 } }))
+    renderTab()
+    await screen.findByText('SkyUI')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByText('SkyUI'))
+    await user.click(screen.getByText('MoreHUD'))
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Delete (2)' }))
+    expect(await screen.findByText('Delete 2 mod(s)?')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/api/delete')?.body).toEqual({ mod_ids: [1, 2] }),
+    )
+    expect(await screen.findByText('2 marked deleted · 2 file(s) removed from disk')).toBeInTheDocument()
+    expect(screen.queryByRole('toolbar', { name: 'bulk actions' })).not.toBeInTheDocument()
+  })
+
   it('bulk move to top posts position 1 for the selection', async () => {
     const { calls } = mockApi(routes({ 'POST /api/order/move': { moved: [2, 3], position: 1 } }))
     renderTab()

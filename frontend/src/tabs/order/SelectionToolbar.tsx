@@ -9,6 +9,7 @@ interface Props {
   disabled: boolean
   onLock: (locked: boolean) => void
   onMoveTo: (position: number) => void
+  onDelete: () => void
   onClear: () => void
 }
 
@@ -18,7 +19,7 @@ interface Props {
  * a blank strip into the page flow, and appearing/disappearing can't shift
  * the table mid drag (rows would slide out from under the pointer).
  */
-export function SelectionToolbar({ count, buckets, mods, selected, disabled, onLock, onMoveTo, onClear }: Props) {
+export function SelectionToolbar({ count, buckets, mods, selected, disabled, onLock, onMoveTo, onDelete, onClear }: Props) {
   const [pos, setPos] = useState('')
 
   // "Move to group" → insert right after that bucket's last mod. The backend
@@ -98,6 +99,14 @@ export function SelectionToolbar({ count, buckets, mods, selected, disabled, onL
           </option>
         ))}
       </select>
+      <button
+        className="btn ghost"
+        disabled={disabled}
+        style={{ color: 'var(--red)', borderColor: '#4a2226' }}
+        onClick={onDelete}
+      >
+        Delete ({count})
+      </button>
       <button className="btn ghost" onClick={onClear}>
         Clear selection
       </button>

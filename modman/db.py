@@ -151,6 +151,19 @@ def list_mods(q=None):
         return [dict(r) for r in conn.execute(sql, args)]
 
 
+def file_ids_for_mods(mod_ids):
+    """All live (status='ok') file_ids belonging to the given mods — lets
+    mod-level surfaces (install order) reuse the file-level delete path."""
+    if not mod_ids:
+        return []
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT file_id FROM mods WHERE status = 'ok' AND mod_id IN ({','.join('?' * len(mod_ids))})",
+            list(mod_ids),
+        ).fetchall()
+    return [r["file_id"] for r in rows]
+
+
 def collections_for_files(file_ids):
     """file_id -> [{slug, name}] for every collection that references it.
     Empty list means manually installed (or a collection whose import never

@@ -83,6 +83,7 @@ export function OrderTab() {
   const [showLocked, setShowLocked] = useState(true)
   const [dragId, setDragId] = useState<number | null>(null)
   const [confirmCommit, setConfirmCommit] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const mo2WrongIds = useMemo(
     () =>
@@ -165,6 +166,21 @@ export function OrderTab() {
       const r = await api.orderMove(ids, position)
       jobs.setMsg(`moved ${ids.length > 1 ? ids.length + ' mods ' : ''}to #${r.position}`)
       if (jobs.wrongById.size) await jobs.checkDrift(true) // keep drift highlights fresh
+      await data.reload()
+    } catch (e) {
+      jobs.setMsg(errText(e))
+    }
+  }
+
+  // Same soft-delete as the Library tab, but keyed by mod: the backend
+  // expands each mod_id to all its live files, removes them from disk and
+  // marks the rows deleted, so the mod drops off the order on reload.
+  const doDelete = async () => {
+    const ids = [...sel.selected]
+    try {
+      const r = await api.deleteMods(ids)
+      jobs.setMsg(`${r.deleted} marked deleted · ${r.files_removed} file(s) removed from disk`)
+      sel.clear()
       await data.reload()
     } catch (e) {
       jobs.setMsg(errText(e))
@@ -461,6 +477,7 @@ export function OrderTab() {
         disabled={frozen}
         onLock={(locked) => void doLock([...sel.selected], locked)}
         onMoveTo={(p) => void doMove([...sel.selected], p)}
+        onDelete={() => setConfirmDelete(true)}
         onClear={sel.clear}
       />
 
@@ -526,6 +543,16 @@ export function OrderTab() {
           {data.mods.length ? 'No mods match the filter.' : 'Library empty.'}
         </p>
       )}
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`Delete ${sel.selected.size} mod(s)?`}
+        description="Removes every downloaded file of the selected mod(s) from disk. The library keeps the records (marked deleted), so they won't resurface as new on the next import."
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => void doDelete()}
+      />
 
       <ConfirmDialog
         open={confirmCommit}

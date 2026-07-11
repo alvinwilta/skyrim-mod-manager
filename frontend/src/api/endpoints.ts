@@ -22,6 +22,7 @@ export const api = {
   mods: (q?: string) => get<Mod[]>(`/api/mods${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   validate: (fileIds: number[]) => post<ValidateResult>('/api/validate', { file_ids: fileIds }),
   deleteFiles: (fileIds: number[]) => post<DeleteResult>('/api/delete', { file_ids: fileIds }),
+  deleteMods: (modIds: number[]) => post<DeleteResult>('/api/delete', { mod_ids: modIds }),
   purgeFiles: (fileIds: number[]) => post<{ purged: number; files_removed: number }>('/api/purge', { file_ids: fileIds }),
   redownload: (fileIds: number[]) => post<{ started: number }>('/api/redownload', { file_ids: fileIds }),
   fetchCollection: (url: string) => post<FetchCollectionResult>('/api/fetch-collection', { url }),

@@ -167,9 +167,17 @@ async def validate(request: Request):
 
 @app.post("/api/delete")
 async def delete(request: Request):
-    file_ids, err = _need_file_ids(await request.json())
-    if err:
-        return err
+    body = await request.json()
+    mod_ids = (body or {}).get("mod_ids") or []
+    if mod_ids:
+        # mod-level delete (install order tab): expand to every live file
+        file_ids = db.file_ids_for_mods(mod_ids)
+        if not file_ids:
+            return JSONResponse({"error": "no live files for the selected mod(s)"}, status_code=400)
+    else:
+        file_ids, err = _need_file_ids(body)
+        if err:
+            return err
     frozen = _order_frozen("deleting files")
     if frozen:
         return frozen
