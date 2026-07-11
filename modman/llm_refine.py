@@ -113,7 +113,12 @@ def _parse_reply(text):
             in_conflicts = True
             continue
         if in_conflicts:
-            conflict_lines.append(line)
+            # a well-formed line always names at least one mod id; a bare
+            # "DUPLICATE:"/"CONFLICT:" with nothing after it (seen when the
+            # reply gets cut off mid-generation on large libraries) would
+            # otherwise render as a blank bullet in the UI
+            if re.search(r"\d", line) and line.rstrip(":").strip():
+                conflict_lines.append(line)
             continue
         parts = [p.strip() for p in line.split("|")]
         # lstrip('-'): adopted local mods carry NEGATIVE ids and appear in replies too
@@ -157,7 +162,10 @@ def _call_claude(prompt, model):
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     try:
-        out, err = _proc.communicate(timeout=600)
+        # 1800s: bulk pass on a large library (800+ mods) sends every mod in
+        # one prompt/reply, and haiku generating that much output can exceed
+        # the old 600s budget on a healthy, non-stuck run.
+        out, err = _proc.communicate(timeout=1800)
         code = _proc.returncode
     except subprocess.TimeoutExpired:
         # kill before clearing _proc: leaving the child alive would keep
@@ -165,7 +173,7 @@ def _call_claude(prompt, model):
         # "no claude process running"
         _proc.kill()
         _proc.communicate()
-        raise RuntimeError("claude timed out after 600s")
+        raise RuntimeError("claude timed out after 1800s")
     finally:
         _proc = None
     if code != 0:
