@@ -31,14 +31,13 @@ function List({
         </span>
       </h2>
       <ul className="dim dismiss-list">
-        {shown.slice(0, 30).map((e, i) => (
+        {shown.map((e, i) => (
           <li key={i}>
             <DismissX onDismiss={() => d.dismiss(mo2Key(section, e))} />
             {e.mod_name}
             {e.mod_id == null ? ' (not a Nexus mod / no modid)' : ''} {suffix}
           </li>
         ))}
-        {shown.length > 30 && <li>...and {shown.length - 30} more</li>}
       </ul>
     </div>
   )

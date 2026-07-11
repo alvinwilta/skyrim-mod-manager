@@ -19,7 +19,7 @@ export function RequirementsView({ msg, missing, d }: { msg: string; missing: Mi
             </span>
           </h2>
           <ul className="dim dismiss-list">
-            {shown.slice(0, 30).map((m, i) => (
+            {shown.map((m, i) => (
               <li key={i}>
                 <DismissX onDismiss={() => d.dismiss(requirementKey(m))} />
                 {m.mod_name} requires{' '}
@@ -29,7 +29,6 @@ export function RequirementsView({ msg, missing, d }: { msg: string; missing: Mi
                 {m.notes ? ` — ${m.notes}` : ''} — not in your library
               </li>
             ))}
-            {shown.length > 30 && <li>...and {shown.length - 30} more</li>}
           </ul>
         </div>
       )}
