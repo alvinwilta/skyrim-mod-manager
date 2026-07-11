@@ -32,6 +32,10 @@ export const api = {
   collectionMods: (id: number) => get<CollectionMods>(`/api/collections/${id}/mods`),
   setCollectionEnabled: (id: number, enabled: boolean) =>
     post<{ id: number; enabled: boolean }>(`/api/collections/${id}/enabled`, { enabled }),
+  collectionRemovable: (id: number) =>
+    get<{ removable: number; shared: number }>(`/api/collections/${id}/removable`),
+  removeCollectionMods: (id: number) =>
+    post<{ deleted: number; files_removed: number; shared_kept: number }>(`/api/collections/${id}/remove-mods`, {}),
   installOrder: () => get<InstallOrder>('/api/installorder'),
   sortState: () => get<JobState>('/api/sort-state'),
   orderMove: (modIds: number[], position: number) =>

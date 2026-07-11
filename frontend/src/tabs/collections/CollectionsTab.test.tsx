@@ -40,6 +40,45 @@ describe('CollectionsTab', () => {
     expect(await screen.findByText('db locked')).toBeInTheDocument()
   })
 
+  it('Remove mods previews, confirms, posts, and refreshes', async () => {
+    const { calls } = mockApi({
+      'GET /api/collections': { collections: [coll({})] },
+      'GET /api/collections/1/removable': { removable: 5, shared: 2 },
+      'POST /api/collections/1/remove-mods': { deleted: 5, files_removed: 5, shared_kept: 2 },
+    })
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    )
+    render(<CollectionsTab onImportMods={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove mods' }))
+
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/api/collections/1/remove-mods')).toBeTruthy(),
+    )
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Remove 5 archive(s)'))
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('2 mod(s) shared'))
+    // refreshed the list afterwards
+    expect(calls.filter((c) => c.path === '/api/collections').length).toBe(2)
+  })
+
+  it('Remove mods with nothing exclusive shows hint, no confirm, no post', async () => {
+    const { calls } = mockApi({
+      'GET /api/collections': { collections: [coll({})] },
+      'GET /api/collections/1/removable': { removable: 0, shared: 7 },
+    })
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    )
+    render(<CollectionsTab onImportMods={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove mods' }))
+
+    expect(await screen.findByText(/all 7 downloaded mods are shared/)).toBeInTheDocument()
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(calls.find((c) => c.path === '/api/collections/1/remove-mods')).toBeFalsy()
+  })
+
   it('Import mods hands the collection url to the callback', async () => {
     mockApi({ 'GET /api/collections': { collections: [coll({})] } })
     const onImport = vi.fn()

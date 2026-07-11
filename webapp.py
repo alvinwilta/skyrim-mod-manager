@@ -237,6 +237,32 @@ async def set_collection_enabled(collection_id: int, request: Request):
     return {"id": collection_id, "enabled": enabled}
 
 
+@app.get("/api/collections/{collection_id}/removable")
+def collection_removable(collection_id: int):
+    """Preview for remove-mods: how many downloaded files are exclusive to
+    this collection (removable) vs shared with another collection (kept)."""
+    exclusive, shared = db.collection_exclusive_files(collection_id)
+    return {"removable": len(exclusive), "shared": shared}
+
+
+@app.post("/api/collections/{collection_id}/remove-mods")
+async def remove_collection_mods(collection_id: int):
+    """Soft-delete the collection's exclusive downloaded files (archives off
+    disk, rows recoverable, gone from the install order since it only lists
+    'ok' mods) and disable the collection so its order rules stop applying.
+    Files shared with any other collection are kept."""
+    frozen = _order_frozen("removing collection mods")
+    if frozen:
+        return frozen
+    exclusive, shared = db.collection_exclusive_files(collection_id)
+    if exclusive:
+        result = await run_in_threadpool(engine.delete_files, exclusive)
+    else:
+        result = {"deleted": 0, "files_removed": 0}
+    db.set_collection_enabled(collection_id, False)
+    return {**result, "shared_kept": shared}
+
+
 @app.post("/api/import-local")
 def import_local():
     frozen = _order_frozen("importing new files")

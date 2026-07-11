@@ -285,6 +285,24 @@ def set_collection_enabled(collection_id, enabled):
         conn.execute("UPDATE collections SET enabled = ? WHERE id = ?", (1 if enabled else 0, collection_id))
 
 
+def collection_exclusive_files(collection_id):
+    """(exclusive_ids, shared_count) among this collection's downloaded ('ok')
+    files: exclusive = linked to no other collection — the removable set for
+    "remove this collection's mods"; shared = kept on removal. Any other
+    registered collection's link counts as sharing, enabled or not — a
+    collection disabled just to mute its order rules must not lose files."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT mc.file_id, EXISTS (SELECT 1 FROM mod_collections o"
+            "   WHERE o.file_id = mc.file_id AND o.collection_id != ?) AS shared"
+            " FROM mod_collections mc JOIN mods m ON m.file_id = mc.file_id"
+            " WHERE mc.collection_id = ? AND m.status = 'ok'",
+            (collection_id, collection_id),
+        ).fetchall()
+    exclusive = [r["file_id"] for r in rows if not r["shared"]]
+    return exclusive, len(rows) - len(exclusive)
+
+
 def collection_mods(collection_id):
     """This collection's full mod list -- including mods not yet downloaded
     -- in the current global install order for whichever ones are (same rank

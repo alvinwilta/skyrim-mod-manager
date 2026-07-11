@@ -6,10 +6,19 @@ import { GroupBadge } from '../order/GroupBadge'
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : String(e))
 
-function CollectionCard({ c, onImportMods }: { c: Collection; onImportMods: (url: string) => void }) {
+function CollectionCard({
+  c,
+  onImportMods,
+  onChanged,
+}: {
+  c: Collection
+  onImportMods: (url: string) => void
+  onChanged: () => void
+}) {
   const [enabled, setEnabled] = useState(c.enabled)
   const [expanded, setExpanded] = useState(false)
   const [mods, setMods] = useState<CollectionMods | null>(null)
+  const [removing, setRemoving] = useState(false)
   const [err, setErr] = useState('')
 
   const toggleEnabled = async (on: boolean) => {
@@ -19,6 +28,34 @@ function CollectionCard({ c, onImportMods }: { c: Collection; onImportMods: (url
     } catch (e) {
       setEnabled(!on)
       setErr(errText(e))
+    }
+  }
+
+  const removeMods = async () => {
+    setErr('')
+    setRemoving(true)
+    try {
+      const p = await api.collectionRemovable(c.id)
+      if (!p.removable) {
+        setErr(p.shared ? `nothing exclusive to remove — all ${p.shared} downloaded mods are shared` : 'nothing to remove')
+        return
+      }
+      const kept = p.shared ? ` ${p.shared} mod(s) shared with other collections are kept.` : ''
+      if (
+        !window.confirm(
+          `Remove ${p.removable} archive(s) of "${c.name || c.slug}" from disk and the install order?${kept}\n` +
+            'Soft-delete: re-importing the collection offers them again.',
+        )
+      )
+        return
+      await api.removeCollectionMods(c.id)
+      setEnabled(false)
+      setMods(null) // downloaded flags stale now — refetch on next expand
+      onChanged()
+    } catch (e) {
+      setErr(errText(e))
+    } finally {
+      setRemoving(false)
     }
   }
 
@@ -57,6 +94,15 @@ function CollectionCard({ c, onImportMods }: { c: Collection; onImportMods: (url
           onClick={() => onImportMods(c.url)}
         >
           Import mods
+        </button>
+        <button
+          className="btn ghost"
+          style={{ padding: '2px 10px', fontSize: 12 }}
+          title="Soft-delete this collection's downloaded mods (mods shared with another collection are kept)"
+          disabled={removing}
+          onClick={removeMods}
+        >
+          {removing ? 'Removing…' : 'Remove mods'}
         </button>
         <a
           className="btn ghost"
@@ -118,12 +164,14 @@ export function CollectionsTab({ onImportMods }: { onImportMods: (url: string) =
   const [collections, setCollections] = useState<Collection[] | null>(null)
   const [err, setErr] = useState('')
 
-  useEffect(() => {
+  const refresh = () => {
     api
       .collections()
       .then((d) => setCollections(d.collections))
       .catch((e) => setErr(errText(e)))
-  }, [])
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(refresh, [])
 
   return (
     <section>
@@ -135,7 +183,7 @@ export function CollectionsTab({ onImportMods }: { onImportMods: (url: string) =
       {err && <p className="c-red">{err}</p>}
       {collections &&
         (collections.length ? (
-          collections.map((c) => <CollectionCard key={c.id} c={c} onImportMods={onImportMods} />)
+          collections.map((c) => <CollectionCard key={c.id} c={c} onImportMods={onImportMods} onChanged={refresh} />)
         ) : (
           <p className="dim">No collections imported yet — fetch one from the Import tab.</p>
         ))}

@@ -394,6 +394,10 @@ export function GuideTab() {
             <b>Import mods</b> jumps to the Import tab and re-fetches the collection, diffed against your library.
           </li>
           <li>
+            <b>Remove mods</b> soft-deletes the collection's downloaded archives and drops them from the install
+            order — mods shared with another collection are kept, and the collection stays listed for re-import.
+          </li>
+          <li>
             The checkbox excludes a collection's order rules from <b>Apply collection order rules</b>; nothing is
             deleted.
           </li>
