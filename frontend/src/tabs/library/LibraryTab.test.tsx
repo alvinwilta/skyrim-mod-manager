@@ -69,7 +69,7 @@ describe('LibraryTab', () => {
     expect(screen.queryByText('USSEP')).not.toBeInTheDocument()
     expect(screen.getByText('1 files (1 deleted hidden)')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Show deleted (1)' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Show deleted' }))
     expect(await screen.findByText('USSEP')).toBeInTheDocument()
   })
 

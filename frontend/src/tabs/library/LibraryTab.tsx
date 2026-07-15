@@ -34,24 +34,67 @@ function SourceBadges({ collections }: { collections: CollectionRef[] }) {
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : String(e))
 
+function SortTh({
+  label,
+  dir,
+  numeric,
+  hideSm,
+  onClick,
+}: {
+  label: string
+  dir: 'asc' | 'desc' | null
+  numeric?: boolean
+  hideSm?: boolean
+  onClick: () => void
+}) {
+  const cls = [numeric && 'num', hideSm && 'hide-sm'].filter(Boolean).join(' ') || undefined
+  return (
+    <th className={cls}>
+      {label}{' '}
+      <button
+        className="btn ghost"
+        style={{ padding: '0 4px', fontSize: 11, lineHeight: 1 }}
+        aria-label={
+          dir === 'asc' ? `${label}: sorted ascending, click for descending`
+          : dir === 'desc' ? `${label}: sorted descending, click to clear`
+          : `sort by ${label}`
+        }
+        onClick={onClick}
+      >
+        {dir === 'asc' ? '▲' : dir === 'desc' ? '▼' : '⇅'}
+      </button>
+    </th>
+  )
+}
+
 export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   const [q, setQ] = useState('')
   const debouncedQ = useDebounce(q, 250)
   const [allRows, setAllRows] = useState<Mod[]>([])
   const [showDeleted, setShowDeleted] = useState(false)
+  const [hideInstalled, setHideInstalled] = useState(false)
   const [committed, setCommitted] = useState(false)
   const [msg, setMsg] = useState('')
-  const [sizeSort, setSizeSort] = useState<'asc' | 'desc' | null>(null)
+  const [sort, setSort] = useState<{ key: keyof Mod; dir: 'asc' | 'desc' } | null>(null)
   const { downloading } = useActivity()
+
+  // cycle: unsorted -> desc -> asc -> unsorted; clicking a different column starts it fresh at desc
+  const toggleSort = (key: keyof Mod) =>
+    setSort((prev) => (!prev || prev.key !== key ? { key, dir: 'desc' } : prev.dir === 'desc' ? { key, dir: 'asc' } : null))
 
   // "Show deleted" is an exclusive view: on = ONLY soft-deleted rows, off = only live rows.
   let rows = allRows.filter((r) => (showDeleted ? r.status === 'deleted' : r.status !== 'deleted'))
-  if (sizeSort) {
-    rows = [...rows].sort((a, b) =>
-      sizeSort === 'asc' ? a.size_bytes - b.size_bytes : b.size_bytes - a.size_bytes,
-    )
+  if (hideInstalled) rows = rows.filter((r) => !r.installed)
+  if (sort) {
+    const { key, dir } = sort
+    rows = [...rows].sort((a, b) => {
+      const [av, bv] = [a[key], b[key]]
+      const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv))
+      return dir === 'asc' ? cmp : -cmp
+    })
   }
   const nDeleted = allRows.filter((r) => r.status === 'deleted').length
+  const nInstalled = allRows.filter((r) => r.installed).length
   const sel = useRowSelection(rows.map((r) => r.file_id))
 
   // stale-response guard: rapid query changes can resolve out of order — only
@@ -83,7 +126,7 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   useEffect(() => {
     sel.clear()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showDeleted])
+  }, [showDeleted, hideInstalled])
 
   // Legacy loadLibOnFinish(): refresh the library when a download job completes.
   const wasRunning = useRef(false)
@@ -123,6 +166,7 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
     } catch (e) {
       setMsg(errText(e))
     }
+    sel.clear()
     void load()
   }
 
@@ -179,10 +223,6 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
           onChange={(e) => setQ(e.target.value)}
         />
         <div className="toolbar" style={{ marginTop: 6 }}>
-          <span className="dim">
-            {rows.length} {showDeleted ? 'deleted files' : 'files'}
-            {!showDeleted && nDeleted ? ` (${nDeleted} deleted hidden)` : ''}
-          </span>
           <button className="btn ghost" disabled={!n} onClick={doValidate}>
             {n ? `Validate (${n})` : 'Validate selected'}
           </button>
@@ -224,7 +264,10 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
           />
           <span style={{ width: 1, height: 22, background: 'var(--border)' }} />
           <button className="btn ghost" onClick={() => setShowDeleted((v) => !v)}>
-            {showDeleted ? 'Hide deleted' : `Show deleted${nDeleted ? ` (${nDeleted})` : ''}`}
+            {showDeleted ? 'Hide deleted' : 'Show deleted'}
+          </button>
+          <button className="btn ghost" onClick={() => setHideInstalled((v) => !v)}>
+            {hideInstalled ? 'Show installed' : 'Hide installed'}
           </button>
           <button
             className="btn ghost"
@@ -238,8 +281,13 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
           >
             {importing ? 'Importing…' : 'Import from disk'}
           </button>
-          <span className="dim">{msg}</span>
         </div>
+        <div style={{ color: 'var(--text)', fontSize: 12, marginTop: 6 }}>
+          {rows.length} {showDeleted ? 'deleted files' : 'files'}
+          {!showDeleted && nDeleted ? ` (${nDeleted} deleted hidden)` : ''}
+          {!showDeleted && hideInstalled && nInstalled ? ` (${nInstalled} installed hidden)` : ''}
+        </div>
+        <span className="dim">{msg}</span>
         {committed && (
           <div className="c-amber" style={{ marginTop: 6, fontSize: 12 }}>
             🔒 Install order is committed to disk — files are renamed with order prefixes. Delete and Redownload are
@@ -259,29 +307,41 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
                 onChange={(e) => sel.setAll(e.target.checked)}
               />
             </th>
-            <th>Mod</th>
-            <th className="num">Mod ID</th>
-            <th>File</th>
+            <SortTh label="Mod" dir={sort?.key === 'mod_name' ? sort.dir : null} onClick={() => toggleSort('mod_name')} />
+            <SortTh
+              label="Mod ID"
+              numeric
+              dir={sort?.key === 'mod_id' ? sort.dir : null}
+              onClick={() => toggleSort('mod_id')}
+            />
+            <SortTh label="File" dir={sort?.key === 'file_name' ? sort.dir : null} onClick={() => toggleSort('file_name')} />
             <th className="num">Version</th>
-            <th className="hide-sm">Author</th>
-            <th className="hide-sm">Category</th>
+            <SortTh
+              label="Author"
+              hideSm
+              dir={sort?.key === 'author' ? sort.dir : null}
+              onClick={() => toggleSort('author')}
+            />
+            <SortTh
+              label="Category"
+              hideSm
+              dir={sort?.key === 'category' ? sort.dir : null}
+              onClick={() => toggleSort('category')}
+            />
             <th className="hide-sm">Source</th>
-            <th className="num">
-              Size{' '}
-              <button
-                className="btn ghost"
-                style={{ padding: '0 4px', fontSize: 11, lineHeight: 1 }}
-                aria-label={
-                  sizeSort === 'asc' ? 'sorted smallest first, click for largest first'
-                  : sizeSort === 'desc' ? 'sorted largest first, click to clear'
-                  : 'sort by size'
-                }
-                onClick={() => setSizeSort(sizeSort === null ? 'desc' : sizeSort === 'desc' ? 'asc' : null)}
-              >
-                {sizeSort === 'asc' ? '▲' : sizeSort === 'desc' ? '▼' : '⇅'}
-              </button>
-            </th>
-            <th className="num hide-sm">Downloaded</th>
+            <SortTh
+              label="Size"
+              numeric
+              dir={sort?.key === 'size_bytes' ? sort.dir : null}
+              onClick={() => toggleSort('size_bytes')}
+            />
+            <SortTh
+              label="Downloaded"
+              numeric
+              hideSm
+              dir={sort?.key === 'downloaded_at' ? sort.dir : null}
+              onClick={() => toggleSort('downloaded_at')}
+            />
           </tr>
         </thead>
         <tbody>
