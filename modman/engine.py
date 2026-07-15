@@ -540,44 +540,66 @@ def modfiles_from_db(file_ids):
     ]
 
 
-def fetch_and_register(url):
-    """Fetch a collection (or single-mod) modlist from a nexusmods URL and,
-    for a collection, register it: collections row, links for its FULL
-    modlist (import alone should record everything, downloaded or not), and
-    the curator's ordering rules when an API key is configured. Returns the
-    /api/fetch-collection response body. Synchronous — callers run it off
-    the event loop."""
-    is_collection = "/collections/" in url
-    fetch = nexus.fetch_collection if is_collection else nexus.fetch_mod
-    payload = fetch(url)
-    modfiles = parse_modlist(payload)
+def fetch_and_register(urls):
+    """Fetch one or more collection/single-mod modlists from nexusmods URLs
+    and, for each collection among them, register it: collections row, links
+    for its FULL modlist (import alone should record everything, downloaded
+    or not), and the curator's ordering rules when an API key is configured.
+    Multiple urls are merged into one modlist (deduped by file id) and diffed
+    together, so a batch of mod-page urls behaves like pasting them one at a
+    time. `collection` in the return value is the first collection registered
+    (batches are expected to be single mods; a mixed batch still registers
+    every collection's provenance, it just only surfaces one for the caller's
+    optional collection_id hookup). Returns the /api/fetch-collection
+    response body. Synchronous — callers run it off the event loop."""
+    if isinstance(urls, str):
+        urls = [urls]
+    multi = len(urls) > 1
+    modfiles_all = []
+    seen_file_ids = set()
     collection = None
-    if is_collection:
-        rev = payload["data"]["collectionRevision"]
-        slug = nexus.collection_slug(url)
-        name = (rev.get("collection") or {}).get("name")
-        collection_id = db.upsert_collection(slug, rev.get("collectionId"), rev.get("revisionNumber"), name)
-        entries = [
-            {
-                "file_id": m["fileId"], "mod_id": m["file"]["mod"]["modId"],
-                "mod_name": m["file"]["mod"]["name"],
-                "mod_url": nexus.mod_url(
-                    (m["file"]["mod"].get("game") or {}).get("domainName") or GAME, m["file"]["mod"]["modId"]
-                ),
-            }
-            for m in modfiles
-        ]
-        db.link_collection_files(collection_id, entries)
-        collection = {"id": collection_id, "slug": slug, "name": name}
-        # curated ordering rules, if a personal API key is configured --
-        # non-fatal, collection provenance above still works without it
+    for url in urls:
+        is_collection = "/collections/" in url
+        fetch = nexus.fetch_collection if is_collection else nexus.fetch_mod
         try:
-            collection["rules_synced"] = collection_rules.sync(collection_id, rev.get("downloadLink"))
+            payload = fetch(url)
         except Exception as e:
-            log.warning("collection rules sync failed for %s: %s", slug, e)
+            raise ValueError(f"{url}: {e}" if multi else str(e)) from e
+        modfiles = parse_modlist(payload)
+        if is_collection:
+            rev = payload["data"]["collectionRevision"]
+            slug = nexus.collection_slug(url)
+            name = (rev.get("collection") or {}).get("name")
+            collection_id = db.upsert_collection(slug, rev.get("collectionId"), rev.get("revisionNumber"), name)
+            entries = [
+                {
+                    "file_id": m["fileId"], "mod_id": m["file"]["mod"]["modId"],
+                    "mod_name": m["file"]["mod"]["name"],
+                    "mod_url": nexus.mod_url(
+                        (m["file"]["mod"].get("game") or {}).get("domainName") or GAME, m["file"]["mod"]["modId"]
+                    ),
+                }
+                for m in modfiles
+            ]
+            db.link_collection_files(collection_id, entries)
+            this_collection = {"id": collection_id, "slug": slug, "name": name}
+            # curated ordering rules, if a personal API key is configured --
+            # non-fatal, collection provenance above still works without it
+            try:
+                this_collection["rules_synced"] = collection_rules.sync(collection_id, rev.get("downloadLink"))
+            except Exception as e:
+                log.warning("collection rules sync failed for %s: %s", slug, e)
+            if collection is None:
+                collection = this_collection
+        for m in modfiles:
+            fid = m["file"]["fileId"]
+            if fid not in seen_file_ids:
+                seen_file_ids.add(fid)
+                modfiles_all.append(m)
+    merged_payload = {"data": {"collectionRevision": {"modFiles": modfiles_all}}}
     return {
-        "modlist": payload, "diff": diff_modlist(modfiles),
-        "count": len(modfiles), "collection": collection,
+        "modlist": merged_payload, "diff": diff_modlist(modfiles_all),
+        "count": len(modfiles_all), "collection": collection,
     }
 
 

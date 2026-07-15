@@ -188,15 +188,15 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   return (
     <section>
       <p className="dim" style={{ marginBottom: 8 }}>
-        Paste a collection URL or a single mod page URL to fetch straight from Nexus — or paste/upload a{' '}
-        <code>modlist.json</code> below. Either way it is diffed against the local database; only new and updated
-        files are selected by default. Downloading an updated (or downgraded) file replaces the older archive it
-        supersedes.
+        Paste a collection URL or one or more mod page URLs (space-separated) to fetch straight from Nexus — or
+        paste/upload a <code>modlist.json</code> below. Either way it is diffed against the local database; only new
+        and updated files are selected by default. Downloading an updated (or downgraded) file replaces the older
+        archive it supersedes.
       </p>
       <div className="toolbar" style={{ margin: '0 0 12px' }}>
         <input
           type="text"
-          placeholder="…/collections/h2uqa3/mods or …/skyrimspecialedition/mods/32117"
+          placeholder="…/collections/h2uqa3/mods or …/skyrimspecialedition/mods/32117 (space-separated for multiple)"
           style={{ flex: 1, minWidth: 260 }}
           value={url}
           onChange={(e) => {

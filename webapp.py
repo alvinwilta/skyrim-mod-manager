@@ -128,11 +128,13 @@ async def diff(request: Request):
 @app.post("/api/fetch-collection")
 async def fetch_collection(request: Request):
     body = await request.json()
-    url = (body or {}).get("url", "")
+    urls = (body or {}).get("url", "").split()
+    if not urls:
+        return JSONResponse({"error": "paste a collection or mod url first"}, status_code=400)
     # threadpool: the fetch is a synchronous requests call that can hold the
     # event loop for tens of seconds, stalling SSE and every other request
     try:
-        return await run_in_threadpool(engine.fetch_and_register, url)
+        return await run_in_threadpool(engine.fetch_and_register, urls)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:

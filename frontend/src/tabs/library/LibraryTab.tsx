@@ -41,10 +41,16 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   const [showDeleted, setShowDeleted] = useState(false)
   const [committed, setCommitted] = useState(false)
   const [msg, setMsg] = useState('')
+  const [sizeSort, setSizeSort] = useState<'asc' | 'desc' | null>(null)
   const { downloading } = useActivity()
 
   // "Show deleted" is an exclusive view: on = ONLY soft-deleted rows, off = only live rows.
-  const rows = allRows.filter((r) => (showDeleted ? r.status === 'deleted' : r.status !== 'deleted'))
+  let rows = allRows.filter((r) => (showDeleted ? r.status === 'deleted' : r.status !== 'deleted'))
+  if (sizeSort) {
+    rows = [...rows].sort((a, b) =>
+      sizeSort === 'asc' ? a.size_bytes - b.size_bytes : b.size_bytes - a.size_bytes,
+    )
+  }
   const nDeleted = allRows.filter((r) => r.status === 'deleted').length
   const sel = useRowSelection(rows.map((r) => r.file_id))
 
@@ -260,7 +266,21 @@ export function LibraryTab({ onGoToProgress }: { onGoToProgress: () => void }) {
             <th className="hide-sm">Author</th>
             <th className="hide-sm">Category</th>
             <th className="hide-sm">Source</th>
-            <th className="num">Size</th>
+            <th className="num">
+              Size{' '}
+              <button
+                className="btn ghost"
+                style={{ padding: '0 4px', fontSize: 11, lineHeight: 1 }}
+                aria-label={
+                  sizeSort === 'asc' ? 'sorted smallest first, click for largest first'
+                  : sizeSort === 'desc' ? 'sorted largest first, click to clear'
+                  : 'sort by size'
+                }
+                onClick={() => setSizeSort(sizeSort === null ? 'desc' : sizeSort === 'desc' ? 'asc' : null)}
+              >
+                {sizeSort === 'asc' ? '▲' : sizeSort === 'desc' ? '▼' : '⇅'}
+              </button>
+            </th>
             <th className="num hide-sm">Downloaded</th>
           </tr>
         </thead>
