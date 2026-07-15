@@ -550,10 +550,18 @@ def fetch_and_register(urls):
     time. `collection` in the return value is the first collection registered
     (batches are expected to be single mods; a mixed batch still registers
     every collection's provenance, it just only surfaces one for the caller's
-    optional collection_id hookup). Returns the /api/fetch-collection
-    response body. Synchronous — callers run it off the event loop."""
+    optional collection_id hookup). Any url not containing "nexusmods.com" is
+    skipped rather than failing the whole batch — returned under `skipped` so
+    the caller can notify the user which ones were dropped; raises ValueError
+    only if every url in the batch is non-nexus. Returns the
+    /api/fetch-collection response body. Synchronous — callers run it off
+    the event loop."""
     if isinstance(urls, str):
         urls = [urls]
+    skipped = [u for u in urls if "nexusmods.com" not in u]
+    urls = [u for u in urls if u not in skipped]
+    if not urls:
+        raise ValueError(f"not a nexusmods.com url: {' '.join(skipped)}")
     multi = len(urls) > 1
     modfiles_all = []
     seen_file_ids = set()
@@ -599,7 +607,7 @@ def fetch_and_register(urls):
     merged_payload = {"data": {"collectionRevision": {"modFiles": modfiles_all}}}
     return {
         "modlist": merged_payload, "diff": diff_modlist(modfiles_all),
-        "count": len(modfiles_all), "collection": collection,
+        "count": len(modfiles_all), "collection": collection, "skipped": skipped,
     }
 
 

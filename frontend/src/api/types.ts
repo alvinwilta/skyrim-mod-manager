@@ -165,6 +165,7 @@ export interface FetchCollectionResult {
   collection: { id: number; slug: string; name: string } | null
   count: number
   diff: DiffResult
+  skipped: string[]
 }
 
 /** Shared shape of the four background-job state endpoints

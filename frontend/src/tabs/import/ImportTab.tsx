@@ -125,6 +125,7 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
       cache.modlist = d.modlist
       cache.collection = d.collection
       cache.placeholder = `fetched ${d.count} files from ${u}`
+      if (d.skipped?.length) setErr(`skipped ${d.skipped.length} non-nexus url(s): ${d.skipped.join(' ')}`)
       showDiff(d.diff)
     } catch (e) {
       setErr(errText(e))
