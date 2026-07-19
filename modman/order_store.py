@@ -5,11 +5,144 @@ order separately; this is the MO2 left-panel *install* order (file
 conflicts)."""
 
 import json
+import re
 import threading
 
 from . import buckets, db, mo2
 
 BUCKETS = buckets.BUCKETS
+
+# Within-bucket family clustering for heuristic_sort: purely cosmetic
+# adjacency (never crosses a bucket, never asserts overwrite priority) so it
+# doesn't touch the "requirements don't feed ordering" boundary in
+# requirements.py -- it only nudges the alphabetical tie-break so obviously
+# related mods land next to each other instead of scattered by name.
+_LINKING_WORDS = {"a", "an", "the", "of", "and", "or", "for", "in", "on", "to"}
+_GENERIC_WORDS = {
+    "se", "sse", "ae", "special", "edition", "ng", "mod", "mods", "fix", "fixes",
+    "fixed", "patch", "patches", "overhaul", "redux", "remastered", "revised",
+    "update", "updated", "addon", "plugin", "pack", "official", "project",
+    "complete", "enhanced", "improved", "better", "new", "version",
+}
+
+
+def _words(name):
+    return re.findall(r"[A-Za-z0-9]+", name or "")
+
+
+def _first_sig_word(name):
+    for w in _words(name):
+        lw = w.lower()
+        if len(lw) > 2 and lw not in _GENERIC_WORDS:
+            return lw
+    return None
+
+
+def _contains_whole_name(name_a, name_b):
+    """True if the shorter of the two names appears verbatim, at a word
+    boundary, inside the longer one -- e.g. "SkyUI" inside "Quest Journal Fix
+    for SkyUI". Requires the shorter name to be at least 4 chars so a short
+    generic name can't wedge into everything containing it."""
+    short, long_ = sorted((name_a or "", name_b or ""), key=len)
+    short = short.strip()
+    if len(short) < 4:
+        return False
+    return re.search(r"(?<![A-Za-z0-9])" + re.escape(short.lower()) + r"(?![A-Za-z0-9])", long_.lower()) is not None
+
+
+def _leading_acronym(name):
+    m = re.match(r"^([A-Z]{2,6})\s*[-:]\s+\S", name or "")
+    return m.group(1) if m else None
+
+
+def _initials(name):
+    return "".join(w[0] for w in _words(name) if w.lower() not in _LINKING_WORDS).upper()
+
+
+class _DSU:
+    def __init__(self):
+        self.parent = {}
+
+    def find(self, x):
+        self.parent.setdefault(x, x)
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self.parent[ra] = rb
+
+
+def _cluster_families(conn, rows):
+    """rows: [(bucket, mod_id, name), ...] for the mods being (re)sorted.
+    Returns {mod_id: sort_name} where mods in the same bucket that look like
+    the same family (name overlap, a Nexus requirement between them, or an
+    acronym-prefix match) share the same sort_name -- their shortest member's
+    name -- so they land adjacent instead of scattered alphabetically."""
+    dsu = _DSU()
+    by_bucket = {}
+    for bucket, mod_id, name in rows:
+        by_bucket.setdefault(bucket, []).append((mod_id, name))
+
+    ids = [mod_id for _, mod_id, _ in rows]
+    bucket_of = {mod_id: bucket for bucket, mod_id, _ in rows}
+    if ids:
+        placeholders = ",".join("?" * len(ids))
+        req_edges = conn.execute(
+            f"SELECT mod_id, requires_mod_id FROM mod_requirements"
+            f" WHERE mod_id IN ({placeholders}) AND requires_mod_id IN ({placeholders})",
+            ids + ids,
+        ).fetchall()
+        id_set = set(ids)
+        for r in req_edges:
+            a, b = r["mod_id"], r["requires_mod_id"]
+            # same-bucket only -- a cross-bucket requirement is real but says
+            # nothing about *adjacency*, and letting it union here would let
+            # an unrelated bucket's cluster corrupt this one's anchor name
+            if a in id_set and b in id_set and bucket_of[a] == bucket_of[b]:
+                dsu.union(a, b)
+
+    for members in by_bucket.values():
+        if len(members) < 2:
+            continue
+        acronyms = {mid: _leading_acronym(name) for mid, name in members}
+        initials = {mid: _initials(name) for mid, name in members}
+        first_words = {mid: _first_sig_word(name) for mid, name in members}
+        for i, (mid_a, name_a) in enumerate(members):
+            for mid_b, name_b in members[i + 1:]:
+                # acronym prefix ("DF - ...") matching another mod's initials
+                if acronyms[mid_a] and not acronyms[mid_b] and acronyms[mid_a] == initials[mid_b]:
+                    dsu.union(mid_a, mid_b)
+                    continue
+                if acronyms[mid_b] and not acronyms[mid_a] and acronyms[mid_b] == initials[mid_a]:
+                    dsu.union(mid_a, mid_b)
+                    continue
+                # same leading word ("SkyUI" / "SkyUI - Ghost Item Bug Fix")
+                if first_words[mid_a] and first_words[mid_a] == first_words[mid_b]:
+                    dsu.union(mid_a, mid_b)
+                    continue
+                # one mod's FULL name appears verbatim in the other's
+                # ("Quest Journal Fix for SkyUI" contains "SkyUI"). Deliberately
+                # NOT "any shared word" -- that transitively chains unrelated
+                # mods through a common generic word (two mods both named
+                # "Better ..." bridging into the same cluster via "better"
+                # alone) and was caught turning a 685-mod library's whole
+                # Interface bucket into one blob during testing.
+                if _contains_whole_name(name_a, name_b):
+                    dsu.union(mid_a, mid_b)
+
+    clusters = {}
+    for _, mod_id, name in rows:
+        clusters.setdefault(dsu.find(mod_id), []).append((mod_id, name))
+    sort_name = {}
+    for members in clusters.values():
+        anchor_name = min((name for _, name in members), key=lambda n: (len(n), n.lower()))
+        for mod_id, _ in members:
+            sort_name[mod_id] = anchor_name
+    return sort_name
 
 # Serializes every multi-statement rank rewrite (sort, corrections, move,
 # park). Sqlite serializes single statements, not whole rewrites — a refine
@@ -63,7 +196,8 @@ def _upsert_sort(conn, mod_id, bucket=None, flags=None, expected=True):
 
 
 def heuristic_sort():
-    """Bucket every unlocked ok mod and rank alphabetically within buckets;
+    """Bucket every unlocked ok mod and rank within buckets: family-clustered
+    (see _cluster_families) first, then alphabetically inside each family;
     locked mods keep their bucket and pinned position."""
     with _rank_lock, db.connect() as conn:
         rows = conn.execute(
@@ -71,12 +205,17 @@ def heuristic_sort():
             " LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
             " WHERE m.status = 'ok' AND COALESCE(s.locked, 0) = 0 GROUP BY m.mod_id"
         ).fetchall()
-        results = []
+        classified = []
         for r in rows:
             bucket, flags = buckets.classify(r["mod_name"], r["category"])
-            results.append((bucket, (r["mod_name"] or "").lower(), r["mod_id"], flags))
+            classified.append((bucket, r["mod_id"], r["mod_name"] or "", flags))
+        family_of = _cluster_families(conn, [(b, mid, name) for b, mid, name, _ in classified])
+        results = [
+            (bucket, family_of[mod_id].lower(), name.lower(), mod_id, flags)
+            for bucket, mod_id, name, flags in classified
+        ]
         results.sort()
-        for bucket, _, mod_id, flags in results:
+        for bucket, _, _, mod_id, flags in results:
             _upsert_sort(conn, mod_id, bucket, ",".join(flags))
         # a full heuristic re-sort discards any earlier bucket opinion, so
         # give the description pass a fresh shot at these mods too
@@ -85,7 +224,7 @@ def heuristic_sort():
             " WHERE mod_id IN (SELECT mod_id FROM mods WHERE status = 'ok')"
             " AND COALESCE(locked, 0) = 0"
         )
-        _write_ranks(conn, [mod_id for _, _, mod_id, _ in results])
+        _write_ranks(conn, [mod_id for _, _, _, mod_id, _ in results])
     return len(results)
 
 
