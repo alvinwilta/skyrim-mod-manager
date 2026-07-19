@@ -197,8 +197,8 @@ def _upsert_sort(conn, mod_id, bucket=None, flags=None, expected=True):
 
 def heuristic_sort():
     """Bucket every unlocked ok mod and rank within buckets: family-clustered
-    (see _cluster_families) first, then alphabetically inside each family;
-    locked mods keep their bucket and pinned position."""
+    (see _cluster_families) alphabetically by family, then by mod_id (upload
+    order) within a family; locked mods keep their bucket and pinned position."""
     with _rank_lock, db.connect() as conn:
         rows = conn.execute(
             "SELECT m.mod_id, m.mod_name, m.category FROM mods m"
@@ -210,12 +210,16 @@ def heuristic_sort():
             bucket, flags = buckets.classify(r["mod_name"], r["category"])
             classified.append((bucket, r["mod_id"], r["mod_name"] or "", flags))
         family_of = _cluster_families(conn, [(b, mid, name) for b, mid, name, _ in classified])
+        # families/singletons order alphabetically by anchor name (family_of);
+        # members WITHIN a family order by mod_id ascending -- lower id was
+        # uploaded earlier, which is usually the base mod its family clustered
+        # around, so this tends to put the base before the addons that need it
         results = [
-            (bucket, family_of[mod_id].lower(), name.lower(), mod_id, flags)
+            (bucket, family_of[mod_id].lower(), mod_id, flags)
             for bucket, mod_id, name, flags in classified
         ]
         results.sort()
-        for bucket, _, _, mod_id, flags in results:
+        for bucket, _, mod_id, flags in results:
             _upsert_sort(conn, mod_id, bucket, ",".join(flags))
         # a full heuristic re-sort discards any earlier bucket opinion, so
         # give the description pass a fresh shot at these mods too
@@ -224,7 +228,7 @@ def heuristic_sort():
             " WHERE mod_id IN (SELECT mod_id FROM mods WHERE status = 'ok')"
             " AND COALESCE(locked, 0) = 0"
         )
-        _write_ranks(conn, [mod_id for _, _, _, mod_id, _ in results])
+        _write_ranks(conn, [mod_id for _, _, mod_id, _ in results])
     return len(results)
 
 
