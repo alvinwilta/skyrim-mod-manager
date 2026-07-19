@@ -30,7 +30,7 @@ describe('CollectionsTab', () => {
   it('enable checkbox posts and reverts on error', async () => {
     const { calls } = mockApi({
       'GET /api/collections': { collections: [coll({})] },
-      'POST /api/collections/1/enabled': { error: 'db locked' },
+      'POST /api/collections/1/enabled': { __status: 500, error: 'db locked' },
     })
     render(<CollectionsTab onImportMods={vi.fn()} />)
     const cb = await screen.findByLabelText('enable Lorerim')

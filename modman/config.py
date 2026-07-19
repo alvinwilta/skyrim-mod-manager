@@ -14,7 +14,9 @@ def _load_env():
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)
-                    env[k.strip()] = v.strip()
+                    # conventional dotenv quoting: KEY="value" must not leave
+                    # literal quotes in derived paths
+                    env[k.strip()] = v.strip().strip("\"'")
     return env
 
 

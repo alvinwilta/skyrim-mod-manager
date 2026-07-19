@@ -12,7 +12,7 @@ Jobs that touch the downloads dir or rewrite install order (download, import,
 file-rename, sort refine, rule enforcement) register themselves in `_registry`
 and pass `exclusive_as` to start(): they are mutually exclusive, checked and
 flipped under one guard lock so two of them can't pass each other's check in
-the same instant (the old per-module flag checks were unlocked check-then-act).
+the same instant.
 Scan and requirements sync stay outside the group — they never rename files or
 rewrite ranks.
 """
@@ -45,6 +45,28 @@ def busy(exclude=None):
 
 def _conflicts(a, b):
     return frozenset((a, b)) not in _COMPATIBLE
+
+
+def begin_exclusive(name, state):
+    """Atomically claim `name` (a registered job) for a SYNCHRONOUS exclusive
+    section — same check-and-flip under _guard as start(), for work that runs
+    inline rather than in a job thread (e.g. the heuristic sort). Returns an
+    error string when a conflicting registered job is running, else None with
+    state['running'] flipped — the caller MUST end_exclusive() in a finally."""
+    with _guard:
+        other = next(
+            (n for n, st in _registry.items()
+             if n != name and st.get("running") and _conflicts(name, n)),
+            None,
+        )
+        if other:
+            return f"a {other} job is running — wait for it to finish first"
+        state.update({"error": None, "running": True})
+    return None
+
+
+def end_exclusive(state):
+    state["running"] = False
 
 
 def start(lock, state, busy_error, work, init=None, finalize=None, exclusive_as=None):

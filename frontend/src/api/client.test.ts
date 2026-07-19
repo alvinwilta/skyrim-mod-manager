@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { vi } from 'vitest'
-import { ApiError, get, post } from './client'
+import { get, post } from './client'
 import { mockApi } from '../test/mockApi'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -11,11 +11,13 @@ describe('api client', () => {
     await expect(get('/api/mods')).resolves.toEqual([{ file_id: 1 }])
   })
 
-  it('throws ApiError from {error} field even on HTTP 200', async () => {
-    mockApi({ 'POST /api/sort': { error: 'refine already running' } })
-    await expect(post('/api/sort', { llm: true })).rejects.toThrowError(
-      new ApiError('refine already running', 200),
-    )
+  it('returns {error} field as data on HTTP 200 (job-state polls)', async () => {
+    mockApi({ 'GET /api/sort-state': { running: false, phase: 'Error', error: 'claude timed out' } })
+    await expect(get('/api/sort-state')).resolves.toEqual({
+      running: false,
+      phase: 'Error',
+      error: 'claude timed out',
+    })
   })
 
   it('throws ApiError with {error} body and 4xx status', async () => {

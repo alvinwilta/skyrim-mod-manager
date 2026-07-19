@@ -59,9 +59,11 @@ def _norm_file_name(name):
     """File title with version-ish tokens stripped, for matching an incoming
     file to the library file it succeeds ('SkySA 2.5' == 'SkySA v2.8.3').
     Separators collapse first so underscore-glued versions ('SkyUI_5_2_SE')
-    still shed their digits."""
+    still shed their digits. Resolution tokens ('2K', '1080p') survive: they
+    name distinct sibling variants, not revisions — 'Textures 2K' and
+    'Textures 4K' are two files a library legitimately holds side by side."""
     s = re.sub(r"[\s\-_.]+", " ", (name or "").lower())
-    return re.sub(r"\bv?\d\S*", "", s).strip()
+    return re.sub(r"\b(?!\d+[kp]\b)v?\d\S*", "", s).strip()
 
 
 def _title_kin(a, b):
@@ -83,21 +85,35 @@ def _assign_predecessors(entries, rows, live_ids_fn=lambda: None):
     but a mod legitimately offers several distinct files (main, optionals,
     patches, variants) — so titles pair files up within the mod:
 
-    - every row sharing an incoming file's title is superseded by it — a
-      library holding several old revisions of one file line gets ALL of
-      them replaced, not an 'ambiguous' shrug;
+    - every row sharing an incoming file's (non-empty) title is superseded by
+      it — a library holding several old revisions of one file line gets ALL
+      of them replaced, not an 'ambiguous' shrug;
     - one leftover incoming file claims the leftover rows when they are a
-      single title line kin to its own title (title drift between versions)
-      AND Nexus no longer lists them as current files (live_ids_fn — ground
-      truth: a still-current file is a distinct file, not someone's past;
-      returns None when unavailable = no veto, heuristic stands);
+      single title line kin to its own title (title drift between versions);
+    - BOTH branches defer to Nexus ground truth (live_ids_fn — one cached
+      query per mod): a row Nexus still lists as a current file is a distinct
+      sibling, not someone's past, so it is never superseded. None when
+      unavailable = no veto, heuristic stands (offline diffs keep working);
       unrelated-titled leftovers (true sibling additions) stay unclaimed."""
     out = {}
     claimed = set()
     unmatched = []
+    live_cache = []  # one live_ids_fn() result, fetched at most once per mod
+
+    def live():
+        if not live_cache:
+            live_cache.append(live_ids_fn())
+        return live_cache[0]
+
     for f in entries:
         want = _norm_file_name(f["name"])
-        matches = [r for r in rows if _norm_file_name(r["file_name"]) == want]
+        # empty normalized title ('4K', '1.5.97') carries no identity — it
+        # must not exact-match every other digits-only title of the mod
+        matches = [r for r in rows if want and _norm_file_name(r["file_name"]) == want]
+        if matches:
+            lv = live()
+            if lv:
+                matches = [r for r in matches if r["file_id"] not in lv]
         if matches:
             out[f["fileId"]] = matches
             claimed.update(r["file_id"] for r in matches)
@@ -107,9 +123,9 @@ def _assign_predecessors(entries, rows, live_ids_fn=lambda: None):
     if len(unmatched) == 1 and left:
         titles = {_norm_file_name(r["file_name"]) for r in left}
         if len(titles) == 1 and _title_kin(titles.pop(), _norm_file_name(unmatched[0]["name"])):
-            live = live_ids_fn()
-            if live:
-                left = [r for r in left if r["file_id"] not in live]
+            lv = live()
+            if lv:
+                left = [r for r in left if r["file_id"] not in lv]
             if left:
                 out[unmatched[0]["fileId"]] = left
     return out
@@ -264,10 +280,14 @@ def _plan_replacements(modfiles):
     will replace — every old revision of the same file line, not just the
     newest. Computed against the DB *before* record_downloads inserts the new
     rows; after a replacement lands, the superseded archives are soft-deleted.
-    A file_id already known to the DB (any status) is a redownload — never a
-    replacement, so a mod's sibling file can't be mistaken for its past."""
+    A file_id already held as an 'ok' row is a redownload — never a
+    replacement, so a mod's sibling file can't be mistaken for its past.
+    'ok' only, mirroring diff_modlist's have_files: a deleted/missing row for
+    this file_id (a failed earlier update attempt, a soft-deleted revision)
+    must not demote the download to a redownload, or the revision it
+    supersedes would never be replaced."""
     with db.connect() as conn:
-        known = {r["file_id"] for r in conn.execute("SELECT file_id FROM mods")}
+        known = {r["file_id"] for r in conn.execute("SELECT file_id FROM mods WHERE status = 'ok'")}
         by_mod = _rows_by_mod(conn)
     matched = _match_all(modfiles, by_mod, _local_name_index(by_mod), known)
     return {fid: [r["file_id"] for r in olds] for fid, olds in matched.items() if olds}
@@ -381,10 +401,47 @@ def run_job(modfiles, file_ids, collection_id=None):
     finally:
         # one worker raising (e.g. disk full mid-batch) must not discard the
         # records of every file that DID complete
-        db.record_downloads(progress.values())
+        done_fids = {e["meta"]["file_id"] for e in progress.values() if e["status"] == "done"}
+        # snapshot the rows' on-disk names BEFORE record_downloads overwrites
+        # them: a redownload of a hidden archive (filename 'installed/x.7z')
+        # lands in the flat dir, and the old copy would otherwise be orphaned
+        # in installed/ forever (unhide only moves what the DB points at)
+        old_names = {}
+        if done_fids:
+            try:
+                with db.connect() as conn:
+                    old_names = {
+                        r["file_id"]: r["filename"]
+                        for r in conn.execute(
+                            f"SELECT file_id, filename FROM mods WHERE filename IS NOT NULL"
+                            f" AND file_id IN ({','.join('?' * len(done_fids))})",
+                            sorted(done_fids),
+                        )
+                    }
+            except Exception as e:
+                log.warning("could not snapshot old filenames: %s", e)
+        try:
+            db.record_downloads(progress.values())
+        except Exception:
+            # guarded like the steps below: a db hiccup here must not skip
+            # them or mask the in-flight exception. The files are safe on
+            # disk; the next import/scan re-offers the unrecorded ones.
+            log.exception("could not record %d finished download(s)", len(done_fids))
+        for e in progress.values():
+            if e["status"] != "done":
+                continue
+            old = old_names.get(e["meta"]["file_id"])
+            if old and e["filename"] and old != e["filename"]:
+                try:
+                    path = os.path.join(DOWNLOADS_DIR, old)
+                    if os.path.isfile(path):
+                        os.remove(path)
+                        mo2.remove_meta(old)
+                        log.info("removed stale copy %s (recorded as %s)", old, e["filename"])
+                except OSError as err:
+                    log.warning("could not remove stale copy %s: %s", old, err)
         # a landed update supersedes its predecessor: drop the old archive
         # (soft-delete — the row stays recoverable, the disk file goes)
-        done_fids = {e["meta"]["file_id"] for e in progress.values() if e["status"] == "done"}
         old_ids = sorted({oid for fid in done_fids for oid in replacements.get(fid, ())} - done_fids)
         if old_ids:
             try:

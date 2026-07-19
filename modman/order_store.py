@@ -76,27 +76,35 @@ class _DSU:
             self.parent[ra] = rb
 
 
+def _family_member_key(mod_id, name):
+    """Within-family order: Nexus mods by upload order (mod_id ascending --
+    the base usually predates the addons built on it), then local/non-Nexus
+    adoptions (negative synthetic ids carry no upload order) alphabetically."""
+    return (0, mod_id, "") if mod_id > 0 else (1, 0, (name or "").lower())
+
+
 def _cluster_families(conn, rows):
     """rows: [(bucket, mod_id, name), ...] for the mods being (re)sorted.
     Returns {mod_id: sort_name} where mods in the same bucket that look like
     the same family (name overlap, a Nexus requirement between them, or an
-    acronym-prefix match) share the same sort_name -- their shortest member's
-    name -- so they land adjacent instead of scattered alphabetically."""
+    acronym-prefix match) share the same sort_name -- the name of the member
+    that orders FIRST within the family (_family_member_key, i.e. the base
+    mod) -- so the family sorts alphabetically where its base would have.
+    The base's IDENTITY, not its name length, picks the anchor: in a
+    requirement-edge family the hub everyone points at (e.g. Address
+    Library) may well have the longest name in the group."""
     dsu = _DSU()
     by_bucket = {}
     for bucket, mod_id, name in rows:
         by_bucket.setdefault(bucket, []).append((mod_id, name))
 
-    ids = [mod_id for _, mod_id, _ in rows]
+    id_set = {mod_id for _, mod_id, _ in rows}
     bucket_of = {mod_id: bucket for bucket, mod_id, _ in rows}
-    if ids:
-        placeholders = ",".join("?" * len(ids))
-        req_edges = conn.execute(
-            f"SELECT mod_id, requires_mod_id FROM mod_requirements"
-            f" WHERE mod_id IN ({placeholders}) AND requires_mod_id IN ({placeholders})",
-            ids + ids,
-        ).fetchall()
-        id_set = set(ids)
+    if id_set:
+        # reads the whole (small) table; the Python filter below restricts to
+        # the sorted set. Filtering in SQL would take two IN clauses = 2×N
+        # bound variables, past the 999-variable limit of older SQLite builds
+        req_edges = conn.execute("SELECT mod_id, requires_mod_id FROM mod_requirements").fetchall()
         for r in req_edges:
             a, b = r["mod_id"], r["requires_mod_id"]
             # same-bucket only -- a cross-bucket requirement is real but says
@@ -139,7 +147,7 @@ def _cluster_families(conn, rows):
         clusters.setdefault(dsu.find(mod_id), []).append((mod_id, name))
     sort_name = {}
     for members in clusters.values():
-        anchor_name = min((name for _, name in members), key=lambda n: (len(n), n.lower()))
+        anchor_name = min(members, key=lambda m: _family_member_key(*m))[1]
         for mod_id, _ in members:
             sort_name[mod_id] = anchor_name
     return sort_name
@@ -197,8 +205,9 @@ def _upsert_sort(conn, mod_id, bucket=None, flags=None, expected=True):
 
 def heuristic_sort():
     """Bucket every unlocked ok mod and rank within buckets: family-clustered
-    (see _cluster_families) alphabetically by family, then by mod_id (upload
-    order) within a family; locked mods keep their bucket and pinned position."""
+    (see _cluster_families) alphabetically by family anchor, base-first within
+    a family (_family_member_key); locked mods keep their bucket and pinned
+    position."""
     with _rank_lock, db.connect() as conn:
         rows = conn.execute(
             "SELECT m.mod_id, m.mod_name, m.category FROM mods m"
@@ -210,16 +219,17 @@ def heuristic_sort():
             bucket, flags = buckets.classify(r["mod_name"], r["category"])
             classified.append((bucket, r["mod_id"], r["mod_name"] or "", flags))
         family_of = _cluster_families(conn, [(b, mid, name) for b, mid, name, _ in classified])
-        # families/singletons order alphabetically by anchor name (family_of);
-        # members WITHIN a family order by mod_id ascending -- lower id was
-        # uploaded earlier, which is usually the base mod its family clustered
-        # around, so this tends to put the base before the addons that need it
+        # families/singletons order alphabetically by anchor name (family_of --
+        # the base member's own name, so a family sits where its base would);
+        # members WITHIN a family order by _family_member_key: base first
+        # (mod_id ascending = upload order), local negative-id adoptions last
         results = [
-            (bucket, family_of[mod_id].lower(), mod_id, flags)
+            (bucket, family_of[mod_id].lower(), _family_member_key(mod_id, name),
+             mod_id, flags)
             for bucket, mod_id, name, flags in classified
         ]
         results.sort()
-        for bucket, _, mod_id, flags in results:
+        for bucket, _, _, mod_id, flags in results:
             _upsert_sort(conn, mod_id, bucket, ",".join(flags))
         # a full heuristic re-sort discards any earlier bucket opinion, so
         # give the description pass a fresh shot at these mods too
@@ -228,7 +238,7 @@ def heuristic_sort():
             " WHERE mod_id IN (SELECT mod_id FROM mods WHERE status = 'ok')"
             " AND COALESCE(locked, 0) = 0"
         )
-        _write_ranks(conn, [mod_id for _, _, mod_id, _ in results])
+        _write_ranks(conn, [mod_id for _, _, _, mod_id, _ in results])
     return len(results)
 
 
@@ -293,7 +303,14 @@ def _apply_corrections_locked(conn, corrections):
         if bucket is None:
             continue
         flags = item.get("f") or []
-        cur = conn.execute("SELECT bucket FROM mod_sort WHERE mod_id = ?", (mod_id,)).fetchone()
+        cur = conn.execute("SELECT bucket, locked FROM mod_sort WHERE mod_id = ?", (mod_id,)).fetchone()
+        # re-check the lock at APPLY time: refine/desc jobs filter locked mods
+        # only when they snapshot, and a lock set during the minutes-long LLM
+        # call must win — applying anyway would both move a pinned mod and
+        # double-place it in _write_ranks (it lands in the unlocked id list
+        # AND the locked-pin query)
+        if cur is not None and cur["locked"]:
+            continue
         if cur is None or cur["bucket"] != bucket:
             _place_in_bucket(conn, mod_id, bucket)
         _upsert_sort(conn, mod_id, bucket, ",".join(flags))

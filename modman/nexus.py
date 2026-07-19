@@ -391,6 +391,14 @@ class LinkGenerator:
                 )
         except Exception:
             self._pw.stop()
+            # a browser WE spawned must not outlive a failed setup — except
+            # the not-logged-in path, which nulls _spawned first on purpose
+            # so the user can log into the window and retry
+            if self._spawned:
+                try:
+                    self._spawned.terminate()
+                except Exception:
+                    pass
             raise
         return self
 
@@ -420,9 +428,11 @@ class LinkGenerator:
             else:
                 self._page.close()
         finally:
-            self._pw.stop()
-            if self._spawned:  # we started the browser, so clean it up
-                self._spawned.terminate()
+            try:
+                self._pw.stop()
+            finally:
+                if self._spawned:  # we started the browser, so clean it up
+                    self._spawned.terminate()
 
     def generate(self, file_id, game_id=GAME_ID, mod_id=None, domain=GAME):
         body = f"fid={file_id}&game_id={game_id}"

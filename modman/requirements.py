@@ -34,8 +34,11 @@ def scan():
     with db.connect() as conn:
         candidates = [dict(r) for r in conn.execute(
             "SELECT m.mod_id, m.game FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
+            # GROUP BY includes m.game: collections mix games, and a numeric
+            # mod_id colliding across two domains must be checked in BOTH —
+            # a bare mod_id group picks one domain arbitrarily
             " WHERE m.status = 'ok' AND m.mod_id > 0 AND COALESCE(m.requirements_alert, 1) != 0"
-            " AND COALESCE(s.requirements_checked, 0) = 0 GROUP BY m.mod_id"
+            " AND COALESCE(s.requirements_checked, 0) = 0 GROUP BY m.mod_id, m.game"
         ).fetchall()]
     if not candidates:
         state["phase"] = "No mods need a requirements check"

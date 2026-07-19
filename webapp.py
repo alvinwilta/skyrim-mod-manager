@@ -37,6 +37,25 @@ async def reject_cross_origin(request: Request, call_next):
 DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
 
 
+# The synchronous heuristic sort's registered slot: makes the inline sort
+# visible to (and excluded by) every jobs.start-based job. See /api/sort.
+_sort_state = {"running": False}
+jobs.register("sort", _sort_state)
+
+
+def _order_rewrite_busy():
+    """409 while a job that rewrites ranks from its own start-of-job snapshot
+    is running: a manual move/lock/flag-clear would be silently overwritten by
+    its corrections. Downloads/imports stay allowed — parking is a pure append.
+    Returns the response to send, or None to proceed."""
+    for name, st in (("sort refine", llm_refine.state), ("rule enforcement", precedence.state)):
+        if st.get("running"):
+            return JSONResponse(
+                {"error": f"a {name} job is running — wait for it to finish first"}, status_code=409
+            )
+    return None
+
+
 def _order_frozen(action):
     """409 while the install order is committed to disk (or mid-rename):
     anything that adds/removes/renames archives would desync the prefixed
@@ -348,13 +367,18 @@ async def sort_mods(request: Request):
     frozen = _order_frozen("sorting")
     if frozen:
         return frozen
-    # the heuristic pass is synchronous (no jobs.start guard of its own): a
-    # re-sort under a live refine/enforce/rename would rewrite the table the
-    # running job snapshotted, so it defers to any registered job
-    running = jobs.busy()
+    # the heuristic pass runs inline (no job thread), so it claims a
+    # registered slot via begin_exclusive: while "sort" is claimed, every
+    # registered job's start() refuses under the same guard lock — a
+    # commit/refine can never begin mid-sort and snapshot ranks the sort
+    # is about to rewrite.
+    running = jobs.begin_exclusive("sort", _sort_state)
     if running:
-        return JSONResponse({"error": f"a {running} job is running — wait for it to finish first"}, status_code=409)
-    n = await run_in_threadpool(order_store.heuristic_sort)
+        return JSONResponse({"error": running}, status_code=409)
+    try:
+        n = await run_in_threadpool(order_store.heuristic_sort)
+    finally:
+        jobs.end_exclusive(_sort_state)
     if (body or {}).get("llm"):
         err = llm_refine.start_llm_refine((body or {}).get("model") or "haiku")
         if err:
@@ -396,7 +420,7 @@ async def order_move(request: Request):
         position = int(body["position"])
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "expected {mod_id | mod_ids, position}"}, status_code=400)
-    frozen = _order_frozen("moving mods")
+    frozen = _order_frozen("moving mods") or _order_rewrite_busy()
     if frozen:
         return frozen
     err = await run_in_threadpool(order_store.move, mod_ids, position)
@@ -414,7 +438,7 @@ async def order_lock(request: Request):
         locked = bool(body["locked"])
     except (KeyError, TypeError, ValueError):
         return JSONResponse({"error": "expected {mod_id | mod_ids, locked}"}, status_code=400)
-    frozen = _order_frozen("changing locks")
+    frozen = _order_frozen("changing locks") or _order_rewrite_busy()
     if frozen:
         return frozen
     err = await run_in_threadpool(order_store.set_lock, mod_ids, locked)
@@ -429,6 +453,9 @@ async def order_clear_flags(request: Request):
     kinds = body.get("kinds")
     if not isinstance(kinds, list) or not all(isinstance(k, str) for k in kinds):
         return JSONResponse({"error": "expected {kinds: [str, ...]}"}, status_code=400)
+    busy = _order_rewrite_busy()  # a refine mid-flight re-writes these flags
+    if busy:
+        return busy
     cleared, err = await run_in_threadpool(order_store.clear_flags, kinds)
     if err:
         return JSONResponse({"error": err}, status_code=400)

@@ -43,8 +43,11 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const [justChanged, setJustChanged] = useState<ReadonlySet<number>>(new Set())
   const snapshot = useRef<BucketSnapshot | null>(null)
 
-  // Per-line dismissals for each result list; each producing job clears its
-  // section when it reruns, so dismissed lines stay gone until the next scan.
+  // Per-line dismissals for each result list; most producing jobs clear their
+  // section when they rerun, so dismissed lines stay gone until the next scan.
+  // requirements is the exception: it persists across reruns, only cleared via
+  // the explicit "restore dismissed" link -- a requirement you've judged safe
+  // to ignore should stay ignored, not resurface every time you re-sync.
   const dismissed = {
     notes: useDismissed('notes'),
     rules: useDismissed('rules'),
@@ -184,7 +187,6 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
       setReqMsg(s.phase + (s.error ? ' — ' + s.error : ''))
       if (!s.running) {
         setSyncing(false)
-        dismissed.requirements.clear()
         await loadMissing()
         return false
       }

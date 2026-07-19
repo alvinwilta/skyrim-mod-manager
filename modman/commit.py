@@ -129,9 +129,12 @@ def commit():
     renames done in this pass on any failure. Returns the number renamed."""
     with db.connect() as conn:
         plan = _plan(conn)
-        # collision pre-check -- abort before touching disk if a target exists
+        # collision pre-check -- abort before touching disk if a target exists.
+        # The .meta sidecar too: os.rename silently replaces an existing
+        # destination, and a stale leftover sidecar (prior crash) would eat
+        # the fresh one's installed= state
         for _fid, _old, new in plan:
-            if os.path.exists(os.path.join(DOWNLOADS_DIR, new)):
+            if os.path.exists(os.path.join(DOWNLOADS_DIR, new)) or os.path.exists(mo2.meta_path(new)):
                 raise RuntimeError(f"cannot commit: target name already exists: {new}")
         _set_meta(conn, FLAG_KEY, "1")  # freeze UI first, before any rename
         conn.commit()
@@ -253,8 +256,9 @@ def set_hidden(enable):
     previous flag. Returns the number moved."""
     with db.connect() as conn:
         plan = _hide_plan(conn, enable)
+        # same sidecar rule as commit(): never let a move clobber a stale .meta
         for _fid, _old, new, _orig, _new_orig in plan:
-            if os.path.exists(os.path.join(DOWNLOADS_DIR, new)):
+            if os.path.exists(os.path.join(DOWNLOADS_DIR, new)) or os.path.exists(mo2.meta_path(new)):
                 raise RuntimeError(f"cannot move: target name already exists: {new}")
         if enable:
             os.makedirs(os.path.join(DOWNLOADS_DIR, INSTALLED_SUBDIR), exist_ok=True)

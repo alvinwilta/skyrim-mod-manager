@@ -119,7 +119,7 @@ describe('LibraryTab', () => {
   it('surfaces {error} responses in the message area', async () => {
     mockLib({
       'GET /api/mods': [mod({})],
-      'POST /api/validate': { error: 'browser not reachable' },
+      'POST /api/validate': { __status: 503, error: 'browser not reachable' },
     })
     renderTab()
     await screen.findByText('SkyUI')

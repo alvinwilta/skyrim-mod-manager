@@ -15,6 +15,10 @@ ORDER_RULE_TYPES = ("before", "after", "requires")
 def connect():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # a refine saving a big correction batch holds one write transaction for
+    # a while; a concurrently finishing download's record_downloads must wait
+    # it out, not die on "database is locked" after sqlite's default 5s
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 

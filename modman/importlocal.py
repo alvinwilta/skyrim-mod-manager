@@ -123,8 +123,14 @@ def scan():
     """Adopt every downloads-dir archive not already tracked. Returns counts."""
     archives = _list_archives()
     with db.connect() as conn:
-        known_names = {r["filename"] for r in conn.execute("SELECT filename FROM mods WHERE filename IS NOT NULL")}
-        known_ids = {r["file_id"] for r in conn.execute("SELECT file_id FROM mods")}
+        # 'ok' rows only: a soft-deleted or missing row must NOT block adoption —
+        # re-importing its archive is exactly how it comes back (_insert's
+        # ON CONFLICT revives the row with status='ok' and the new filename)
+        known_names = {
+            r["filename"]
+            for r in conn.execute("SELECT filename FROM mods WHERE filename IS NOT NULL AND status = 'ok'")
+        }
+        known_ids = {r["file_id"] for r in conn.execute("SELECT file_id FROM mods WHERE status = 'ok'")}
 
     adopted = non_nexus = 0
     adopted_ids = []
