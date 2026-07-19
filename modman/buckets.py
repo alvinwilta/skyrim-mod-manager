@@ -4,7 +4,26 @@ data plus a function, shared by order_store.py (heuristic pass), llm_refine.py
 (prompt text) and conflicts.py (structural-overwrite bucket numbers), without
 any risk of a circular import between them."""
 
+import json
 import re
+from pathlib import Path
+
+# Ground truth scraped from the STEP SkyrimSE 2.3 guide's own mod tables
+# (stepmodifications.org/wiki/SkyrimSE:2.3): {bucket: [mod name, ...]} for
+# every mod the guide itself places in that bucket. Exact-name match against
+# this beats every heuristic below -- it's not a guess, it's where STEP put it.
+_STEP_GUIDE_PATH = Path(__file__).parent / "data" / "step_2.3_groups.json"
+with open(_STEP_GUIDE_PATH, encoding="utf-8") as _f:
+    _STEP_GUIDE_GROUPS = {int(k): v for k, v in json.load(_f).items()}
+
+
+def _norm(name):
+    return re.sub(r"\s+", " ", (name or "").strip().lower())
+
+
+STEP_GUIDE_BUCKET = {
+    _norm(name): bucket for bucket, names in _STEP_GUIDE_GROUPS.items() for name in names
+}
 
 # Bucket scheme follows the STEP SkyrimSE 2.3 guide's MO2 left-panel
 # separators (stepmodifications.org/wiki/SkyrimSE:2.3, groups 02-21).
@@ -120,6 +139,10 @@ KEYWORDS = [
 
 
 def classify(name, category):
+    step_bucket = STEP_GUIDE_BUCKET.get(_norm(name))
+    if step_bucket is not None:
+        return step_bucket, []
+
     lname = (name or "").lower()
     bucket = conf = None
     for pat, b, c in KEYWORDS:
