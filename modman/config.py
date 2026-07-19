@@ -25,14 +25,16 @@ _env = _load_env()
 GAME = "skyrimspecialedition"
 GAME_ID = "1704"
 CDP_URL = "http://localhost:9223"
-BROWSER_CMD = [
-    "chromium",
+_BROWSER_FLAGS = [
     "--user-data-dir=" + os.path.expanduser("~/.config/modman-browser"),
     "--remote-debugging-port=9223",
     "--no-first-run",
-    "--start-minimized",
-    "https://www.nexusmods.com",
 ]
+BROWSER_CMD = ["chromium", *_BROWSER_FLAGS, "--start-minimized", "https://www.nexusmods.com"]
+# Windowless variant for routine link generation: the saved profile session
+# usually authenticates on its own, so no window needs to appear. Login (when
+# the session has expired) always requires the visible BROWSER_CMD.
+BROWSER_CMD_HEADLESS = ["chromium", *_BROWSER_FLAGS, "--headless=new", "https://www.nexusmods.com"]
 MAX_WORKERS = 10
 
 # MO2 base directory: downloads/mods paths derive from it (.env: MO2_BASE_DIR)

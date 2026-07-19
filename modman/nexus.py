@@ -13,7 +13,15 @@ import urllib.parse
 import requests
 from playwright.sync_api import sync_playwright
 
-from .config import BROWSER_CMD, CDP_URL, DOWNLOADS_DIR, GAME, GAME_ID, NEXUS_API_KEY
+from .config import (
+    BROWSER_CMD,
+    BROWSER_CMD_HEADLESS,
+    CDP_URL,
+    DOWNLOADS_DIR,
+    GAME,
+    GAME_ID,
+    NEXUS_API_KEY,
+)
 
 log = logging.getLogger(__name__)
 
@@ -315,16 +323,23 @@ def _cdp_alive():
         return False
 
 
-def ensure_browser():
+def ensure_browser(headless=False):
     """Start the dedicated browser if its CDP port isn't answering.
+
+    headless=True spawns it windowless — enough for link generation when the
+    profile's saved session still authenticates; logging in always needs the
+    visible variant.
 
     Returns the Popen handle if we spawned it (caller may close it after use),
     None if a browser was already running."""
     if _cdp_alive():
         return None
-    log.info("starting browser for link generation")
+    log.info("starting %sbrowser for link generation", "headless " if headless else "")
     proc = subprocess.Popen(
-        BROWSER_CMD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
+        BROWSER_CMD_HEADLESS if headless else BROWSER_CMD,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
     )
     for _ in range(30):
         if _cdp_alive():
@@ -349,19 +364,30 @@ class LinkGenerator:
         self._anchor = f"https://www.nexusmods.com/{anchor_domain}/mods/{anchor_mod_id}"
 
     def __enter__(self):
-        self._spawned = ensure_browser()
+        self._spawned = ensure_browser(headless=True)
+        self._spawned_headless = self._spawned is not None
         self._pw = sync_playwright().start()
         self._own_context = None
         try:
             cdp = self._pw.chromium.connect_over_cdp(CDP_URL)
             anchor = self._anchor
 
+            # a headless browser advertises "HeadlessChrome" in its UA, which
+            # Cloudflare challenge-walls outright (and cf_clearance is bound to
+            # the headed UA the user logged in with) — masquerade as headed
+            probe = cdp.contexts[0].new_page()  # stays on about:blank
+            real_ua = probe.evaluate("navigator.userAgent")
+            probe.close()
+            self._ua = (
+                real_ua.replace("HeadlessChrome", "Chrome") if "HeadlessChrome" in real_ua else None
+            )
+
             # prefer an isolated window with copied cookies; but session cookies
             # don't always transfer, so verify and fall back to the user's own
             # context (a short-lived tab in their window)
             try:
                 self._cdp = cdp
-                self._own_context = cdp.new_context()
+                self._own_context = cdp.new_context(user_agent=self._ua) if self._ua else cdp.new_context()
                 self._page = self._own_context.new_page()
                 self._copy_session_cookies()
                 self._page.goto(anchor, wait_until="domcontentloaded")
@@ -380,6 +406,10 @@ class LinkGenerator:
             self._own_context = None
 
             self._page = cdp.contexts[0].new_page()
+            if self._ua:
+                cdp.contexts[0].new_cdp_session(self._page).send(
+                    "Network.setUserAgentOverride", {"userAgent": self._ua}
+                )
             self._page.goto(anchor, wait_until="domcontentloaded")
             # a freshly spawned browser can serve the first page before the
             # session is restored — allow a few reloads before giving up
@@ -389,13 +419,20 @@ class LinkGenerator:
                 time.sleep(2)
                 self._page.reload(wait_until="domcontentloaded")
             if not self._logged_in():
+                if self._spawned and self._spawned_headless:
+                    # nobody can log into a headless window — swap it for a
+                    # visible one before asking the user to
+                    self._swap_headless_for_visible()
                 # leave the window open so the user can log in, then retry
                 self._spawned = None
                 raise Exception(
                     "not logged into nexusmods.com — log in using the browser window that just opened, then retry"
                 )
         except Exception:
-            self._pw.stop()
+            try:
+                self._pw.stop()
+            except Exception:
+                pass  # the headless→visible swap already killed the browser
             # a browser WE spawned must not outlive a failed setup — except
             # the not-logged-in path, which nulls _spawned first on purpose
             # so the user can log into the window and retry
@@ -409,6 +446,24 @@ class LinkGenerator:
 
     def _logged_in(self):
         return not self._page.evaluate("document.body.innerText.includes('Log in')")
+
+    def _swap_headless_for_visible(self):
+        """Kill our headless spawn and start the visible browser in its place.
+        The profile dir and CDP port are single-owner, so the headless process
+        must be fully gone before the visible one starts."""
+        self._spawned.terminate()
+        try:
+            self._spawned.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self._spawned.kill()
+            self._spawned.wait()
+        for _ in range(10):
+            if not _cdp_alive():
+                break
+            time.sleep(1)
+        subprocess.Popen(
+            BROWSER_CMD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
+        )
 
     def _copy_session_cookies(self):
         self._own_context.clear_cookies()
