@@ -17,9 +17,23 @@ from .config import DOWNLOADS_DIR, GAME, MAX_WORKERS
 
 log = logging.getLogger(__name__)
 
-state = {"phase": "idle", "files": [], "error": None, "running": False}
-_job_lock = threading.Lock()
+state = {"phase": "idle", "files": [], "error": None, "running": False, "batches": 0}
 jobs.register("download", state)
+
+# Parallel batches: a download started while another is running gets its own
+# batch thread immediately (imports/redownloads never wait for the current
+# batch to finish). Only link generation is serialized (_linkgen_lock — one
+# CDP browser session); transfers overlap freely, sharing Nexus's aggregate
+# free-tier throttle. _batch_lock guards the batch bookkeeping: the active
+# count (running flips False only when the LAST batch ends), the claimed
+# file_ids (the same file can't be downloaded by two batches at once) and
+# _cancelled.
+_batch_lock = threading.Lock()
+_active_batches = 0
+_active_fids = set()  # file_ids owned by running batches
+_cancelled = set()  # file_ids the user cancelled; checked at every transfer stage
+_linkgen_lock = threading.Lock()  # one browser link-gen session at a time
+_scan_lock = threading.Lock()  # post-download archive scans are idempotent but not reentrant
 
 # signed CDN urls expire after ~4h; on free-tier bandwidth a large batch
 # outlives them, so the transfer runs in rounds: entries whose link expired
@@ -330,6 +344,9 @@ def _generate_links(modfiles, progress):
         for m in modfiles:
             entry = progress[base_for(m)]
             meta = entry["meta"]
+            if meta["file_id"] in _cancelled:
+                entry["status"] = "cancelled"
+                continue
             entry["status"] = "url"
             url = nexus.retry(
                 links.generate, meta["file_id"],
@@ -346,14 +363,23 @@ def _generate_links(modfiles, progress):
     return tasks
 
 
-def run_job(modfiles, file_ids, collection_id=None):
-    """Synchronous download pipeline. Returns {'done': n, 'failed': n}."""
+def run_job(modfiles, file_ids, collection_id=None, append_progress=False):
+    """Synchronous download pipeline. Returns {'done': n, 'failed': n}.
+
+    append_progress=True (batches joining a running session) keeps the other
+    batches' rows in state["files"] instead of replacing them, so the Progress
+    tab shows the whole session; a re-requested file replaces its own old
+    row (matched by name) rather than appearing twice."""
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
     wanted = set(file_ids)
     selected = [m for m in modfiles if m["file"]["fileId"] in wanted]
     progress = {e["name"]: e for e in (_progress_entry(m) for m in selected)}
-    state["files"] = list(progress.values())
+    with _batch_lock:  # concurrent batches merge, not clobber, the shared list
+        if append_progress:
+            state["files"] = [e for e in state["files"] if e["name"] not in progress] + list(progress.values())
+        else:
+            state["files"] = list(progress.values())
 
     if not selected:
         state["phase"] = "Finished"
@@ -366,13 +392,23 @@ def run_job(modfiles, file_ids, collection_id=None):
 
     def work(task):
         url, filename, entry = task
+        fid = entry["meta"]["file_id"]
+        if fid in _cancelled:
+            entry["status"] = "cancelled"
+            return
         entry["status"] = "downloading"
         try:
             ok = nexus.retry(nexus.fetch_file, session, url, filename, entry,
-                             fatal=(nexus.LinkExpired,))
+                             cancel=lambda: fid in _cancelled,
+                             fatal=(nexus.LinkExpired, nexus.Cancelled))
         except nexus.LinkExpired:
             entry["status"] = "expired"  # next round regenerates and resumes
             log.info("expired link for %s — will regenerate", filename)
+            return
+        except nexus.Cancelled:
+            entry["status"] = "cancelled"
+            _remove_part(filename)
+            log.info("cancelled: %s", filename)
             return
         entry["status"] = "done" if ok else "failed"
         if ok:
@@ -388,7 +424,11 @@ def run_job(modfiles, file_ids, collection_id=None):
         for round_no in range(_LINK_ROUNDS):
             state["phase"] = ("Generating download links" if round_no == 0
                               else f"Refreshing {len(remaining)} expired link(s)")
-            tasks = _generate_links(remaining, progress)
+            # one browser session: batches take turns generating links, then
+            # transfer in parallel — a joining batch only ever waits for the
+            # current batch's link-gen, never its transfers
+            with _linkgen_lock:
+                tasks = _generate_links(remaining, progress)
             if tasks:
                 state["phase"] = "Downloading"
                 with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
@@ -399,6 +439,10 @@ def run_job(modfiles, file_ids, collection_id=None):
         for m in remaining:  # rounds exhausted with links still expiring
             progress[base_for(m)]["status"] = "failed"
     finally:
+        # cancelled entries clean up after themselves: any .part left behind
+        # (cancelled before the transfer, or a partial from an earlier round)
+        # is removed — finished files are untouched
+        _sweep_partials([e["name"] for e in progress.values() if e["status"] == "cancelled"])
         # one worker raising (e.g. disk full mid-batch) must not discard the
         # records of every file that DID complete
         done_fids = {e["meta"]["file_id"] for e in progress.values() if e["status"] == "done"}
@@ -475,14 +519,30 @@ def run_job(modfiles, file_ids, collection_id=None):
     # only touches files_scanned=0 rows) so conflict/BSA metadata is ready
     # without waiting for a manual "Scan archives" click
     try:
-        conflicts.scan()
-        conflicts.classify_file_types()
+        with _scan_lock:
+            conflicts.scan()
+            conflicts.classify_file_types()
     except Exception as e:
         log.warning("post-download archive scan failed: %s", e)
 
-    failed = sum(1 for e in progress.values() if e["status"] == "failed")
-    state["phase"] = f"Finished ({failed} failed)" if failed else "Finished"
-    return {"done": len(progress) - failed, "failed": failed}
+    # the finished phase belongs to the whole session — only the sole/last
+    # batch may claim it (other batches still transferring own the phase);
+    # _run_batch re-derives it when the LAST batch ends, this covers the
+    # synchronous cli path (_active_batches == 0) and the single-batch case
+    with _batch_lock:
+        if _active_batches <= 1:
+            state["phase"] = _session_phase()
+    batch_failed = sum(1 for e in progress.values() if e["status"] != "done")
+    return {"done": len(progress) - batch_failed, "failed": batch_failed}
+
+
+def _session_phase():
+    """Finished-phase over every batch's accumulated rows in state["files"]."""
+    failed = sum(1 for e in state["files"] if e["status"] == "failed")
+    cancelled = sum(1 for e in state["files"] if e["status"] == "cancelled")
+    notes = [s for s in (f"{failed} failed" if failed else "",
+                         f"{cancelled} cancelled" if cancelled else "") if s]
+    return f"Finished ({', '.join(notes)})" if notes else "Finished"
 
 
 def validate_files(file_ids):
@@ -668,11 +728,114 @@ def fetch_and_register(urls):
     }
 
 
+def _remove_part(filename):
+    """Remove one download's .part sidecar, ignoring races with the rename."""
+    try:
+        part = os.path.join(DOWNLOADS_DIR, filename + ".part")
+        if os.path.exists(part):
+            os.remove(part)
+    except OSError as e:
+        log.warning("could not remove partial %s: %s", filename, e)
+
+
+def _sweep_partials(bases):
+    """Remove leftover .part files for the given progress-entry base names.
+
+    A cancelled entry's exact on-disk name may be unknown (cancelled before
+    link generation, or the partial dates from an earlier round whose url —
+    and thus extension — is gone), so match by base: base + optional ext +
+    '.part'. Bases embed mod/file ids, so a base can't prefix another's name."""
+    if not bases:
+        return
+    try:
+        names = os.listdir(DOWNLOADS_DIR)
+    except OSError:
+        return
+    for fn in names:
+        for b in bases:
+            if fn.startswith(b) and re.fullmatch(r"(\.[^.]*)?\.part", fn[len(b):]):
+                try:
+                    os.remove(os.path.join(DOWNLOADS_DIR, fn))
+                except OSError as e:
+                    log.warning("could not remove partial %s: %s", fn, e)
+                break
+
+
+def cancel_download(file_ids=None, cancel_all=False):
+    """Cancel in-flight downloads across every running batch. Per-file
+    (file_ids) or everything (cancel_all=True). Finished files are kept; a
+    cancelled transfer's .part is cleaned up by the worker/job. Returns how
+    many visible entries were newly marked cancelled."""
+    targets = set(file_ids or [])
+    n = 0
+    with _batch_lock:
+        _cancelled.update(targets)
+        for e in state["files"]:
+            fid = e["meta"]["file_id"]
+            if ((cancel_all or fid in targets)
+                    and e["status"] not in ("done", "failed", "cancelled")):
+                # eager mark for instant UI feedback; the worker re-asserts it
+                _cancelled.add(fid)
+                e["status"] = "cancelled"
+                n += 1
+    return n
+
+
+def _run_batch(modfiles, file_ids, collection_id, append_progress):
+    """One batch's thread. The decrement, the running=False flip and the
+    finished phase happen in one _batch_lock section, so the LAST batch out
+    always leaves a consistent idle state and a joining batch can never see
+    running=True on a session that already ended."""
+    global _active_batches
+    try:
+        run_job(modfiles, file_ids, collection_id=collection_id,
+                append_progress=append_progress)
+    except Exception as e:
+        log.exception("download batch failed")
+        state.update({"error": str(e), "phase": "Error"})
+    finally:
+        with _batch_lock:
+            _active_batches -= 1
+            _active_fids.difference_update(file_ids)
+            state["batches"] = _active_batches
+            if _active_batches == 0:
+                if not state.get("error"):
+                    state["phase"] = _session_phase()
+                state["running"] = False
+
+
 def start_download(modfiles, file_ids, collection_id=None):
-    """Async wrapper around run_job for the web app. Returns error string or None."""
-
-    def work():
-        run_job(modfiles, file_ids, collection_id=collection_id)  # maintains its own phase
-
-    return jobs.start(_job_lock, state, "a download job is already running", work,
-                      exclusive_as="download")
+    """Start a download batch. Runs immediately in its own thread even while
+    other batches are transferring — only link generation is serialized.
+    Files already claimed by a running batch are skipped (never two transfers
+    of the same file). Returns error string (a conflicting job holds the
+    exclusion group, or nothing left to download) or None."""
+    global _active_batches
+    with _batch_lock:
+        # a re-requested file always downloads: an earlier cancel of the same
+        # id must not strangle the new batch
+        _cancelled.difference_update(file_ids)
+        joining = state.get("running")
+        if not joining:
+            err = jobs.begin_exclusive("download", state)
+            if err:
+                return err
+            _cancelled.clear()
+            # reset the display HERE, synchronously: a second batch may join
+            # (and append its rows) before this batch's thread even runs, and
+            # a reset inside run_job would wipe those rows
+            state["files"] = []
+        file_ids = [f for f in file_ids if f not in _active_fids]
+        if not file_ids:
+            if not joining:  # claimed the job for nothing — release it
+                jobs.end_exclusive(state)
+            return "selected file(s) are already downloading"
+        _active_fids.update(file_ids)
+        _active_batches += 1
+        state["batches"] = _active_batches
+    threading.Thread(
+        # always append: the fresh session already reset state["files"] above
+        target=_run_batch, args=(modfiles, list(file_ids), collection_id, True),
+        daemon=True,
+    ).start()
+    return None

@@ -35,6 +35,7 @@ export function formatEta(speed: number, remainingBytes: number): string {
 export interface DlStats {
   done: number
   fail: number
+  cancelled: number
   gotBytes: number
   totalBytes: number
   total: number
@@ -46,9 +47,16 @@ export interface DlStats {
 export function computeStats(files: DlFile[]): DlStats {
   let done = 0
   let fail = 0
+  let cancelled = 0
   let gotBytes = 0
   let totalBytes = 0
   for (const f of files) {
+    if (f.status === 'cancelled') {
+      // cancelled files leave the tally entirely: their partial is deleted
+      // and their size would only skew the byte totals and ETA
+      cancelled++
+      continue
+    }
     totalBytes += f.size
     if (f.status === 'done') {
       done++
@@ -62,11 +70,12 @@ export function computeStats(files: DlFile[]): DlStats {
   return {
     done,
     fail,
+    cancelled,
     gotBytes,
     totalBytes,
-    total: files.length,
+    total: files.length - cancelled,
     finished: done + fail,
-    linksDone: files.filter((f) => f.status !== 'pending' && f.status !== 'url').length,
+    linksDone: files.filter((f) => !['pending', 'url', 'cancelled'].includes(f.status)).length,
   }
 }
 

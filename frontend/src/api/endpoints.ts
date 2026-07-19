@@ -24,11 +24,13 @@ export const api = {
   deleteFiles: (fileIds: number[]) => post<DeleteResult>('/api/delete', { file_ids: fileIds }),
   deleteMods: (modIds: number[]) => post<DeleteResult>('/api/delete', { mod_ids: modIds }),
   purgeFiles: (fileIds: number[]) => post<{ purged: number; files_removed: number }>('/api/purge', { file_ids: fileIds }),
-  redownload: (fileIds: number[]) => post<{ started: number }>('/api/redownload', { file_ids: fileIds }),
+  redownload: (fileIds: number[]) => post<{ started: number; batches: number }>('/api/redownload', { file_ids: fileIds }),
+  cancelDownload: (fileIds: number[]) => post<{ cancelled: number }>('/api/cancel', { file_ids: fileIds }),
+  cancelAllDownloads: () => post<{ cancelled: number }>('/api/cancel', { all: true }),
   fetchCollection: (url: string) => post<FetchCollectionResult>('/api/fetch-collection', { url }),
   diff: (modlist: unknown) => post<DiffResult>('/api/diff', modlist),
   download: (modlist: unknown, fileIds: number[], collectionId: number | null) =>
-    post<{ started: number }>('/api/download', { modlist, file_ids: fileIds, collection_id: collectionId }),
+    post<{ started: number; batches: number }>('/api/download', { modlist, file_ids: fileIds, collection_id: collectionId }),
   collections: () => get<{ collections: Collection[] }>('/api/collections'),
   collectionMods: (id: number) => get<CollectionMods>(`/api/collections/${id}/mods`),
   setCollectionEnabled: (id: number, enabled: boolean) =>

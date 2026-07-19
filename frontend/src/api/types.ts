@@ -180,7 +180,18 @@ export interface JobState {
 
 // 'expired': signed CDN url outlived its ~4h window mid-batch — the backend
 // regenerates the link next round and resumes; transient, not a failure
-export type DlFileStatus = 'pending' | 'url' | 'queued' | 'downloading' | 'done' | 'skipped' | 'failed' | 'expired'
+// 'cancelled': user cancelled the file — partial cleaned from disk, finished
+// files never affected
+export type DlFileStatus =
+  | 'pending'
+  | 'url'
+  | 'queued'
+  | 'downloading'
+  | 'done'
+  | 'skipped'
+  | 'failed'
+  | 'expired'
+  | 'cancelled'
 
 /** One entry of engine.state.files */
 export interface DlFile {
@@ -188,6 +199,8 @@ export interface DlFile {
   size: number
   got: number
   status: DlFileStatus
+  /** identity block written by the backend; file_id drives per-file cancel */
+  meta?: { file_id: number; mod_id: number; mod_name: string; file_name: string }
 }
 
 /** GET /api/state / the `dl` half of the SSE frame (engine.state) */
@@ -196,6 +209,8 @@ export interface DlState {
   files: DlFile[]
   error: string | null
   running: boolean
+  /** download batches running in parallel (downloads started mid-job join as new batches) */
+  batches?: number
 }
 
 /** SSE /api/events frame */

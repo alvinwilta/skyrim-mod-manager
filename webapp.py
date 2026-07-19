@@ -175,7 +175,20 @@ async def download(request: Request):
     err = engine.start_download(modfiles, file_ids, collection_id=collection_id)
     if err:
         return JSONResponse({"error": err}, status_code=409)
-    return {"started": len(file_ids)}
+    return {"started": len(file_ids), "batches": engine.state.get("batches", 0)}
+
+
+@app.post("/api/cancel")
+async def cancel(request: Request):
+    body = await request.json()
+    if (body or {}).get("all"):
+        n = engine.cancel_download(cancel_all=True)
+    else:
+        file_ids, err = _need_file_ids(body)
+        if err:
+            return err
+        n = engine.cancel_download(file_ids)
+    return {"cancelled": n}
 
 
 @app.post("/api/validate")
@@ -237,7 +250,7 @@ async def redownload(request: Request):
     err = engine.start_download(modfiles, file_ids)
     if err:
         return JSONResponse({"error": err}, status_code=409)
-    return {"started": len(file_ids)}
+    return {"started": len(file_ids), "batches": engine.state.get("batches", 0)}
 
 
 @app.get("/api/installorder")

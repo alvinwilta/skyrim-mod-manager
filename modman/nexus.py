@@ -69,6 +69,11 @@ class LinkExpired(Exception):
     same url is pointless; the caller must generate a fresh one."""
 
 
+class Cancelled(Exception):
+    """Transfer aborted because the user cancelled the file. Never retried;
+    the caller cleans up the .part."""
+
+
 def retry(func, *args, tries=5, fatal=(), **kwargs):
     """Call func up to `tries` times. Exceptions in `fatal` are re-raised
     immediately instead of retried — for failures a retry can't fix."""
@@ -457,8 +462,10 @@ def filename_for(url, base):
     return base + os.path.splitext(urllib.parse.urlparse(url).path)[1]
 
 
-def fetch_file(session, url, filename, entry):
+def fetch_file(session, url, filename, entry, cancel=None):
     """Stream a file into DOWNLOADS_DIR with Range-resume. Updates entry['got'].
+    `cancel` (optional callable) is polled between chunks; returning True
+    raises Cancelled mid-stream.
 
     Streams into a `.part` sidecar and renames to the final name only on
     completion, so a failed or in-flight download can never be mistaken for a
@@ -491,6 +498,8 @@ def fetch_file(session, url, filename, entry):
         entry["got"] = existing
         with open(part, "ab" if existing > 0 else "wb") as f:
             for chunk in response.iter_content(chunk_size=256 * 1024):
+                if cancel and cancel():
+                    raise Cancelled(f"cancelled mid-transfer: {filename}")
                 if chunk:
                     f.write(chunk)
                     entry["got"] += len(chunk)

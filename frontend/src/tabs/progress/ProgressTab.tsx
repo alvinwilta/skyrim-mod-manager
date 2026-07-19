@@ -1,4 +1,5 @@
 import { useDlEvents, useSpeed } from '../../events/EventsProvider'
+import { api } from '../../api/endpoints'
 import { human } from '../../lib/format'
 import { computeStats, formatEta, isLinkPhase } from './lib/speed'
 import { ProgressRow } from './ProgressRow'
@@ -18,6 +19,21 @@ export function ProgressTab() {
     <section>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <h2 style={{ fontSize: 15 }}>{phaseText}</h2>
+        {(dl.batches ?? 0) > 1 && (
+          <span className="c-blue" style={{ fontSize: 12 }}>
+            {dl.batches} batches in parallel
+          </span>
+        )}
+        {dl.running && (
+          <button
+            className="btn ghost"
+            style={{ marginLeft: 'auto', padding: '4px 12px' }}
+            title="Cancel every unfinished download (finished files are kept)"
+            onClick={() => api.cancelAllDownloads().catch(() => {})}
+          >
+            Cancel all
+          </button>
+        )}
       </div>
       <div className="barwrap">
         <div id="mainbar" style={{ width: `${mainPct}%` }} />
@@ -29,6 +45,11 @@ export function ProgressTab() {
         {stats.fail > 0 && (
           <span className="c-red">
             failed <b>{stats.fail}</b>
+          </span>
+        )}
+        {stats.cancelled > 0 && (
+          <span className="c-dim">
+            cancelled <b>{stats.cancelled}</b>
           </span>
         )}
         <span>
