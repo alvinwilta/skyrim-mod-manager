@@ -26,8 +26,11 @@ def meta_path(filename):
 
 def _write_meta_ini(path, *, game_name, mod_id, file_id, name, mod_name,
                     version, repository, nexus_domain=None):
-    """The one QSettings-ini template both writers share."""
-    with open(path, "w") as f:
+    """The one QSettings-ini template both writers share. newline="\r\n": MO2's
+    own QSettings writer uses CRLF: writer.write("\n") on this text-mode handle
+    triggers Python's own newline translation to match rather than leaving LF,
+    which failed to round-trip cleanly through MO2 on some Windows/Qt builds."""
+    with open(path, "w", newline="\r\n") as f:
         f.write("[General]\n")
         f.write(f"gameName={game_name}\n")
         if nexus_domain:

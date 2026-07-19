@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { useStickyTop } from '../../hooks/useStickyTop'
 import {
   DndContext,
   DragOverlay,
@@ -93,6 +94,8 @@ export function OrderTab() {
   const jobs = useOrderJobs(data)
   const [cat, setCat] = useState('')
   const [grp, setGrp] = useState('')
+  const [q, setQ] = useState('')
+  const searchWrapRef = useStickyTop<HTMLDivElement>()
   const [hl, setHl] = useState(ALL_HIGHLIGHTS_ON)
   const [showLocked, setShowLocked] = useState(true)
   const [dragId, setDragId] = useState<number | null>(null)
@@ -165,8 +168,8 @@ export function OrderTab() {
     () =>
       data.mods
         .map((mod, i) => ({ mod, pos: i + 1 }))
-        .filter((r) => matchesFilter(r.mod, cat, grp) && (showLocked || !r.mod.locked)),
-    [data.mods, cat, grp, showLocked],
+        .filter((r) => matchesFilter(r.mod, cat, grp, q) && (showLocked || !r.mod.locked)),
+    [data.mods, cat, grp, q, showLocked],
   )
 
   const lockedCount = useMemo(() => data.mods.filter((m) => m.locked).length, [data.mods])
@@ -536,6 +539,15 @@ export function OrderTab() {
             </>
           )}
         </Subtabs>
+      </div>
+
+      <div className="searchwrap" ref={searchWrapRef} style={{ margin: '12px 0 0' }}>
+        <input
+          type="text"
+          placeholder="Search mod name or id…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
       </div>
 
       <div className="toolbar" style={{ marginTop: 12 }}>

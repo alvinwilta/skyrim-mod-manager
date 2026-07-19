@@ -38,15 +38,15 @@ case "${1:-start}" in
         ;;
 esac
 
+# Always rebuild the frontend first, so a stale dist/ never gets served — the
+# backend reads frontend/dist straight off disk per request, so this alone is
+# enough to pick up changes even if the server is already running, no restart needed.
+(cd "$DIR/frontend" && npm run build)
+
 # Already running? Just open the UI.
 if curl -sf -o /dev/null --max-time 2 "$URL/api/state" 2>/dev/null; then
     xdg-open "$URL"
     exit 0
-fi
-
-# Build the frontend once if it has never been built.
-if [ ! -f "$DIR/frontend/dist/index.html" ]; then
-    (cd "$DIR/frontend" && npm run build)
 fi
 
 cd "$DIR"

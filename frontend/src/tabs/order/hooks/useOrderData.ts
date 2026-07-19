@@ -81,9 +81,10 @@ export function useOrderData() {
   }
 }
 
-export function matchesFilter(m: OrderMod, cat: string, grp: string): boolean {
+export function matchesFilter(m: OrderMod, cat: string, grp: string, q = ''): boolean {
   if (cat && m.category !== cat) return false
   if (grp === 'none' && m.bucket != null) return false
   if (grp && grp !== 'none' && String(m.bucket) !== grp) return false
+  if (q && !m.mod_name.toLowerCase().includes(q.toLowerCase()) && String(m.mod_id) !== q) return false
   return true
 }
