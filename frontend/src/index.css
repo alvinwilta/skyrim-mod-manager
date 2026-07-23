@@ -216,9 +216,18 @@ tr.runhead:hover td { background: #161a23; }
   letter-spacing: .05em; padding: 6px 10px; border-bottom: 1px solid var(--border);
 }
 .ordrow > div {
-  padding: 6px 10px; border-bottom: 1px solid #1c202a; overflow-wrap: anywhere;
+  padding: 6px 10px; border-bottom: 1px solid #1c202a;
+  /* one line per cell so every row is the same height — the virtualizer
+     estimates a uniform row height, and a wrapped (2-line) row would overlap
+     its neighbour / leave a gap */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
   user-select: none; /* text selection must not steal the drag gesture */
 }
+/* Mod cell: badges + a truncating name + trailing flag badges, all on one line.
+   The name flexes and ellipsises so the flags on its right stay visible. */
+.ordrow > div.modcell { display: flex; align-items: center; gap: 6px; }
+.modcell > .badge, .modcell > a { flex: 0 0 auto; }
+.modname { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .ordrow:hover > div { background: #141720; }
 .ordrow { cursor: grab; }
 .ordrow[draggable="false"] { cursor: default; }
@@ -451,14 +460,22 @@ input.switch:disabled { cursor: default; }
   border-radius: 4px; padding: 1px 6px; white-space: nowrap;
 }
 
-/* inline separator divider rows in the single draggable order */
+/* inline separator divider rows in the single draggable order — deliberately
+   prominent so bands read as strong section breaks in a long list */
 .band-divider {
   display: flex; align-items: center; gap: 10px; width: 100%;
-  background: #1a1f2b; border: none;
-  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
-  color: var(--text); padding: 9px 12px; cursor: pointer; font: inherit; text-align: left;
+  background: linear-gradient(90deg, #1e2740, #171b26);
+  border: none; border-left: 4px solid var(--blue);
+  border-top: 1px solid #2f3a52; border-bottom: 1px solid #2f3a52;
+  color: var(--text); padding: 11px 14px; cursor: pointer; font: inherit; text-align: left;
 }
-.band-divider:hover { background: #202634; }
-.band-divider.band-header { text-transform: uppercase; color: var(--dim); font-size: 12px; }
-.band-divider.band-unsorted { color: var(--amber); }
-.band-divider.band-output { color: var(--blue); }
+.band-divider:hover { background: linear-gradient(90deg, #24304f, #1b202c); }
+.band-divider .band-caret { color: var(--blue); font-size: 12px; width: 12px; }
+.band-divider .band-name { font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
+.band-divider .band-count {
+  margin-left: auto; color: var(--blue); background: #16213a;
+  font-size: 11px; border-radius: 10px; padding: 2px 9px; font-weight: 600;
+}
+.band-divider.band-unsorted { border-left-color: var(--amber); }
+.band-divider.band-unsorted .band-name, .band-divider.band-unsorted .band-caret { color: var(--amber); }
+.band-divider.band-output { border-left-color: var(--green); }

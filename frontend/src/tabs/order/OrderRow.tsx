@@ -131,7 +131,7 @@ const RowCells = memo(function RowCells({
         </button>
         <PosCell pos={pos} disabled={disabled} onMoveTo={(p) => onMoveTo(mod.mod_id, p)} />
       </div>
-      <div>
+      <div className="modcell">
         {mod.mo2_state === 'removed' ? (
           <span
             className="badge"
@@ -168,7 +168,9 @@ const RowCells = memo(function RowCells({
             BSA-only{' '}
           </span>
         )}
-        {mod.mod_name}{' '}
+        <span className="modname" title={mod.mod_name}>
+          {mod.mod_name}
+        </span>{' '}
         {shownFlags.slice(0, MAX_FLAG_BADGES).map((f) => (
           <FlagBadge key={f} flag={f} names={names} buckets={buckets} />
         ))}
