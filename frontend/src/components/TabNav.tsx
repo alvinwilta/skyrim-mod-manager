@@ -1,4 +1,4 @@
-export type TabId = 'library' | 'order' | 'collections' | 'import' | 'progress' | 'guide'
+export type TabId = 'library' | 'order' | 'collections' | 'import' | 'progress' | 'guide' | 'config'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'library', label: 'Library' },
@@ -6,6 +6,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'collections', label: 'Collections' },
   { id: 'import', label: 'Import' },
   { id: 'progress', label: 'Progress' },
+  { id: 'config', label: 'Config' },
   { id: 'guide', label: 'Guide' },
 ]
 

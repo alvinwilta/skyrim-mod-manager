@@ -8,7 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from modman import commit, conflicts, db, engine, importlocal, jobs, llm_refine, mo2, mo2_order, order_store, precedence, requirements
+from modman import commit, conflicts, config, db, engine, importlocal, jobs, llm_refine, mo2, mo2_order, order_store, precedence, requirements
 
 app = FastAPI(title="Mod Manager")
 db.init_db()
@@ -103,6 +103,62 @@ def mods(q: str = None):
         r["installed"] = mo2.is_installed(r["filename"])
         r["collections"] = collections.get(r["file_id"], [])
     return rows
+
+
+@app.get("/api/config")
+def get_config():
+    """Stored overrides + the effective (post-precedence) values so the UI can
+    show what's actually in effect even when a value comes from .env/default."""
+    return {
+        "stored": db.get_config(),
+        "effective": config.effective(),
+        "sources": config.sources(),
+        "keys": list(config.CONFIG_KEYS),
+        "dir_keys": list(config.CONFIG_DIR_KEYS),
+    }
+
+
+@app.get("/api/browse")
+def browse(path: str = None):
+    """List subdirectories of `path` (default: home) so the Config tab's folder
+    picker can navigate the real filesystem -- browsers can't read absolute
+    paths from a file input. Dirs only, no file contents; hidden dirs skipped.
+    Localhost single-user tool, so plain fs listing is acceptable."""
+    base = os.path.abspath(os.path.expanduser(path) if path else os.path.expanduser("~"))
+    if not os.path.isdir(base):
+        base = "/"
+    try:
+        dirs = sorted(
+            e for e in os.listdir(base)
+            if not e.startswith(".") and os.path.isdir(os.path.join(base, e))
+        )
+    except OSError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"path": base, "parent": os.path.dirname(base) or "/", "dirs": dirs}
+
+
+@app.post("/api/config")
+async def save_config(request: Request):
+    """Persist config overrides. Dir keys must point at an existing directory
+    (blank clears the override). Changes take effect on restart -- config.py
+    binds path constants at import (the UI says so)."""
+    body = await request.json()
+    values = {k: v for k, v in (body or {}).items() if k in config.CONFIG_KEYS}
+    for key in config.CONFIG_DIR_KEYS:
+        val = (values.get(key) or "").strip()
+        if val:
+            expanded = os.path.expanduser(val)
+            if not os.path.isdir(expanded):
+                return JSONResponse(
+                    {"error": f"{key}: not an existing directory: {expanded}"}, status_code=400
+                )
+    if "cdp_port" in values and (values["cdp_port"] or "").strip():
+        try:
+            int(values["cdp_port"])
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "cdp_port must be a number"}, status_code=400)
+    db.set_config(values)
+    return {"saved": True, "restart_required": True, "stored": db.get_config()}
 
 
 @app.get("/api/state")

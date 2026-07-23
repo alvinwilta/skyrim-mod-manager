@@ -1,8 +1,10 @@
 import { get, post } from './client'
 import type {
+  BrowseResult,
   Collection,
   CollectionMods,
   CommitState,
+  ConfigData,
   ConflictsResult,
   DeleteResult,
   DiffResult,
@@ -68,4 +70,8 @@ export const api = {
   syncRequirements: () => post<{ started: boolean }>('/api/sync-requirements'),
   requirementsState: () => get<JobState>('/api/requirements-state'),
   requirementsMissing: () => get<{ missing: MissingRequirement[] }>('/api/requirements-missing'),
+  config: () => get<ConfigData>('/api/config'),
+  saveConfig: (values: Record<string, string>) =>
+    post<{ saved: boolean; restart_required: boolean; stored: Record<string, string> }>('/api/config', values),
+  browse: (path?: string) => get<BrowseResult>(`/api/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 }

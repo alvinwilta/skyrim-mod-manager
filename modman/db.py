@@ -49,6 +49,9 @@ def init_db():
             """
         )
         conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+        # user config (paths/dirs/cdp_port/api key) -- read at import by
+        # config.py (directly, read-only) with precedence DB > .env > env.
+        conn.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)")
         # install-order state is per *mod*, one row per mod_id (a mod has many
         # file rows in `mods`); survives file redownloads/updates untouched.
         conn.execute(
@@ -142,6 +145,32 @@ def init_db():
         conn.execute(
             "UPDATE mods SET mod_url = 'https://www.nexusmods.com/' || game || '/mods/' || mod_id WHERE mod_url IS NULL"
         )
+
+
+def get_config():
+    """All stored config overrides as {key: value}. Only rows the user actually
+    set -- resolution against .env/env/default happens in config.py."""
+    with connect() as conn:
+        return {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM config")}
+
+
+def set_config(values):
+    """Upsert config keys. A blank/None value deletes the row (so the key falls
+    back to .env/env/default again). Only known keys are written."""
+    from .config import CONFIG_KEYS
+
+    with connect() as conn:
+        for key, value in values.items():
+            if key not in CONFIG_KEYS:
+                continue
+            if value in (None, ""):
+                conn.execute("DELETE FROM config WHERE key = ?", (key,))
+            else:
+                conn.execute(
+                    "INSERT INTO config (key, value) VALUES (?, ?)"
+                    " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (key, str(value).strip()),
+                )
 
 
 def list_mods(q=None):

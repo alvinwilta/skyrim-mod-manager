@@ -218,3 +218,24 @@ export interface EventsFrame {
   dl: DlState
   sort: JobState
 }
+
+/** GET /api/config */
+export interface ConfigData {
+  /** overrides the user explicitly stored (may be a subset of keys) */
+  stored: Record<string, string>
+  /** resolved values actually in effect (DB > .env > env > default) */
+  effective: Record<string, string | number>
+  /** provenance per key: 'db' | 'env' | 'default' */
+  sources: Record<string, string>
+  /** every editable config key, in display order */
+  keys: string[]
+  /** keys whose value must be an existing directory */
+  dir_keys: string[]
+}
+
+/** GET /api/browse — one directory level for the folder picker */
+export interface BrowseResult {
+  path: string
+  parent: string
+  dirs: string[]
+}
