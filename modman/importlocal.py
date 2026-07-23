@@ -38,8 +38,11 @@ ARCHIVE_EXTS = {".7z", ".zip", ".rar", ".7zip"}
 
 def _synthetic_id(filename):
     """Stable negative id from the filename: idempotent across re-runs, and can
-    never clash with Nexus's positive modId/fileId space."""
-    return -int(hashlib.sha1(filename.encode("utf-8", "surrogatepass")).hexdigest()[:15], 16)
+    never clash with Nexus's positive modId/fileId space. Truncated to 13 hex
+    (52 bits) so |id| stays under JS Number.MAX_SAFE_INTEGER (2**53-1) — the
+    frontend round-trips ids as JSON numbers, and a wider hash loses precision
+    in the browser (row shows a broken id and can't be locked/moved)."""
+    return -int(hashlib.sha1(filename.encode("utf-8", "surrogatepass")).hexdigest()[:13], 16)
 
 
 def _list_archives():

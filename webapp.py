@@ -8,7 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from modman import commit, conflicts, config, db, engine, importlocal, jobs, llm_refine, mo2, mo2_order, order_store, precedence, requirements
+from modman import commit, conflicts, config, db, engine, importlocal, jobs, llm_refine, mo2, mo2_order, mo2_pull, order_store, precedence, requirements
 
 app = FastAPI(title="Mod Manager")
 db.init_db()
@@ -375,6 +375,24 @@ def import_local():
 @app.get("/api/import-local-state")
 def import_local_state():
     return importlocal.state
+
+
+@app.post("/api/mo2-pull")
+def mo2_pull_start():
+    """Import MO2's live install order + state into the tool (rewrites ranks +
+    mo2_state). Blocked while the order is committed to disk (renames in flight)."""
+    frozen = _order_frozen("pulling from MO2")
+    if frozen:
+        return frozen
+    err = mo2_pull.start_pull()
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"started": True}
+
+
+@app.get("/api/mo2-pull-state")
+def mo2_pull_state():
+    return mo2_pull.state
 
 
 @app.post("/api/scan-conflicts")

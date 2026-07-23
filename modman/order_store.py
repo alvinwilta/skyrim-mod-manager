@@ -15,8 +15,8 @@ BUCKETS = buckets.BUCKETS
 # Within-bucket family clustering for heuristic_sort: purely cosmetic
 # adjacency (never crosses a bucket, never asserts overwrite priority) so it
 # doesn't touch the "requirements don't feed ordering" boundary in
-# requirements.py -- it only nudges the alphabetical tie-break so obviously
-# related mods land next to each other instead of scattered by name.
+# requirements.py -- it only nudges the mod_id tie-break so obviously
+# related mods land next to each other instead of scattered by upload date.
 _LINKING_WORDS = {"a", "an", "the", "of", "and", "or", "for", "in", "on", "to"}
 _GENERIC_WORDS = {
     "se", "sse", "ae", "special", "edition", "ng", "mod", "mods", "fix", "fixes",
@@ -85,14 +85,12 @@ def _family_member_key(mod_id, name):
 
 def _cluster_families(conn, rows):
     """rows: [(bucket, mod_id, name), ...] for the mods being (re)sorted.
-    Returns {mod_id: sort_name} where mods in the same bucket that look like
+    Returns {mod_id: anchor_key} where mods in the same bucket that look like
     the same family (name overlap, a Nexus requirement between them, or an
-    acronym-prefix match) share the same sort_name -- the name of the member
-    that orders FIRST within the family (_family_member_key, i.e. the base
-    mod) -- so the family sorts alphabetically where its base would have.
-    The base's IDENTITY, not its name length, picks the anchor: in a
-    requirement-edge family the hub everyone points at (e.g. Address
-    Library) may well have the longest name in the group."""
+    acronym-prefix match) share the same anchor_key -- the _family_member_key
+    of the member that orders FIRST within the family (the base mod, i.e. the
+    lowest positive mod_id) -- so the family sorts where its base's upload
+    order would place it, members pulled adjacent to the base."""
     dsu = _DSU()
     by_bucket = {}
     for bucket, mod_id, name in rows:
@@ -145,12 +143,12 @@ def _cluster_families(conn, rows):
     clusters = {}
     for _, mod_id, name in rows:
         clusters.setdefault(dsu.find(mod_id), []).append((mod_id, name))
-    sort_name = {}
+    anchor_key = {}
     for members in clusters.values():
-        anchor_name = min(members, key=lambda m: _family_member_key(*m))[1]
+        key = min(_family_member_key(*m) for m in members)
         for mod_id, _ in members:
-            sort_name[mod_id] = anchor_name
-    return sort_name
+            anchor_key[mod_id] = key
+    return anchor_key
 
 # Serializes every multi-statement rank rewrite (sort, corrections, move,
 # park). Sqlite serializes single statements, not whole rewrites — a refine
@@ -204,10 +202,12 @@ def _upsert_sort(conn, mod_id, bucket=None, flags=None, expected=True):
 
 
 def heuristic_sort():
-    """Bucket every unlocked ok mod and rank within buckets: family-clustered
-    (see _cluster_families) alphabetically by family anchor, base-first within
-    a family (_family_member_key); locked mods keep their bucket and pinned
-    position."""
+    """Bucket every unlocked ok mod and rank within buckets by upload order
+    (mod_id ascending: older mods place lower, newer overwrite),
+    family-clustered (see _cluster_families) so related mods stay adjacent at
+    the base member's position; local negative-id adoptions (no upload order)
+    go after all Nexus mods, alphabetically. Locked mods keep their bucket and
+    pinned position."""
     with _rank_lock, db.connect() as conn:
         rows = conn.execute(
             "SELECT m.mod_id, m.mod_name, m.category FROM mods m"
@@ -219,12 +219,13 @@ def heuristic_sort():
             bucket, flags = buckets.classify(r["mod_name"], r["category"])
             classified.append((bucket, r["mod_id"], r["mod_name"] or "", flags))
         family_of = _cluster_families(conn, [(b, mid, name) for b, mid, name, _ in classified])
-        # families/singletons order alphabetically by anchor name (family_of --
-        # the base member's own name, so a family sits where its base would);
-        # members WITHIN a family order by _family_member_key: base first
-        # (mod_id ascending = upload order), local negative-id adoptions last
+        # families/singletons order by the anchor key (family_of -- the base
+        # member's _family_member_key, so a family sits where its base's
+        # upload order would place it); members WITHIN a family order by
+        # _family_member_key: base first (mod_id ascending = upload order),
+        # local negative-id adoptions last
         results = [
-            (bucket, family_of[mod_id].lower(), _family_member_key(mod_id, name),
+            (bucket, family_of[mod_id], _family_member_key(mod_id, name),
              mod_id, flags)
             for bucket, mod_id, name, flags in classified
         ]
@@ -371,7 +372,7 @@ def load_order():
         rows = conn.execute(
             "SELECT m.mod_id, m.mod_name, m.category, m.mod_url, s.bucket AS sort_bucket,"
             " s.rank AS sort_rank, s.flags AS sort_flags, s.locked AS sort_locked,"
-            " s.file_type AS sort_file_type,"
+            " s.file_type AS sort_file_type, s.mo2_state AS sort_mo2_state,"
             " json_group_array(m.filename) AS fns"
             " FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
             " WHERE m.status = 'ok' GROUP BY m.mod_id"
@@ -388,7 +389,13 @@ def load_order():
             "flags": [f for f in (r["sort_flags"] or "").split(",") if f],
             "locked": bool(r["sort_locked"]),
             "file_type": r["sort_file_type"],
-            "installed": any(mo2.is_installed(f) for f in json.loads(r["fns"]) if f),
+            "mo2_state": r["sort_mo2_state"],
+            # MO2 is the truth once pulled (a mod installed in MO2 whose download
+            # archive was cleaned still counts as installed); fall back to the
+            # download .meta sidecar only before the first pull.
+            "installed": r["sort_mo2_state"] in ("enabled", "disabled")
+            if r["sort_mo2_state"]
+            else any(mo2.is_installed(f) for f in json.loads(r["fns"]) if f),
         }
         for r in rows
     ]
@@ -451,6 +458,33 @@ def park_new_at_end(mod_ids):
                 (mid, at + i),
             )
         return len(new)
+
+
+def persist_pull(ordered_ids, state_by_id, removed_ids):
+    """Persist an MO2 pull (modman/mo2_pull.py): rank every ok mod to
+    `ordered_ids` (MO2's install order — matched mods in order, then the
+    removed ones), and stamp mo2_state on each. Deliberately ignores locks:
+    a pull is an explicit "adopt MO2's current order" action, and MO2 is the
+    seed. Runs under _rank_lock like every other multi-statement rank rewrite."""
+    with _rank_lock, db.connect() as conn:
+        for rank, mid in enumerate(ordered_ids):
+            conn.execute(
+                "INSERT INTO mod_sort (mod_id, rank) VALUES (?, ?)"
+                " ON CONFLICT(mod_id) DO UPDATE SET rank = excluded.rank",
+                (mid, rank),
+            )
+        for mid, st in state_by_id.items():
+            conn.execute(
+                "INSERT INTO mod_sort (mod_id, mo2_state) VALUES (?, ?)"
+                " ON CONFLICT(mod_id) DO UPDATE SET mo2_state = excluded.mo2_state",
+                (mid, st),
+            )
+        for mid in removed_ids:
+            conn.execute(
+                "INSERT INTO mod_sort (mod_id, mo2_state) VALUES (?, 'removed')"
+                " ON CONFLICT(mod_id) DO UPDATE SET mo2_state = 'removed'",
+                (mid,),
+            )
 
 
 def move(mod_ids, position):

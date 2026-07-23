@@ -39,6 +39,8 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const [commitError, setCommitError] = useState(false)
   const [committing, setCommitting] = useState(false)
   const [hiding, setHiding] = useState(false) // hide-installed move job in flight
+  const [pulling, setPulling] = useState(false) // MO2 pull job in flight
+  const [pullMsg, setPullMsg] = useState('')
   const [wrongById, setWrongById] = useState<ReadonlyMap<number, number | null>>(new Map())
   const [justChanged, setJustChanged] = useState<ReadonlySet<number>>(new Set())
   const snapshot = useRef<BucketSnapshot | null>(null)
@@ -227,6 +229,35 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     1000,
     committing || hiding,
   )
+
+  // Pull watcher: 1s. Reads MO2's live order/state into the tool (rewrites
+  // ranks), then reloads + highlights what moved.
+  usePoller(
+    async () => {
+      const s = await api.mo2PullState()
+      setPullMsg(s.phase + (s.error ? ' — ' + s.error : ''))
+      if (!s.running) {
+        setPulling(false)
+        await finishAction()
+        return false
+      }
+      return true
+    },
+    1000,
+    pulling,
+  )
+
+  const runPull = async () => {
+    takeSnapshot()
+    setPullMsg('reading MO2…')
+    try {
+      await api.mo2Pull()
+      setPulling(true)
+    } catch (e) {
+      setPullMsg(errText(e))
+      snapshot.current = null
+    }
+  }
 
   const runCommit = async () => {
     takeSnapshot()
@@ -420,6 +451,9 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     commitError,
     committing,
     hiding,
+    pulling,
+    pullMsg,
+    runPull,
     wrongById,
     mo2,
     mo2Msg,

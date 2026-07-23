@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStickyTop } from '../../hooks/useStickyTop'
 import {
   DndContext,
@@ -117,6 +117,18 @@ export function OrderTab() {
 
   const setMsg = jobs.setMsg
 
+  // Auto-pull MO2's order once, on first ever load (no mod carries an mo2_state
+  // yet) — the seed. Never re-fires afterwards (a pull stamps every ok mod), so
+  // it can't clobber tool-side reordering on later reloads. Skipped while the
+  // order is committed to disk (reordering is frozen then).
+  const autoPulledRef = useRef(false)
+  useEffect(() => {
+    if (autoPulledRef.current || data.committed || jobs.pulling) return
+    if (data.mods.length === 0 || data.mods.some((m) => m.mo2_state != null)) return
+    autoPulledRef.current = true
+    void jobs.runPull()
+  }, [data.mods, data.committed, jobs])
+
   // Resolve the drift check's {mod_id → expected bucket} map against the
   // order cache so the panel can list the drifted mods by name/position.
   const driftEntries: DriftEntry[] = useMemo(
@@ -164,7 +176,7 @@ export function OrderTab() {
   // Hiding locked rows is just another filter: positions stay global (i+1 over
   // the full list), so a move onto a visible row still lands at that mod's real
   // rank — locked rows keep their place relative to the moved block.
-  const visible: VisibleRow[] = useMemo(
+  const visibleAll: VisibleRow[] = useMemo(
     () =>
       data.mods
         .map((mod, i) => ({ mod, pos: i + 1 }))
@@ -190,9 +202,20 @@ export function OrderTab() {
     c.drift = jobs.wrongById.size
     return c
   }, [data.mods, jobs.justChanged, jobs.wrongById])
-  const sel = useRowSelection(visible.map((r) => r.mod.mod_id))
+  const sel = useRowSelection(visibleAll.map((r) => r.mod.mod_id))
 
-  const visibleIndex = useMemo(() => new Map(visible.map((r, i) => [r.mod.mod_id, i])), [visible])
+  // While a selected row is being dragged, the REST of the selection leaves
+  // the list (it travels in the drag overlay as "N mods"). With those rows
+  // still rendered, dnd-kit's drop preview shifts neighbors as if only ONE
+  // row were moving, so the block landed 2+ rows below where it was dropped.
+  const blockDrag = dragId !== null && sel.selected.has(dragId) && sel.selected.size > 1
+  const visible: VisibleRow[] = useMemo(
+    () =>
+      blockDrag ? visibleAll.filter((r) => r.mod.mod_id === dragId || !sel.selected.has(r.mod.mod_id)) : visibleAll,
+    [visibleAll, blockDrag, dragId, sel.selected],
+  )
+
+  const visibleIndex = useMemo(() => new Map(visibleAll.map((r, i) => [r.mod.mod_id, i])), [visibleAll])
 
   // Stable reference: SortableContext re-derives its internal `items` off this
   // array's identity, not its contents — an inline `.map()` here would hand it
@@ -326,7 +349,6 @@ export function OrderTab() {
     if (intent) void doMove(intent.ids, intent.position)
   }
 
-  const blockDrag = dragId !== null && sel.selected.has(dragId) && sel.selected.size > 1
   const dragName = dragId !== null ? data.names.get(dragId) : ''
 
   const groupIds = Object.keys(data.buckets)
@@ -409,6 +431,31 @@ export function OrderTab() {
             </>
           )}
         </Subtabs>
+      </div>
+
+      <div className="toolgroup" style={{ marginTop: 10 }}>
+        <div className="toolgroup-h">
+          <span className="toolgroup-label">MO2 sync</span>
+          <span className="dim" style={{ fontSize: 12 }}>
+            Import MO2's live install order + enabled/disabled state as the starting point. Auto-runs once on
+            first load; re-run after changing mods in MO2. Rewrites this list's order — MO2 is never modified.
+          </span>
+        </div>
+        <div className="toolbar" style={{ margin: 0 }}>
+          <button
+            className="btn ghost"
+            disabled={jobs.pulling || frozen}
+            title="Read the active MO2 profile's modlist.txt + installed folders and set this list's order + install-state to match. Read-only for MO2."
+            onClick={() => void jobs.runPull()}
+          >
+            {jobs.pulling ? 'Pulling…' : 'Pull from MO2'}
+          </button>
+          {jobs.pullMsg && (
+            <span className="dim" style={{ fontSize: 12 }}>
+              {jobs.pullMsg}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="toolgroup" style={{ marginTop: 10 }}>
@@ -595,7 +642,13 @@ export function OrderTab() {
         selected={sel.selected}
         disabled={frozen}
         onLock={(locked) => void doLock([...sel.selected], locked)}
-        onMoveTo={(p) => void doMove([...sel.selected], p)}
+        // bulk moves (Top/Bottom/Move/group) are one-shot: the rows land at
+        // their target, so keeping them selected only invites an accidental
+        // second move — clear right away (the optimistic reorder already ran)
+        onMoveTo={(p) => {
+          void doMove([...sel.selected], p)
+          sel.clear()
+        }}
         onDelete={() => setConfirmDelete(true)}
         onClear={sel.clear}
       />

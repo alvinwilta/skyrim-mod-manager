@@ -128,7 +128,25 @@ const RowCells = memo(function RowCells({
         <PosCell pos={pos} disabled={disabled} onMoveTo={(p) => onMoveTo(mod.mod_id, p)} />
       </div>
       <div>
-        {mod.installed && <span className="badge b-new">installed </span>}
+        {mod.mo2_state === 'removed' ? (
+          <span
+            className="badge"
+            style={{ background: '#3a1214', color: 'var(--red)' }}
+            title="Present in your library but MO2 doesn't have this mod installed (as of the last pull)"
+          >
+            not in MO2{' '}
+          </span>
+        ) : mod.mo2_state === 'disabled' ? (
+          <span
+            className="badge"
+            style={{ background: '#3a2b12', color: 'var(--amber)' }}
+            title="Installed in MO2 but disabled (as of the last pull)"
+          >
+            MO2 off{' '}
+          </span>
+        ) : (
+          mod.installed && <span className="badge b-new">installed </span>
+        )}
         {mod.file_type === 'bsa' && (
           <span
             className="badge b-bsa"

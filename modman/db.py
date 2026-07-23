@@ -79,6 +79,11 @@ def init_db():
             conn.execute("ALTER TABLE mod_sort ADD COLUMN file_type TEXT")
         if "requirements_checked" not in cols_sort:
             conn.execute("ALTER TABLE mod_sort ADD COLUMN requirements_checked INTEGER NOT NULL DEFAULT 0")
+        # MO2 live install-state from the last pull (modman/mo2_pull.py):
+        # 'enabled'/'disabled' = folder present in MO2's mods dir (active/inactive),
+        # 'removed' = an ok db mod MO2 no longer has, NULL = never pulled.
+        if "mo2_state" not in cols_sort:
+            conn.execute("ALTER TABLE mod_sort ADD COLUMN mo2_state TEXT")
         # real (not guessed) file-path overlaps between archives -- see modman/conflicts.py
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mod_files (file_id INTEGER NOT NULL, path TEXT NOT NULL,"

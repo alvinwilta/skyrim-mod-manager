@@ -10,6 +10,7 @@ const m = (mod_id: number, bucket: number | null): OrderMod => ({
   bucket,
   locked: false,
   installed: false,
+  mo2_state: null,
   file_type: null,
   flags: [],
 })

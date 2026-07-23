@@ -68,6 +68,8 @@ export interface OrderMod {
   bucket: number | null
   locked: boolean
   installed: boolean
+  /** MO2 live state from the last pull: 'enabled' | 'disabled' | 'removed' | null */
+  mo2_state: string | null
   file_type: string | null
   flags: string[]
 }

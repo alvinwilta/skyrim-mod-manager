@@ -27,6 +27,7 @@ const m = (over: Partial<OrderMod>): OrderMod => ({
   bucket: 3,
   locked: false,
   installed: false,
+  mo2_state: null,
   file_type: null,
   flags: [],
   ...over,

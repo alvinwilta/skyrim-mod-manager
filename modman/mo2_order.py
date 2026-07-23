@@ -46,6 +46,29 @@ def folder_to_modid():
     return out
 
 
+def read_modlist():
+    """Every managed mod entry in modlist.txt, in FILE order (top = highest
+    priority = bottom of the app's rank order). Separators, headers and `*`
+    unmanaged DLC/CC are dropped. Returns [{"folder": name, "enabled": bool}].
+    Reverse this for the app's rank 0..N (panel top->bottom) sense."""
+    try:
+        with open(modlist_path(), errors="ignore") as f:
+            lines = [ln.rstrip("\n") for ln in f]
+    except OSError:
+        return []
+    out = []
+    for ln in lines:
+        if not ln or ln.startswith("#"):
+            continue
+        mark, name = ln[0], ln[1:]
+        if mark not in "+-":  # '*' unmanaged DLC/CC, anything else: skip
+            continue
+        if name.endswith("_separator"):
+            continue
+        out.append({"folder": name, "enabled": mark == "+"})
+    return out
+
+
 def _enabled_folders():
     """MO2 mod folder names that are enabled, in app rank order (top->bottom of
     the left panel = reverse of modlist.txt)."""
