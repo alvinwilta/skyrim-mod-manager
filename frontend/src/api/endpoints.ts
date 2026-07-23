@@ -15,6 +15,7 @@ import type {
   Mo2Check,
   Mod,
   OrderCheck,
+  Separator,
   SortPrompt,
   ValidateResult,
 } from './types'
@@ -77,4 +78,8 @@ export const api = {
   saveConfig: (values: Record<string, string>) =>
     post<{ saved: boolean; restart_required: boolean; stored: Record<string, string> }>('/api/config', values),
   browse: (path?: string) => get<BrowseResult>(`/api/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  separators: () => get<{ separators: Separator[] }>('/api/separators'),
+  assignSeparators: () => post<{ assigned: number }>('/api/separators/assign'),
+  collapseSeparator: (id: number, collapsed: boolean) =>
+    post<{ id: number; collapsed: boolean }>('/api/separators/collapse', { id, collapsed }),
 }

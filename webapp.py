@@ -8,7 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from modman import commit, conflicts, config, db, engine, importlocal, jobs, llm_refine, mo2, mo2_order, mo2_pull, order_store, precedence, requirements
+from modman import commit, conflicts, config, db, engine, importlocal, jobs, llm_refine, mo2, mo2_order, mo2_pull, order_store, precedence, requirements, separators
 
 app = FastAPI(title="Mod Manager")
 db.init_db()
@@ -393,6 +393,35 @@ def mo2_pull_start():
 @app.get("/api/mo2-pull-state")
 def mo2_pull_state():
     return mo2_pull.state
+
+
+@app.get("/api/separators")
+def get_separators():
+    """The band taxonomy in order, each with a live mod count."""
+    return {"separators": separators.list_separators()}
+
+
+@app.post("/api/separators/assign")
+def assign_separators():
+    """(Re)tag every ok mod with its category's separator band. Cosmetic —
+    ranks untouched — but a rank rewrite in flight would race the read, so
+    refuse while one is running."""
+    busy = _order_rewrite_busy()
+    if busy:
+        return busy
+    n = separators.assign()
+    return {"assigned": n}
+
+
+@app.post("/api/separators/collapse")
+async def collapse_separator(request: Request):
+    body = await request.json()
+    try:
+        sep_id = int(body["id"])
+    except (KeyError, TypeError, ValueError):
+        return JSONResponse({"error": "expected {id, collapsed}"}, status_code=400)
+    separators.set_collapsed(sep_id, bool(body.get("collapsed")))
+    return {"id": sep_id, "collapsed": bool(body.get("collapsed"))}
 
 
 @app.post("/api/scan-conflicts")

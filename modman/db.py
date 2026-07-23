@@ -52,6 +52,15 @@ def init_db():
         # user config (paths/dirs/cdp_port/api key) -- read at import by
         # config.py (directly, read-only) with precedence DB > .env > env.
         conn.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)")
+        # separator taxonomy (grouping layer, NOT the functional order) -- seeded
+        # from the repo `separator/` dir by modman/separators.py. id IS the band
+        # sort key (major*100+minor from the numeric prefix), so ordering by id
+        # is ordering by band. special_kind: header/output/unsorted/dlc/storage/
+        # root, else NULL (a normal assignable sub-separator).
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS separator (id INTEGER PRIMARY KEY, name TEXT NOT NULL,"
+            " folder TEXT, special_kind TEXT, collapsed INTEGER NOT NULL DEFAULT 0)"
+        )
         # install-order state is per *mod*, one row per mod_id (a mod has many
         # file rows in `mods`); survives file redownloads/updates untouched.
         conn.execute(
@@ -84,6 +93,11 @@ def init_db():
         # 'removed' = an ok db mod MO2 no longer has, NULL = never pulled.
         if "mo2_state" not in cols_sort:
             conn.execute("ALTER TABLE mod_sort ADD COLUMN mo2_state TEXT")
+        # which separator (grouping band) a mod belongs to -- separator.id, i.e.
+        # the band sort key. Assigned by modman/separators.py; NULL = unassigned
+        # (shows under NEW & UNSORTED). Cosmetic in Phase 2; feeds bands in P3.
+        if "separator_id" not in cols_sort:
+            conn.execute("ALTER TABLE mod_sort ADD COLUMN separator_id INTEGER")
         # real (not guessed) file-path overlaps between archives -- see modman/conflicts.py
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mod_files (file_id INTEGER NOT NULL, path TEXT NOT NULL,"

@@ -414,3 +414,33 @@ input.switch:disabled { cursor: default; }
 .config-actions { display: flex; gap: 10px; }
 .config-error { color: var(--red); font-size: 13px; }
 .config-ok { color: var(--green); font-size: 13px; }
+
+/* Separator band grouped view (Order tab) */
+.bandview { margin-top: 14px; display: flex; flex-direction: column; gap: 2px; }
+.band { display: flex; flex-direction: column; }
+.band-h {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: #12151c; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 7px 12px; cursor: pointer; font: inherit;
+  text-align: left; margin-top: 6px;
+}
+.band-h:hover { background: #171b24; }
+.band-h:disabled { cursor: default; opacity: .8; }
+.band-caret { width: 12px; color: var(--dim); font-size: 11px; }
+.band-name { font-weight: 600; font-size: 13px; letter-spacing: .02em; }
+.band-count {
+  margin-left: auto; color: var(--dim); font-size: 11px;
+  background: #232833; border-radius: 10px; padding: 1px 8px;
+}
+/* special bands get a tinted left edge */
+.band-h.band-header { background: #1a1f2b; font-size: 12px; text-transform: uppercase; color: var(--dim); }
+.band-h.band-unsorted { border-color: var(--amber); }
+.band-h.band-output { border-color: var(--blue); }
+.band-h.band-dlc, .band-h.band-storage, .band-h.band-root { border-color: #3a3f4b; }
+.band-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px 4px 34px; font-size: 13px; border-bottom: 1px solid #1a1e27;
+}
+.band-row:hover { background: #14171e; }
+.band-mod { flex: 1; }
+.band-lock { font-size: 11px; }

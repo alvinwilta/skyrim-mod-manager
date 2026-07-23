@@ -19,7 +19,9 @@ import { useOrderJobs } from './hooks/useOrderJobs'
 import { resolveMove } from './lib/moveIntent'
 import { type VisibleRow } from './lib/runs'
 import { OrderRow } from './OrderRow'
+import { BandView } from './BandView'
 import { OrderToolbar } from './OrderToolbar'
+import type { Separator } from '../../api/types'
 import { HighlightBar } from './HighlightBar'
 import { ALL_HIGHLIGHTS_ON, CLEARABLE_FLAG_KIND, flagCategory, type HighlightKey } from './lib/highlights'
 import { SelectionToolbar } from './SelectionToolbar'
@@ -128,6 +130,29 @@ export function OrderTab() {
     autoPulledRef.current = true
     void jobs.runPull()
   }, [data.mods, data.committed, jobs])
+
+  // Separator bands (grouping layer): loaded once, refreshed after an assign.
+  const [separators, setSeparators] = useState<Separator[]>([])
+  const [groupByBand, setGroupByBand] = useState(false)
+  const [assigning, setAssigning] = useState(false)
+  const loadSeparators = useCallback(() => {
+    api.separators().then((r) => setSeparators(r.separators)).catch(() => {})
+  }, [])
+  useEffect(loadSeparators, [loadSeparators])
+
+  const assignBands = async () => {
+    setAssigning(true)
+    try {
+      const r = await api.assignSeparators()
+      jobs.setMsg(`assigned ${r.assigned} mod(s) to separator bands`)
+      loadSeparators()
+      await data.reload()
+    } catch (e) {
+      jobs.setMsg(errText(e))
+    } finally {
+      setAssigning(false)
+    }
+  }
 
   // Resolve the drift check's {mod_id → expected bucket} map against the
   // order cache so the panel can list the drifted mods by name/position.
@@ -460,6 +485,35 @@ export function OrderTab() {
 
       <div className="toolgroup" style={{ marginTop: 10 }}>
         <div className="toolgroup-h">
+          <span className="toolgroup-label">Grouping</span>
+          <span className="dim" style={{ fontSize: 12 }}>
+            Cosmetic separator bands (STEP-style), assigned from each mod's Nexus category. Grouping only — does
+            not change the install order (that's driven by conflicts, coming next).
+          </span>
+        </div>
+        <div className="toolbar" style={{ margin: 0 }}>
+          <button
+            className="btn ghost"
+            disabled={assigning || frozen}
+            title="Tag every mod with its separator band from its Nexus category. Unmapped/uncategorised mods land in NEW & UNSORTED."
+            onClick={() => void assignBands()}
+          >
+            {assigning ? 'Assigning…' : 'Assign bands'}
+          </button>
+          <label className="switch-label" title="Show the order grouped under collapsible separator bands (read view).">
+            <input
+              type="checkbox"
+              className="switch"
+              checked={groupByBand}
+              onChange={(e) => setGroupByBand(e.target.checked)}
+            />
+            Group by band
+          </label>
+        </div>
+      </div>
+
+      <div className="toolgroup" style={{ marginTop: 10 }}>
+        <div className="toolgroup-h">
           <span className="toolgroup-label">Analysis</span>
           <span className="dim" style={{ fontSize: 12 }}>
             Real (not guessed) data pulled in from archives/Nexus, plus checking the order itself — all read-only,
@@ -659,7 +713,9 @@ export function OrderTab() {
         </div>
       )}
 
-      {visible.length ? (
+      {groupByBand ? (
+        <BandView mods={data.mods} separators={separators} />
+      ) : visible.length ? (
         <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
           <SortableContext items={visibleIds} strategy={verticalListSortingStrategy}>
             <div

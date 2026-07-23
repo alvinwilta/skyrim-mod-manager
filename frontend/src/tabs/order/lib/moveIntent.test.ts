@@ -12,6 +12,7 @@ const m = (mod_id: number): OrderMod => ({
   installed: false,
   mo2_state: null,
   source: null,
+  separator_id: null,
   file_type: null,
   flags: [],
 })

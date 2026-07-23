@@ -72,6 +72,8 @@ export interface OrderMod {
   mo2_state: string | null
   /** provenance: 'mo2' = adopted from an MO2-only install (no managed archive), else null */
   source: string | null
+  /** separator band this mod is grouped under (separator.id), or null if unassigned */
+  separator_id: number | null
   file_type: string | null
   flags: string[]
 }
@@ -242,4 +244,14 @@ export interface BrowseResult {
   path: string
   parent: string
   dirs: string[]
+}
+
+/** One separator band (GET /api/separators). id = band sort key. */
+export interface Separator {
+  id: number
+  name: string
+  /** 'header' | 'output' | 'unsorted' | 'dlc' | 'storage' | 'root' | null */
+  special_kind: string | null
+  collapsed: number
+  mod_count: number
 }

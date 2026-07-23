@@ -29,6 +29,7 @@ const m = (over: Partial<OrderMod>): OrderMod => ({
   installed: false,
   mo2_state: null,
   source: null,
+  separator_id: null,
   file_type: null,
   flags: [],
   ...over,

@@ -374,6 +374,7 @@ def load_order():
             " s.bucket AS sort_bucket,"
             " s.rank AS sort_rank, s.flags AS sort_flags, s.locked AS sort_locked,"
             " s.file_type AS sort_file_type, s.mo2_state AS sort_mo2_state,"
+            " s.separator_id AS sort_separator_id,"
             " json_group_array(m.filename) AS fns"
             " FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
             " WHERE m.status = 'ok' GROUP BY m.mod_id"
@@ -392,6 +393,7 @@ def load_order():
             "file_type": r["sort_file_type"],
             "mo2_state": r["sort_mo2_state"],
             "source": r["mod_source"],
+            "separator_id": r["sort_separator_id"],
             # MO2 is the truth once pulled (a mod installed in MO2 whose download
             # archive was cleaned still counts as installed); fall back to the
             # download .meta sidecar only before the first pull.
