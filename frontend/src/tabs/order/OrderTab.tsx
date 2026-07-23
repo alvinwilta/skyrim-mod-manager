@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Key, type ReactNode } from 'react'
 import { useStickyTop } from '../../hooks/useStickyTop'
 import {
   DndContext,
@@ -19,7 +19,6 @@ import { useOrderJobs } from './hooks/useOrderJobs'
 import { resolveMove } from './lib/moveIntent'
 import { type VisibleRow } from './lib/runs'
 import { OrderRow } from './OrderRow'
-import { BandView } from './BandView'
 import { OrderToolbar } from './OrderToolbar'
 import type { Separator } from '../../api/types'
 import { HighlightBar } from './HighlightBar'
@@ -131,16 +130,32 @@ export function OrderTab() {
     void jobs.runPull()
   }, [data.mods, data.committed, jobs])
 
-  // Separator bands (grouping layer): loaded once, refreshed after an assign.
+  // Separator bands: dividers live INLINE in the single draggable order.
   const [separators, setSeparators] = useState<Separator[]>([])
-  const [groupByBand, setGroupByBand] = useState(false)
+  const [collapsedBands, setCollapsedBands] = useState<Set<number>>(new Set())
   const [assigning, setAssigning] = useState(false)
   const loadSeparators = useCallback(() => {
-    api.separators().then((r) => setSeparators(r.separators)).catch(() => {})
+    api
+      .separators()
+      .then((r) => {
+        setSeparators(r.separators)
+        setCollapsedBands(new Set(r.separators.filter((s) => s.collapsed).map((s) => s.id)))
+      })
+      .catch(() => {})
   }, [])
   useEffect(loadSeparators, [loadSeparators])
 
-  const bandById = useMemo(() => new Map(separators.map((s) => [s.id, s.name])), [separators])
+  const sepById = useMemo(() => new Map(separators.map((s) => [s.id, s])), [separators])
+
+  const toggleBand = (id: number) => {
+    setCollapsedBands((prev) => {
+      const next = new Set(prev)
+      const willCollapse = !next.has(id)
+      willCollapse ? next.add(id) : next.delete(id)
+      void api.collapseSeparator(id, willCollapse).catch(() => {})
+      return next
+    })
+  }
 
   const assignBands = async () => {
     setAssigning(true)
@@ -156,13 +171,15 @@ export function OrderTab() {
     }
   }
 
-  // Auto-assign bands once on first load (no mod carries a separator_id yet),
-  // after any pull settles — so bands appear without a manual click. Never
-  // re-fires (assign stamps every mod). Skipped while committed/pulling.
+  // Organise into bands once per mount, after any pull settles — so the order
+  // is always band-grouped (contiguous dividers) without a manual click.
+  // assign+rerank is idempotent and preserves manual within/cross-band moves,
+  // so running it on tab entry just re-enforces the invariant. Skipped while
+  // committed (frozen) or a pull is still in flight.
   const autoAssignedRef = useRef(false)
   useEffect(() => {
     if (autoAssignedRef.current || jobs.pulling || assigning || data.committed) return
-    if (data.mods.length === 0 || data.mods.some((m) => m.separator_id != null)) return
+    if (data.mods.length === 0) return
     autoAssignedRef.current = true
     void assignBands()
     // assignBands is stable enough for this one-shot guard; deps intentionally minimal
@@ -255,13 +272,37 @@ export function OrderTab() {
     [visibleAll, blockDrag, dragId, sel.selected],
   )
 
-  const visibleIndex = useMemo(() => new Map(visibleAll.map((r, i) => [r.mod.mod_id, i])), [visibleAll])
+  // Combined render list: separator dividers interleaved with the (band-grouped)
+  // mod rows — one draggable order, MO2-style. A divider is emitted at each band
+  // boundary; a collapsed band keeps its divider but drops its mod rows.
+  const combined = useMemo(() => {
+    const out: ({ kind: 'sep'; sepId: number } | { kind: 'mod'; row: VisibleRow })[] = []
+    let prev: number | null | undefined
+    for (const row of visible) {
+      const sid = row.mod.separator_id
+      if (sid != null && sid !== prev) out.push({ kind: 'sep', sepId: sid })
+      prev = sid
+      if (sid != null && collapsedBands.has(sid)) continue // band collapsed: hide its mods
+      out.push({ kind: 'mod', row })
+    }
+    return out
+  }, [visible, collapsedBands])
+
+  // mod_id → its index in `combined` (for jump-to-mod scrolling past dividers)
+  const visibleIndex = useMemo(() => {
+    const m = new Map<number, number>()
+    combined.forEach((it, i) => it.kind === 'mod' && m.set(it.row.mod.mod_id, i))
+    return m
+  }, [combined])
 
   // Stable reference: SortableContext re-derives its internal `items` off this
   // array's identity, not its contents — an inline `.map()` here would hand it
   // a new array (and force that recompute) on every OrderTab re-render for any
   // unrelated reason (job polling, a message update) while a drag is in flight.
-  const visibleIds = useMemo(() => visible.map((r) => r.mod.mod_id), [visible])
+  const visibleIds = useMemo(
+    () => combined.flatMap((it) => (it.kind === 'mod' ? [it.row.mod.mod_id] : [])),
+    [combined],
+  )
 
   // Real row count runs into the hundreds — mounting every row keeps every one
   // of them subscribed to dnd-kit's SortableContext, which re-renders every
@@ -273,7 +314,7 @@ export function OrderTab() {
   // targets by default (window/document) when it finds no scrollable ancestor.
   const listRef = useRef<HTMLDivElement>(null)
   const rowVirtualizer = useWindowVirtualizer({
-    count: visible.length,
+    count: combined.length,
     // Matches the real single-line row height (padding 6px×2 + 14px/1.5
     // line-height, measured ~35.5px rendered). A mismatched estimate is
     // fine at rest — tanstack corrects it via ResizeObserver on measurement —
@@ -315,7 +356,7 @@ export function OrderTab() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
-  const doMove = async (ids: number[], position: number) => {
+  const doMove = async (ids: number[], position: number, separatorId?: number | null) => {
     if (frozen) return
     // Reorder the local cache first so the table's row order already matches
     // the drop target when dnd-kit resets the dragged row's transform — the
@@ -323,7 +364,7 @@ export function OrderTab() {
     // round-trip, and the row visibly snaps back to its old spot first.
     data.reorderLocal(ids, position)
     try {
-      const r = await api.orderMove(ids, position)
+      const r = await api.orderMove(ids, position, separatorId)
       jobs.setMsg(`moved ${ids.length > 1 ? ids.length + ' mods ' : ''}to #${r.position}`)
       if (jobs.wrongById.size) await jobs.checkDrift(true) // keep drift highlights fresh
       await data.reload()
@@ -386,7 +427,11 @@ export function OrderTab() {
     setDragId(null)
     if (!e.over) return
     const intent = resolveMove(Number(e.active.id), Number(e.over.id), sel.selected, data.mods)
-    if (intent) void doMove(intent.ids, intent.position)
+    if (!intent) return
+    // dropping onto a mod joins that mod's band — this is how a drag across a
+    // divider re-bands the moved mod(s).
+    const overMod = data.mods.find((m) => m.mod_id === Number(e.over!.id))
+    void doMove(intent.ids, intent.position, overMod?.separator_id ?? null)
   }
 
   const dragName = dragId !== null ? data.names.get(dragId) : ''
@@ -502,28 +547,35 @@ export function OrderTab() {
         <div className="toolgroup-h">
           <span className="toolgroup-label">Grouping</span>
           <span className="dim" style={{ fontSize: 12 }}>
-            Cosmetic separator bands (STEP-style), assigned from each mod's Nexus category. Grouping only — does
-            not change the install order (that's driven by conflicts, coming next).
+            Separator bands (STEP-style) appear as collapsible dividers inline in the order below. Organise groups
+            mods by their Nexus category band; drag a mod under a different divider to re-band it.
           </span>
         </div>
         <div className="toolbar" style={{ margin: 0 }}>
           <button
             className="btn ghost"
             disabled={assigning || frozen}
-            title="Tag every mod with its separator band from its Nexus category. Unmapped/uncategorised mods land in NEW & UNSORTED."
+            title="Assign each mod to its separator band (from its Nexus category) and group the order by band. Unmapped/uncategorised mods land in NEW & UNSORTED."
             onClick={() => void assignBands()}
           >
-            {assigning ? 'Assigning…' : 'Assign bands'}
+            {assigning ? 'Organising…' : 'Organise into bands'}
           </button>
-          <label className="switch-label" title="Show the order grouped under collapsible separator bands (read view).">
-            <input
-              type="checkbox"
-              className="switch"
-              checked={groupByBand}
-              onChange={(e) => setGroupByBand(e.target.checked)}
-            />
-            Group by band
-          </label>
+          <button
+            className="btn ghost"
+            disabled={!separators.length}
+            title="Collapse every band"
+            onClick={() => setCollapsedBands(new Set(separators.map((s) => s.id)))}
+          >
+            Collapse all
+          </button>
+          <button
+            className="btn ghost"
+            disabled={!collapsedBands.size}
+            title="Expand every band"
+            onClick={() => setCollapsedBands(new Set())}
+          >
+            Expand all
+          </button>
         </div>
       </div>
 
@@ -728,16 +780,14 @@ export function OrderTab() {
         </div>
       )}
 
-      {groupByBand ? (
-        <BandView mods={data.mods} separators={separators} />
-      ) : visible.length ? (
+      {visible.length ? (
         <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
           <SortableContext items={visibleIds} strategy={verticalListSortingStrategy}>
             <div
               role="table"
               onClick={(e) => {
                 // click on empty space (not a row / interactive el) clears selection
-                if (!(e.target as Element).closest('.ordrow, button, a, input, select')) sel.clear()
+                if (!(e.target as Element).closest('.ordrow, .band-divider, button, a, input, select')) sel.clear()
               }}
             >
               <div className="ordtable-head" role="row">
@@ -745,16 +795,16 @@ export function OrderTab() {
                 <div role="columnheader">#</div>
                 <div role="columnheader">Mod</div>
                 <div className="num" role="columnheader">Mod ID</div>
-                <div className="hide-sm" role="columnheader">Band / Category</div>
+                <div className="hide-sm" role="columnheader">Category</div>
                 <div className="num" role="columnheader">Group</div>
               </div>
               <div ref={listRef} style={{ position: 'relative', height: rowVirtualizer.getTotalSize() }}>
                 {rowVirtualizer.getVirtualItems().map((vRow) => {
-                  const r = visible[vRow.index]
-                  if (!r) return null
-                  return (
+                  const item = combined[vRow.index]
+                  if (!item) return null
+                  const wrap = (children: ReactNode, key: Key) => (
                     <div
-                      key={r.mod.mod_id}
+                      key={key}
                       data-index={vRow.index}
                       ref={rowVirtualizer.measureElement}
                       style={{
@@ -765,25 +815,45 @@ export function OrderTab() {
                         transform: `translateY(${vRow.start - rowVirtualizer.options.scrollMargin}px)`,
                       }}
                     >
-                      <OrderRow
-                        mod={r.mod}
-                        pos={r.pos}
-                        names={data.names}
-                        buckets={data.buckets}
-                        bandName={r.mod.separator_id != null ? bandById.get(r.mod.separator_id) : undefined}
-                        hl={hl}
-                        selected={sel.selected.has(r.mod.mod_id)}
-                        wrongExpected={
-                          hl.drift && jobs.wrongById.has(r.mod.mod_id) ? jobs.wrongById.get(r.mod.mod_id) : undefined
-                        }
-                        mo2Wrong={data.committed && mo2WrongIds.has(r.mod.mod_id)}
-                        justChanged={jobs.justChanged.has(r.mod.mod_id)}
-                        disabled={frozen}
-                        onRowClick={rowHandlers.click}
-                        onToggleLock={rowHandlers.lock}
-                        onMoveTo={rowHandlers.moveTo}
-                      />
+                      {children}
                     </div>
+                  )
+                  if (item.kind === 'sep') {
+                    const sep = sepById.get(item.sepId)
+                    const isCol = collapsedBands.has(item.sepId)
+                    return wrap(
+                      <button
+                        className={`band-divider${sep?.special_kind ? ` band-${sep.special_kind}` : ''}`}
+                        onClick={() => toggleBand(item.sepId)}
+                        title="click to collapse/expand this band"
+                      >
+                        <span className="band-caret">{isCol ? '▸' : '▾'}</span>
+                        <span className="band-name">{sep?.name ?? item.sepId}</span>
+                        <span className="band-count">{sep?.mod_count ?? ''}</span>
+                      </button>,
+                      `sep-${item.sepId}`,
+                    )
+                  }
+                  const r = item.row
+                  return wrap(
+                    <OrderRow
+                      mod={r.mod}
+                      pos={r.pos}
+                      names={data.names}
+                      buckets={data.buckets}
+                      hl={hl}
+                      selected={sel.selected.has(r.mod.mod_id)}
+                      wrongExpected={
+                        hl.drift && jobs.wrongById.has(r.mod.mod_id) ? jobs.wrongById.get(r.mod.mod_id) : undefined
+                      }
+                      mo2Wrong={data.committed && mo2WrongIds.has(r.mod.mod_id)}
+                      justChanged={jobs.justChanged.has(r.mod.mod_id)}
+                      disabled={frozen}
+                      onRowClick={rowHandlers.click}
+                      onToggleLock={rowHandlers.lock}
+                      onMoveTo={rowHandlers.moveTo}
+                    />,
+                    r.mod.mod_id,
                   )
                 })}
               </div>

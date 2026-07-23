@@ -464,6 +464,27 @@ def park_new_at_end(mod_ids):
         return len(new)
 
 
+def rerank_by_separator():
+    """Reorder ranks so mods group by separator band (band sort key ascending =
+    separator.id ascending), preserving each band's current internal order.
+    Unassigned mods (no separator_id) sink to the end. Deliberately ignores
+    locks: this is an explicit "organise into bands" reorganise. Returns count."""
+    with _rank_lock, db.connect() as conn:
+        rows = conn.execute(
+            "SELECT m.mod_id FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
+            " WHERE m.status = 'ok'"
+            " ORDER BY s.separator_id IS NULL, s.separator_id,"
+            "          s.rank IS NULL, s.rank, m.mod_name COLLATE NOCASE"
+        ).fetchall()
+        for rank, r in enumerate(rows):
+            conn.execute(
+                "INSERT INTO mod_sort (mod_id, rank) VALUES (?, ?)"
+                " ON CONFLICT(mod_id) DO UPDATE SET rank = excluded.rank",
+                (r["mod_id"], rank),
+            )
+    return len(rows)
+
+
 def persist_pull(ordered_ids, state_by_id, removed_ids):
     """Persist an MO2 pull (modman/mo2_pull.py): rank every ok mod to
     `ordered_ids` (MO2's install order — matched mods in order, then the
@@ -491,12 +512,16 @@ def persist_pull(ordered_ids, state_by_id, removed_ids):
             )
 
 
-def move(mod_ids, position):
+def move(mod_ids, position, separator_id=None):
     """Move one or several mods (as a block, keeping their relative order) to
     a 1-based position in the global order, shifting the rest. Moved mods
     adopt the bucket of their new neighbor above (below when moved to the
     top) so the grouped view stays coherent; expected_bucket is untouched,
-    which is what check_order compares against."""
+    which is what check_order compares against.
+
+    When `separator_id` is given (a drag that landed under a separator divider),
+    the moved mods are re-banded to it — this is how dragging across a divider
+    changes a mod's band. None leaves separator_id untouched."""
     if isinstance(mod_ids, int):
         mod_ids = [mod_ids]
     with _rank_lock, db.connect() as conn:
@@ -506,11 +531,12 @@ def move(mod_ids, position):
             " ORDER BY s.rank IS NULL, s.rank, s.bucket, m.mod_name COLLATE NOCASE"
         ).fetchall()
         ids = [r["mod_id"] for r in rows]
-        moving = [i for i in ids if i in set(mod_ids)]  # keep current relative order
-        if len(moving) != len(set(mod_ids)):
+        moving_set = set(mod_ids)
+        moving = [i for i in ids if i in moving_set]  # keep current relative order
+        if len(moving) != len(moving_set):
             return "unknown mod"
         bucket_of = {r["mod_id"]: r["bucket"] for r in rows}
-        ids = [i for i in ids if i not in set(moving)]
+        ids = [i for i in ids if i not in moving_set]
         pos = max(0, min(len(ids), int(position) - 1))
         ids[pos:pos] = moving
         neighbor = ids[pos - 1] if pos > 0 else (ids[pos + len(moving)] if len(ids) > len(moving) else moving[0])
@@ -522,6 +548,9 @@ def move(mod_ids, position):
                 " ON CONFLICT(mod_id) DO UPDATE SET rank = excluded.rank, bucket = excluded.bucket",
                 (mid, rank, bucket_of[mid]),
             )
+        if separator_id is not None:
+            for mid in moving:
+                conn.execute("UPDATE mod_sort SET separator_id = ? WHERE mod_id = ?", (separator_id, mid))
     return None
 
 

@@ -450,3 +450,15 @@ input.switch:disabled { cursor: default; }
   font-size: 10px; color: var(--blue); background: #12202f;
   border-radius: 4px; padding: 1px 6px; white-space: nowrap;
 }
+
+/* inline separator divider rows in the single draggable order */
+.band-divider {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: #1a1f2b; border: none;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  color: var(--text); padding: 9px 12px; cursor: pointer; font: inherit; text-align: left;
+}
+.band-divider:hover { background: #202634; }
+.band-divider.band-header { text-transform: uppercase; color: var(--dim); font-size: 12px; }
+.band-divider.band-unsorted { color: var(--amber); }
+.band-divider.band-output { color: var(--blue); }

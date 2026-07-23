@@ -44,8 +44,12 @@ export const api = {
     post<{ deleted: number; files_removed: number; shared_kept: number }>(`/api/collections/${id}/remove-mods`, {}),
   installOrder: () => get<InstallOrder>('/api/installorder'),
   sortState: () => get<JobState>('/api/sort-state'),
-  orderMove: (modIds: number[], position: number) =>
-    post<{ moved: number[]; position: number }>('/api/order/move', { mod_ids: modIds, position }),
+  orderMove: (modIds: number[], position: number, separatorId?: number | null) =>
+    post<{ moved: number[]; position: number; separator_id: number | null }>('/api/order/move', {
+      mod_ids: modIds,
+      position,
+      separator_id: separatorId ?? null,
+    }),
   orderLock: (modIds: number[], locked: boolean) =>
     post<{ mod_ids: number[]; locked: boolean }>('/api/order/lock', { mod_ids: modIds, locked }),
   orderClearFlags: (kinds: string[]) =>

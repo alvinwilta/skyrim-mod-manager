@@ -227,7 +227,7 @@ describe('OrderTab selection + bulk actions', () => {
     await user.keyboard('{/Control}')
     await user.click(screen.getByRole('button', { name: 'Top' }))
     await waitFor(() =>
-      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [2, 3], position: 1 }),
+      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [2, 3], position: 1, separator_id: null }),
     )
   })
 
@@ -241,7 +241,7 @@ describe('OrderTab selection + bulk actions', () => {
       // Interface's last remaining mod (MoreHUD) is at index 1 once USSEP is
       // excluded; the backend inserts after removing the moved block, so
       // end-of-group = position 3
-      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [3], position: 3 }),
+      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [3], position: 3, separator_id: null }),
     )
   })
 
@@ -264,7 +264,7 @@ describe('OrderTab selection + bulk actions', () => {
     await userEvent.clear(box)
     await userEvent.type(box, '1{Enter}')
     await waitFor(() =>
-      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [3], position: 1 }),
+      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [3], position: 1, separator_id: null }),
     )
   })
 

@@ -534,15 +534,17 @@ async def order_move(request: Request):
         raw = body.get("mod_ids") or [body["mod_id"]]
         mod_ids = [int(i) for i in raw]
         position = int(body["position"])
+        sep = body.get("separator_id")
+        separator_id = int(sep) if sep is not None else None
     except (KeyError, TypeError, ValueError):
-        return JSONResponse({"error": "expected {mod_id | mod_ids, position}"}, status_code=400)
+        return JSONResponse({"error": "expected {mod_id | mod_ids, position, separator_id?}"}, status_code=400)
     frozen = _order_frozen("moving mods") or _order_rewrite_busy()
     if frozen:
         return frozen
-    err = await run_in_threadpool(order_store.move, mod_ids, position)
+    err = await run_in_threadpool(order_store.move, mod_ids, position, separator_id)
     if err:
         return JSONResponse({"error": err}, status_code=400)
-    return {"moved": mod_ids, "position": position}
+    return {"moved": mod_ids, "position": position, "separator_id": separator_id}
 
 
 @app.post("/api/order/lock")

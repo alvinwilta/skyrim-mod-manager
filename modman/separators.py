@@ -143,7 +143,11 @@ def list_separators():
 
 def assign():
     """Tag every ok mod with a separator_id from its Nexus category (unmapped ->
-    NEW & UNSORTED). Cosmetic only — ranks are untouched. Returns count assigned."""
+    NEW & UNSORTED), then re-rank so the install order groups by band (each
+    band's internal order preserved). This makes the separators clean inline
+    dividers in the single draggable order. Returns count assigned."""
+    from . import order_store
+
     with db.connect() as conn:
         seed(conn)
         valid = {r["id"] for r in conn.execute("SELECT id FROM separator")}
@@ -161,6 +165,7 @@ def assign():
                 (r["mod_id"], sk),
             )
             n += 1
+    order_store.rerank_by_separator()
     return n
 
 
