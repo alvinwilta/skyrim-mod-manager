@@ -460,22 +460,26 @@ input.switch:disabled { cursor: default; }
   border-radius: 4px; padding: 1px 6px; white-space: nowrap;
 }
 
-/* inline separator divider rows in the single draggable order — deliberately
-   prominent so bands read as strong section breaks in a long list */
+/* inline separator divider rows in the single draggable order — prominent as
+   section breaks, but NEUTRAL (border + shadow, no blue fill) so they never
+   read like a selected row (which uses the blue accent). */
 .band-divider {
   display: flex; align-items: center; gap: 10px; width: 100%;
-  background: linear-gradient(90deg, #1e2740, #171b26);
-  border: none; border-left: 4px solid var(--blue);
-  border-top: 1px solid #2f3a52; border-bottom: 1px solid #2f3a52;
+  background: #10131a;
+  border: 1px solid #333b49; border-radius: 6px;
+  box-shadow: 0 3px 9px rgba(0, 0, 0, .5), inset 0 1px 0 #2a313d;
   color: var(--text); padding: 11px 14px; cursor: pointer; font: inherit; text-align: left;
 }
-.band-divider:hover { background: linear-gradient(90deg, #24304f, #1b202c); }
-.band-divider .band-caret { color: var(--blue); font-size: 12px; width: 12px; }
+.band-divider:hover { background: #161a23; border-color: #414b5c; }
+.band-divider .band-caret { color: var(--dim); font-size: 12px; width: 12px; }
 .band-divider .band-name { font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
 .band-divider .band-count {
-  margin-left: auto; color: var(--blue); background: #16213a;
+  margin-left: auto; color: var(--dim); background: #232833;
   font-size: 11px; border-radius: 10px; padding: 2px 9px; font-weight: 600;
 }
-.band-divider.band-unsorted { border-left-color: var(--amber); }
-.band-divider.band-unsorted .band-name, .band-divider.band-unsorted .band-caret { color: var(--amber); }
-.band-divider.band-output { border-left-color: var(--green); }
+/* special bands: tint the whole border (not a left bar) so they stand out
+   without the blue that selection owns */
+.band-divider.band-unsorted { border-color: var(--amber); }
+.band-divider.band-unsorted .band-name { color: var(--amber); }
+.band-divider.band-output { border-color: var(--green); }
+.band-divider.band-output .band-name { color: var(--green); }
