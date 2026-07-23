@@ -444,3 +444,9 @@ input.switch:disabled { cursor: default; }
 .band-row:hover { background: #14171e; }
 .band-mod { flex: 1; }
 .band-lock { font-size: 11px; }
+
+/* inline separator band label in the flat order table */
+.bandtag {
+  font-size: 10px; color: var(--blue); background: #12202f;
+  border-radius: 4px; padding: 1px 6px; white-space: nowrap;
+}

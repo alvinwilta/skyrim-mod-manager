@@ -15,6 +15,8 @@ interface Props {
   pos: number
   names: ReadonlyMap<number, string>
   buckets: Record<string, string>
+  /** separator band name for this mod's separator_id, if assigned */
+  bandName?: string
   hl: Highlights
   selected: boolean
   wrongExpected: number | null | undefined // bucket id when drift-flagged
@@ -87,6 +89,7 @@ const RowCells = memo(function RowCells({
   pos,
   names,
   buckets,
+  bandName,
   hl,
   wrong,
   wrongExpected,
@@ -99,6 +102,7 @@ const RowCells = memo(function RowCells({
   pos: number
   names: ReadonlyMap<number, string>
   buckets: Record<string, string>
+  bandName?: string
   hl: Highlights
   wrong: boolean
   wrongExpected: number | null | undefined
@@ -206,7 +210,9 @@ const RowCells = memo(function RowCells({
           <span className="dim">{mod.mod_id}</span>
         )}
       </div>
-      <div className="hide-sm dim">{mod.category || ''}</div>
+      <div className="hide-sm dim">
+        {bandName ? <span className="bandtag" title="separator band (grouping)">{bandName}</span> : mod.category || ''}
+      </div>
       <div className="num">
         <GroupBadge bucket={mod.bucket} buckets={buckets} />
       </div>
@@ -219,6 +225,7 @@ export const OrderRow = memo(function OrderRow({
   pos,
   names,
   buckets,
+  bandName,
   hl,
   selected,
   wrongExpected,
@@ -283,6 +290,7 @@ export const OrderRow = memo(function OrderRow({
         pos={pos}
         names={names}
         buckets={buckets}
+        bandName={bandName}
         hl={hl}
         wrong={wrong}
         wrongExpected={wrongExpected}

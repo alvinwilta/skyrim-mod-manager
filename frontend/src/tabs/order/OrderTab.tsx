@@ -140,6 +140,8 @@ export function OrderTab() {
   }, [])
   useEffect(loadSeparators, [loadSeparators])
 
+  const bandById = useMemo(() => new Map(separators.map((s) => [s.id, s.name])), [separators])
+
   const assignBands = async () => {
     setAssigning(true)
     try {
@@ -153,6 +155,19 @@ export function OrderTab() {
       setAssigning(false)
     }
   }
+
+  // Auto-assign bands once on first load (no mod carries a separator_id yet),
+  // after any pull settles — so bands appear without a manual click. Never
+  // re-fires (assign stamps every mod). Skipped while committed/pulling.
+  const autoAssignedRef = useRef(false)
+  useEffect(() => {
+    if (autoAssignedRef.current || jobs.pulling || assigning || data.committed) return
+    if (data.mods.length === 0 || data.mods.some((m) => m.separator_id != null)) return
+    autoAssignedRef.current = true
+    void assignBands()
+    // assignBands is stable enough for this one-shot guard; deps intentionally minimal
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.mods, jobs.pulling, assigning, data.committed])
 
   // Resolve the drift check's {mod_id → expected bucket} map against the
   // order cache so the panel can list the drifted mods by name/position.
@@ -730,7 +745,7 @@ export function OrderTab() {
                 <div role="columnheader">#</div>
                 <div role="columnheader">Mod</div>
                 <div className="num" role="columnheader">Mod ID</div>
-                <div className="hide-sm" role="columnheader">Category</div>
+                <div className="hide-sm" role="columnheader">Band / Category</div>
                 <div className="num" role="columnheader">Group</div>
               </div>
               <div ref={listRef} style={{ position: 'relative', height: rowVirtualizer.getTotalSize() }}>
@@ -755,6 +770,7 @@ export function OrderTab() {
                         pos={r.pos}
                         names={data.names}
                         buckets={data.buckets}
+                        bandName={r.mod.separator_id != null ? bandById.get(r.mod.separator_id) : undefined}
                         hl={hl}
                         selected={sel.selected.has(r.mod.mod_id)}
                         wrongExpected={
