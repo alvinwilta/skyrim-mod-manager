@@ -117,7 +117,7 @@ const RowCells = memo(function RowCells({
   })
   return (
     <>
-      <div className="num">
+      <div className="poscell">
         <button
           className={`lockbtn${mod.locked ? ' on' : ''}`}
           disabled={disabled}

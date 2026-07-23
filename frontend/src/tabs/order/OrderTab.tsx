@@ -36,6 +36,12 @@ import type { Dismissed } from './hooks/useDismissed'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { LoadingOverlay } from '../../components/LoadingOverlay'
 
+// Fixed row heights (px) — MUST match .ordrow / .band-divider in index.css so
+// the virtualizer's positions are exact and don't depend on the async measure
+// pass (which is what let stacked dividers overlap).
+const MOD_ROW_H = 36
+const SEP_ROW_H = 46
+
 function NotesList({
   notes,
   d,
@@ -288,12 +294,17 @@ export function OrderTab() {
     return out
   }, [visible, collapsedBands])
 
-  // mod_id → its index in `combined` (for jump-to-mod scrolling past dividers)
-  const visibleIndex = useMemo(() => {
+  // mod_id → index in `combined` (interleaved with dividers) — for the
+  // virtualizer's scrollToIndex when jumping to a mod.
+  const combinedIndex = useMemo(() => {
     const m = new Map<number, number>()
     combined.forEach((it, i) => it.kind === 'mod' && m.set(it.row.mod.mod_id, i))
     return m
   }, [combined])
+
+  // mod_id → index in `visibleAll` (mods only) — this is the index space the
+  // selection hook's shift-range uses, so it MUST exclude dividers.
+  const selIndex = useMemo(() => new Map(visibleAll.map((r, i) => [r.mod.mod_id, i])), [visibleAll])
 
   // Stable reference: SortableContext re-derives its internal `items` off this
   // array's identity, not its contents — an inline `.map()` here would hand it
@@ -315,14 +326,12 @@ export function OrderTab() {
   const listRef = useRef<HTMLDivElement>(null)
   const rowVirtualizer = useWindowVirtualizer({
     count: combined.length,
-    // Matches the real single-line row height (padding 6px×2 + 14px/1.5
-    // line-height, measured ~35.5px rendered). A mismatched estimate is
-    // fine at rest — tanstack corrects it via ResizeObserver on measurement —
-    // but the correction is a real layout shift, and if it lands mid-drag
-    // (a settle race, not fully deterministic) dnd-kit's collision rects
-    // land on a different row than the one under the cursor. Matching the
-    // estimate closely shrinks that window to sub-pixel and out of range.
-    estimateSize: () => 35.5,
+    // Per-item height so positions are deterministic and don't rely on the
+    // async measure pass: separator dividers are a FIXED 46px (see .band-divider
+    // in css), mod rows a fixed single-line ~35.5px. A single flat estimate made
+    // stacked dividers overlap (each ~10px taller than the estimate) until — or
+    // unless — ResizeObserver corrected them.
+    estimateSize: (i) => (combined[i]?.kind === 'sep' ? SEP_ROW_H : MOD_ROW_H),
     overscan: 15,
     scrollMargin: listRef.current?.offsetTop ?? 0,
   })
@@ -335,7 +344,7 @@ export function OrderTab() {
   // itself is a harmless no-op re-scroll once the row is already in view.
   const jumpToMod = useCallback(
     (id: number) => {
-      const idx = visibleIndex.get(id)
+      const idx = combinedIndex.get(id)
       if (idx === undefined) {
         setMsg(`mod ${id} is hidden by the current filter — clear filters to jump to it`)
         return
@@ -348,7 +357,7 @@ export function OrderTab() {
       }
       requestAnimationFrame(tick)
     },
-    [visibleIndex, rowVirtualizer, setMsg],
+    [combinedIndex, rowVirtualizer, setMsg],
   )
 
   const sensors = useSensors(
@@ -402,7 +411,7 @@ export function OrderTab() {
   // Row click = checkbox toggle (accumulates); shift = range. Click outside
   // any row clears. Selection only shrinks on a row re-click or outside-click.
   const onRowClick = (mid: number, e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => {
-    const idx = visibleIndex.get(mid) ?? 0
+    const idx = selIndex.get(mid) ?? 0
     sel.toggle(mid, idx, e.shiftKey)
   }
 
@@ -783,8 +792,10 @@ export function OrderTab() {
       {visible.length ? (
         <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
           <SortableContext items={visibleIds} strategy={verticalListSortingStrategy}>
+            <div className="ordwrap">
             <div
               role="table"
+              className="ordtable"
               onClick={(e) => {
                 // click on empty space (not a row / interactive el) clears selection
                 if (!(e.target as Element).closest('.ordrow, .band-divider, button, a, input, select')) sel.clear()
@@ -857,6 +868,7 @@ export function OrderTab() {
                   )
                 })}
               </div>
+            </div>
             </div>
           </SortableContext>
           {/* dropAnimation=null: the row already reflects its final position

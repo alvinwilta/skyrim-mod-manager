@@ -92,8 +92,9 @@ tr.r-down td { background: #241012; }
 tr.r-down:hover td { background: #2e1518; }
 tr.r-deleted td { background: #2a1215; color: var(--dim); }
 tr.r-deleted:hover td { background: #341a1d; }
+/* big invisible hit area so you can click near the lock, not just the glyph */
 .lockbtn { background: none; border: none; cursor: pointer; font-size: 13px;
-  opacity: .25; padding: 0 4px; }
+  opacity: .25; padding: 8px 8px; margin: -8px 0; line-height: 1; }
 .lockbtn:hover { opacity: .8; }
 .lockbtn.on { opacity: 1; }
 tr.dropmark td { border-top: 2px solid var(--blue); }
@@ -180,8 +181,8 @@ tr.runhead:hover td { background: #161a23; }
   .seltoolbar { flex-wrap: wrap; justify-content: center; }
 }
 .posedit {
-  width: 80px; background: #12151c; border: 1px solid var(--border);
-  color: var(--text); border-radius: 6px; padding: 4px 8px; font: inherit;
+  width: 58px; background: #12151c; border: 1px solid var(--border);
+  color: var(--text); border-radius: 6px; padding: 4px 6px; font: inherit;
 }
 .dragoverlay {
   background: var(--panel); border: 1px solid var(--blue); color: var(--text);
@@ -204,7 +205,15 @@ tr.runhead:hover td { background: #161a23; }
    a hidden .hide-sm cell is skipped by grid auto-placement (display:none
    items aren't part of the box tree), so the mobile override below just
    drops its track rather than fighting to collapse it. */
-:root { --ord-cols: 30px 70px minmax(260px, 1fr) 90px 160px 130px; }
+:root { --ord-cols: 28px 84px minmax(220px, 1fr) 84px 168px 176px; }
+/* the table keeps its columns at a comfortable min width and scrolls
+   horizontally inside this wrapper when the window is too narrow — so nothing
+   (position editor, group badge) ever gets clipped */
+/* overflow-y hidden (not the default visible) so this axis doesn't get promoted
+   to auto — a nested vertical scroll box would break the window virtualizer.
+   The list's own height fits, so nothing is clipped vertically. */
+.ordwrap { overflow-x: auto; overflow-y: hidden; }
+.ordtable { min-width: 780px; }
 /* default grid `align-items`/`justify-items` is stretch, so a plain block
    cell still fills its row's full height for a solid hover/state background
    — no flex needed, and .num's existing text-align:right keeps working
@@ -219,17 +228,30 @@ tr.runhead:hover td { background: #161a23; }
   padding: 6px 10px; border-bottom: 1px solid #1c202a;
   /* one line per cell so every row is the same height — the virtualizer
      estimates a uniform row height, and a wrapped (2-line) row would overlap
-     its neighbour / leave a gap */
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+     its neighbour / leave a gap. overflow stays VISIBLE here so the position
+     editor's spinner / a group badge isn't clipped; only the two text-heavy
+     cells (name, category) clip+ellipsis (below). */
+  white-space: nowrap; min-width: 0;
   user-select: none; /* text selection must not steal the drag gesture */
 }
 /* Mod cell: badges + a truncating name + trailing flag badges, all on one line.
    The name flexes and ellipsises so the flags on its right stay visible. */
-.ordrow > div.modcell { display: flex; align-items: center; gap: 6px; }
+.ordrow > div.modcell { display: flex; align-items: center; gap: 6px; overflow: hidden; }
+.ordrow > div.hide-sm { overflow: hidden; text-overflow: ellipsis; }
 .modcell > .badge, .modcell > a { flex: 0 0 auto; }
 .modname { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .ordrow:hover > div { background: #141720; }
-.ordrow { cursor: grab; }
+/* fixed height — must equal MOD_ROW_H (36) in OrderTab so the virtualizer's
+   positions are exact (single-line cells already keep content to one line);
+   cells flex-center their content vertically while still filling the row for a
+   solid hover background */
+.ordrow { cursor: grab; height: 36px; }
+.ordrow > div { display: flex; align-items: center; }
+.ordrow > div.num { justify-content: flex-end; }
+/* lock hugs the drag handle on the left; the position number hugs the name on
+   the right — so the number sits right next to the label with a constant small
+   gap, and the column (84px) still has room for a 5-digit install order (10k+) */
+.ordrow > div.poscell { display: flex; align-items: center; justify-content: space-between; padding-left: 2px; padding-right: 6px; }
 .ordrow[draggable="false"] { cursor: default; }
 .ordrow.r-upd > div { background: #241d0f; }
 .ordrow.r-upd:hover > div { background: #2e2513; }
@@ -465,10 +487,13 @@ input.switch:disabled { cursor: default; }
    read like a selected row (which uses the blue accent). */
 .band-divider {
   display: flex; align-items: center; gap: 10px; width: 100%;
+  /* fixed height — the virtualizer positions by SEP_ROW_H (46) in OrderTab; a
+     content-driven height would drift and overlap the next row */
+  height: 46px; box-sizing: border-box;
   background: #10131a;
   border: 1px solid #333b49; border-radius: 6px;
   box-shadow: 0 3px 9px rgba(0, 0, 0, .5), inset 0 1px 0 #2a313d;
-  color: var(--text); padding: 11px 14px; cursor: pointer; font: inherit; text-align: left;
+  color: var(--text); padding: 0 14px; cursor: pointer; font: inherit; text-align: left;
 }
 .band-divider:hover { background: #161a23; border-color: #414b5c; }
 .band-divider .band-caret { color: var(--dim); font-size: 12px; width: 12px; }
