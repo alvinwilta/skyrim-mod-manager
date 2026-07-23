@@ -107,6 +107,22 @@ CATEGORY_BUCKET = {
     "Locations - Vanilla": (16, 0.6),
     "Creatures and Mounts": (5, 0.4),
     "Miscellaneous": (9, 0.2),
+    "Body, Face, and Hair": (7, 0.7),
+    "NPC": (7, 0.5),
+    "Combat": (10, 0.7),
+    "Stealth": (10, 0.7),
+    "Shouts": (14, 0.6),
+    "Alchemy": (9, 0.6),
+    "Armour": (9, 0.4),
+    "Weapons": (9, 0.4),
+    "Items and Objects - Player": (9, 0.4),
+    "Items and Objects - World": (5, 0.4),
+    "Guilds/Factions": (13, 0.4),
+    "Followers & Companions": (9, 0.3),
+    "Followers & Companions - Creatures": (9, 0.3),
+    "Buildings": (16, 0.4),
+    "Cities, Towns, Villages, and Hamlets": (16, 0.7),
+    "Player homes": (16, 0.7),
 }
 
 # Name keywords beat the Nexus category; first match wins, so more
@@ -150,7 +166,10 @@ def classify(name, category):
             bucket, conf = b, c
             break
     if bucket is None:
-        bucket, conf = CATEGORY_BUCKET.get(category or "", (8, 0.2))
+        # unknown category: Gameplay — General is the neutral middle of the
+        # order; defaulting to Fixes (8) used to dump every unmapped category
+        # (Combat, NPC, Armour, ...) into that bucket
+        bucket, conf = CATEGORY_BUCKET.get(category or "", (9, 0.2))
     flags = []
     if conf < 0.5:
         flags.append("UNCERTAIN")
