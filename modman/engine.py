@@ -557,6 +557,11 @@ def validate_files(file_ids):
             f"SELECT * FROM mods WHERE file_id IN ({','.join('?' * len(file_ids))})", file_ids
         ).fetchall()
         for r in rows:
+            # MO2-only adopted mods have no managed archive on disk; validating
+            # them would wrongly flag them 'missing' and drop them from the
+            # order. They're installed in MO2, not a download — leave untouched.
+            if r["source"] == "mo2":
+                continue
             path = os.path.join(DOWNLOADS_DIR, r["filename"]) if r["filename"] else None
             disk = os.path.getsize(path) if path and os.path.exists(path) else None
             # disk == 0 is always missing: no real archive is empty, and a

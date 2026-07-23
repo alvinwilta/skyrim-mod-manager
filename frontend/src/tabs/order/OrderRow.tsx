@@ -147,6 +147,15 @@ const RowCells = memo(function RowCells({
         ) : (
           mod.installed && <span className="badge b-new">installed </span>
         )}
+        {mod.source === 'mo2' && (
+          <span
+            className="badge"
+            style={{ background: '#1e2b3a', color: 'var(--blue)' }}
+            title="Installed directly in MO2 — adopted into the order, but not downloaded through this tool (no managed archive)"
+          >
+            MO2 only{' '}
+          </span>
+        )}
         {mod.file_type === 'bsa' && (
           <span
             className="badge b-bsa"

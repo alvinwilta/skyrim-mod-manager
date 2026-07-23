@@ -370,7 +370,8 @@ def load_order():
     as installed when any of its archives is installed in MO2."""
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT m.mod_id, m.mod_name, m.category, m.mod_url, s.bucket AS sort_bucket,"
+            "SELECT m.mod_id, m.mod_name, m.category, m.mod_url, m.source AS mod_source,"
+            " s.bucket AS sort_bucket,"
             " s.rank AS sort_rank, s.flags AS sort_flags, s.locked AS sort_locked,"
             " s.file_type AS sort_file_type, s.mo2_state AS sort_mo2_state,"
             " json_group_array(m.filename) AS fns"
@@ -390,6 +391,7 @@ def load_order():
             "locked": bool(r["sort_locked"]),
             "file_type": r["sort_file_type"],
             "mo2_state": r["sort_mo2_state"],
+            "source": r["mod_source"],
             # MO2 is the truth once pulled (a mod installed in MO2 whose download
             # archive was cleaned still counts as installed); fall back to the
             # download .meta sidecar only before the first pull.

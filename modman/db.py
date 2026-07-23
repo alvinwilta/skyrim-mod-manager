@@ -103,6 +103,12 @@ def init_db():
         # = file is in its original (uncommitted) name -- see modman/commit.py
         if "orig_filename" not in cols:
             conn.execute("ALTER TABLE mods ADD COLUMN orig_filename TEXT")
+        # provenance: NULL = downloaded/imported through the tool (has a managed
+        # archive in downloads dir); 'mo2' = adopted from an MO2-only installed
+        # folder (no managed archive, filename NULL) -- see modman/mo2_pull.py.
+        # Download-centric ops (validate/commit/hide) skip 'mo2' rows.
+        if "source" not in cols:
+            conn.execute("ALTER TABLE mods ADD COLUMN source TEXT")
         # real per-mod "requires" edges from Nexus's own GraphQL -- see modman/requirements.py
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mod_requirements (mod_id INTEGER NOT NULL,"

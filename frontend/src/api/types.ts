@@ -70,6 +70,8 @@ export interface OrderMod {
   installed: boolean
   /** MO2 live state from the last pull: 'enabled' | 'disabled' | 'removed' | null */
   mo2_state: string | null
+  /** provenance: 'mo2' = adopted from an MO2-only install (no managed archive), else null */
+  source: string | null
   file_type: string | null
   flags: string[]
 }

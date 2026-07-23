@@ -58,7 +58,8 @@ export const api = {
   importLocal: () => post<{ started: boolean }>('/api/import-local'),
   importLocalState: () => get<JobState>('/api/import-local-state'),
   mo2Pull: () => post<{ started: boolean }>('/api/mo2-pull'),
-  mo2PullState: () => get<JobState & { matched: number; removed: number; unmatched: number }>('/api/mo2-pull-state'),
+  mo2PullState: () =>
+    get<JobState & { matched: number; adopted: number; removed: number; skipped: number }>('/api/mo2-pull-state'),
   sort: (llm: boolean, model: string) => post<{ sorted: number; llm: boolean }>('/api/sort', { llm, model }),
   sortDesc: (model: string) => post<{ started: boolean }>('/api/sort-desc', { model }),
   sortStop: () => post<{ stopped: boolean }>('/api/sort-stop'),

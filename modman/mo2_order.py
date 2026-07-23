@@ -21,29 +21,69 @@ from . import db, order_store
 from .config import MODS_DIR, modlist_path
 
 
-def folder_to_modid():
-    """{mo2_mod_folder_name: mod_id} for every installed folder whose meta.ini
-    carries a Nexus modid. Manual/non-Nexus folders (no modid) are skipped."""
+def _read_folder_meta(folder):
+    """Parse one installed mod folder's meta.ini into the identity signals we
+    match on. Returns {'modid','fileid','installfile'} or None if unreadable.
+
+    Nexus ids are read from BOTH `[General] modid` AND the `[installedFiles]`
+    section (`N\\modid`, `N\\fileid`): MO2 leaves `[General] modid=0` for many
+    installs but records the true ids under installedFiles, so reading only the
+    former missed real Nexus mods. `installationFile` is the source archive
+    name, which the tool stores as a row's filename/orig_filename."""
+    path = os.path.join(MODS_DIR, folder, "meta.ini")
+    modid = fileid = 0
+    installfile = None
+    section = None
+    try:
+        f = open(path, errors="ignore")
+    except OSError:
+        return None
+    with f:
+        for line in f:
+            s = line.strip()
+            if s.startswith("["):
+                section = s.lower()
+                continue
+            if "=" not in s:
+                continue
+            key, val = s.split("=", 1)
+            key, val = key.strip().lower(), val.strip()
+            if key == "installationfile":
+                installfile = val or None
+            elif key == "modid" and section and "general" in section:
+                if val.isdigit() and int(val) > 0 and not modid:
+                    modid = int(val)
+            elif section and "installedfiles" in section:
+                # keys look like `1\modid` / `1\fileid`
+                if key.endswith("\\modid") and val.lstrip("-").isdigit() and int(val) > 0 and not modid:
+                    modid = int(val)
+                elif key.endswith("\\fileid") and val.lstrip("-").isdigit() and int(val) > 0 and not fileid:
+                    fileid = int(val)
+    return {"modid": modid, "fileid": fileid, "installfile": installfile}
+
+
+def folder_signals():
+    """{folder_name: {'modid','fileid','installfile'}} for every installed mod
+    folder with a readable meta.ini. The raw material the pull matcher joins
+    against the db (fileid → filename → modid → name)."""
     out = {}
     try:
         entries = os.listdir(MODS_DIR)
     except OSError:
         return out
     for name in entries:
-        meta = os.path.join(MODS_DIR, name, "meta.ini")
-        try:
-            with open(meta, errors="ignore") as f:
-                for line in f:
-                    # MO2 mod meta.ini uses lowercase `modid=`, unlike the
-                    # download .meta's `modID=`. Match case-insensitively.
-                    if re.match(r"\s*modid\s*=", line, re.I):
-                        val = line.split("=", 1)[1].strip()
-                        if val.isdigit() and int(val) > 0:
-                            out[name] = int(val)
-                        break
-        except OSError:
-            continue
+        m = _read_folder_meta(name)
+        if m is not None:
+            out[name] = m
     return out
+
+
+def folder_to_modid():
+    """{mo2_mod_folder_name: mod_id} for every installed folder that resolves to
+    a Nexus modid (via _read_folder_meta, so it now also picks up modids that
+    live only in the meta.ini [installedFiles] section). Non-Nexus folders are
+    skipped."""
+    return {name: sig["modid"] for name, sig in folder_signals().items() if sig["modid"] > 0}
 
 
 def read_modlist():
