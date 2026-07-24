@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api/endpoints'
 import { ApiError } from '../../api/client'
 import type { DiffItem, DiffResult, FetchCollectionResult } from '../../api/types'
@@ -23,8 +23,6 @@ function toGroups(d: DiffResult): Group[] {
   ]
 }
 
-const DEFAULT_PLACEHOLDER = '{"data":{"collectionRevision":{"modFiles":[…]}}}'
-
 // Module-level cache (same pattern as PromptEditor): tabs unmount on switch,
 // and downloading auto-jumps to Progress — without this a fetched collection
 // diff was gone, so downloading a subset then coming back for the rest meant
@@ -34,7 +32,6 @@ const cache: {
   diff: DiffResult | null
   modlist: unknown
   collection: FetchCollectionResult['collection']
-  placeholder: string
   selected: number[] | null
   pendingFetch: boolean
 } = {
@@ -42,7 +39,6 @@ const cache: {
   diff: null,
   modlist: null,
   collection: null,
-  placeholder: DEFAULT_PLACEHOLDER,
   selected: null,
   pendingFetch: false,
 }
@@ -53,7 +49,6 @@ export const __resetImportCache = () => {
   cache.diff = null
   cache.modlist = null
   cache.collection = null
-  cache.placeholder = DEFAULT_PLACEHOLDER
   cache.selected = null
   cache.pendingFetch = false
 }
@@ -67,8 +62,6 @@ export const requestCollectionImport = (url: string) => {
 
 export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   const [url, setUrl] = useState(cache.url)
-  const [jsonText, setJsonText] = useState('')
-  const [jsonPlaceholder, setJsonPlaceholder] = useState(cache.placeholder)
   const [err, setErr] = useState('')
   const [fetching, setFetching] = useState(false)
   const [diff, setDiff] = useState<DiffResult | null>(cache.diff)
@@ -112,7 +105,7 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
     setErr('')
     const u = url.trim()
     if (!u) {
-      setErr('paste a collection url first')
+      setErr('paste one or more Nexus links first')
       return
     }
     setFetching(true)
@@ -120,11 +113,8 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
       const d = await api.fetchCollection(u)
       setModlist(d.modlist)
       setCollection(d.collection)
-      setJsonText('')
-      setJsonPlaceholder(`fetched ${d.count} files from ${u}`)
       cache.modlist = d.modlist
       cache.collection = d.collection
-      cache.placeholder = `fetched ${d.count} files from ${u}`
       if (d.skipped?.length) setErr(`skipped ${d.skipped.length} non-nexus url(s): ${d.skipped.join(' ')}`)
       showDiff(d.diff)
     } catch (e) {
@@ -132,32 +122,6 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
     } finally {
       setFetching(false)
     }
-  }
-
-  const doDiff = async () => {
-    setErr('')
-    let payload: unknown
-    try {
-      payload = JSON.parse(jsonText)
-    } catch {
-      setErr('invalid JSON')
-      return
-    }
-    try {
-      const d = await api.diff(payload)
-      setModlist(payload)
-      setCollection(null) // pasted/uploaded JSON has no known collection identity
-      cache.modlist = payload
-      cache.collection = null
-      showDiff(d)
-    } catch (e) {
-      setErr(errText(e))
-    }
-  }
-
-  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    if (f) setJsonText(await f.text())
   }
 
   const doDownload = async () => {
@@ -189,10 +153,9 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
   return (
     <section>
       <p className="dim" style={{ marginBottom: 8 }}>
-        Paste a collection URL or one or more mod page URLs (space-separated) to fetch straight from Nexus — or
-        paste/upload a <code>modlist.json</code> below. Either way it is diffed against the local database; only new
-        and updated files are selected by default. Downloading an updated (or downgraded) file replaces the older
-        archive it supersedes.
+        Paste a collection URL or one or more Nexus mod page URLs (space-separated) to fetch straight from Nexus. The
+        files are checked against your library; only new and updated ones are selected by default. Downloading an
+        updated (or downgraded) file replaces the older archive it supersedes.
       </p>
       <div className="toolbar" style={{ margin: '0 0 12px' }}>
         <input
@@ -207,13 +170,6 @@ export function ImportTab({ onGoToProgress }: { onGoToProgress: () => void }) {
         />
         <button className="btn" disabled={fetching} onClick={doFetch}>
           {fetching ? 'Fetching…' : 'Fetch from Nexus'}
-        </button>
-      </div>
-      <textarea placeholder={jsonPlaceholder} value={jsonText} onChange={(e) => setJsonText(e.target.value)} />
-      <div className="toolbar">
-        <input type="file" accept=".json" style={{ width: 'auto' }} onChange={onFile} aria-label="modlist file" />
-        <button className="btn ghost" onClick={doDiff}>
-          Diff against DB
         </button>
         <span className="c-red">{err}</span>
       </div>

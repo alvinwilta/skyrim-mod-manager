@@ -25,16 +25,28 @@ const DIFF = {
   unchanged: [item({ file_id: 4, mod_name: 'ELFX', name: 'elfx.7z' })],
 }
 
+const FETCH = {
+  'POST /api/fetch-collection': {
+    modlist: { fromNexus: true },
+    collection: { id: 42, slug: 'h2uqa3', name: 'Lorerim' },
+    count: 3,
+    diff: DIFF,
+  },
+}
+
+async function fetchLinks() {
+  await userEvent.type(screen.getByPlaceholderText(/collections\/h2uqa3/), 'https://nexus/skyrimspecialedition/mods/1')
+  await userEvent.click(screen.getByRole('button', { name: 'Fetch from Nexus' }))
+  await screen.findByText('New · 2')
+}
+
 describe('ImportTab', () => {
-  it('paste JSON → diff renders groups, new+updated pre-checked, summary counts', async () => {
-    mockApi({ 'POST /api/diff': DIFF })
+  it('fetch → diff renders groups, new+updated pre-checked, summary counts', async () => {
+    mockApi(FETCH)
     render(<ImportTab onGoToProgress={vi.fn()} />)
+    await fetchLinks()
 
-    await userEvent.click(screen.getByPlaceholderText(/collectionRevision/))
-    await userEvent.paste('{"mods": []}')
-    await userEvent.click(screen.getByRole('button', { name: 'Diff against DB' }))
-
-    expect(await screen.findByText('New · 2')).toBeInTheDocument()
+    expect(screen.getByText('New · 2')).toBeInTheDocument()
     expect(screen.getByText(/^Updated .* 1$/)).toBeInTheDocument()
     expect(screen.getByText(/^Downgrade .* 1$/)).toBeInTheDocument()
     expect(screen.getByText('Already downloaded · 1')).toBeInTheDocument()
@@ -47,23 +59,10 @@ describe('ImportTab', () => {
     expect(screen.getByText('3.0 →')).toBeInTheDocument()
   })
 
-  it('invalid JSON → inline error, no request', async () => {
-    const { calls } = mockApi({})
-    render(<ImportTab onGoToProgress={vi.fn()} />)
-    await userEvent.click(screen.getByPlaceholderText(/collectionRevision/))
-    await userEvent.paste('not json')
-    await userEvent.click(screen.getByRole('button', { name: 'Diff against DB' }))
-    expect(await screen.findByText('invalid JSON')).toBeInTheDocument()
-    expect(calls.length).toBe(0)
-  })
-
   it('group toggle flips every box in that group only', async () => {
-    mockApi({ 'POST /api/diff': DIFF })
+    mockApi(FETCH)
     render(<ImportTab onGoToProgress={vi.fn()} />)
-    await userEvent.click(screen.getByPlaceholderText(/collectionRevision/))
-    await userEvent.paste('{}')
-    await userEvent.click(screen.getByRole('button', { name: 'Diff against DB' }))
-    await screen.findByText('New · 2')
+    await fetchLinks()
 
     const toggles = screen.getAllByRole('button', { name: 'toggle' })
     await userEvent.click(toggles[0]) // New group: all checked → uncheck all
@@ -73,56 +72,20 @@ describe('ImportTab', () => {
     expect(screen.getByText('1 files · 1.0 KB')).toBeInTheDocument()
   })
 
-  it('download posts modlist + selected ids + null collection for pasted JSON, then jumps to Progress', async () => {
+  it('fetch from Nexus wires collection id into download, then jumps to Progress', async () => {
     const go = vi.fn()
-    const { calls } = mockApi({
-      'POST /api/diff': DIFF,
-      'POST /api/download': { started: 3 },
-    })
+    const { calls } = mockApi({ ...FETCH, 'POST /api/download': { started: 1 } })
     render(<ImportTab onGoToProgress={go} />)
-    await userEvent.click(screen.getByPlaceholderText(/collectionRevision/))
-    await userEvent.paste('{"data": 1}')
-    await userEvent.click(screen.getByRole('button', { name: 'Diff against DB' }))
-    await screen.findByText('New · 2')
+    await fetchLinks()
 
     await userEvent.click(screen.getByRole('button', { name: 'Download selected' }))
     await waitFor(() => expect(go).toHaveBeenCalled())
     const dl = calls.find((c) => c.path === '/api/download')
-    expect(dl?.body).toEqual({ modlist: { data: 1 }, file_ids: [1, 2, 3], collection_id: null })
-  })
-
-  it('fetch from Nexus wires collection id into download', async () => {
-    const go = vi.fn()
-    const { calls } = mockApi({
-      'POST /api/fetch-collection': {
-        modlist: { fromNexus: true },
-        collection: { id: 42, slug: 'h2uqa3', name: 'Lorerim' },
-        count: 3,
-        diff: DIFF,
-      },
-      'POST /api/download': { started: 1 },
-    })
-    render(<ImportTab onGoToProgress={go} />)
-    await userEvent.type(screen.getByPlaceholderText(/collections\/h2uqa3/), 'https://nexus/collections/h2uqa3')
-    await userEvent.click(screen.getByRole('button', { name: 'Fetch from Nexus' }))
-    await screen.findByText('New · 2')
-    expect(screen.getByPlaceholderText(/fetched 3 files from/)).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Download selected' }))
-    await waitFor(() => expect(go).toHaveBeenCalled())
-    const dl = calls.find((c) => c.path === '/api/download')
-    expect(dl?.body).toMatchObject({ modlist: { fromNexus: true }, collection_id: 42 })
+    expect(dl?.body).toMatchObject({ modlist: { fromNexus: true }, file_ids: [1, 2, 3], collection_id: 42 })
   })
 
   it('requestCollectionImport queues a url that auto-fetches on mount', async () => {
-    const { calls } = mockApi({
-      'POST /api/fetch-collection': {
-        modlist: { fromNexus: true },
-        collection: { id: 7, slug: 'lorerim', name: 'Lorerim' },
-        count: 4,
-        diff: DIFF,
-      },
-    })
+    const { calls } = mockApi(FETCH)
     requestCollectionImport('https://nexus/collections/lorerim')
     const { unmount } = render(<ImportTab onGoToProgress={vi.fn()} />)
 
@@ -141,6 +104,6 @@ describe('ImportTab', () => {
     mockApi({})
     render(<ImportTab onGoToProgress={vi.fn()} />)
     await userEvent.click(screen.getByRole('button', { name: 'Fetch from Nexus' }))
-    expect(await screen.findByText('paste a collection url first')).toBeInTheDocument()
+    expect(await screen.findByText('paste one or more Nexus links first')).toBeInTheDocument()
   })
 })
