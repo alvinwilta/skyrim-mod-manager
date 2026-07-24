@@ -12,6 +12,7 @@ import type {
   InstallOrder,
   JobState,
   MissingRequirement,
+  RequirementSubs,
   Mod,
   Separator,
   SortPrompt,
@@ -76,6 +77,9 @@ export const api = {
   syncRequirements: () => post<{ started: boolean }>('/api/sync-requirements'),
   requirementsState: () => get<JobState>('/api/requirements-state'),
   requirementsMissing: () => get<{ missing: MissingRequirement[] }>('/api/requirements-missing'),
+  requirementSubs: () => get<RequirementSubs>('/api/requirement-subs'),
+  setRequirementSub: (requires_mod_id: number, sub_mod_id: number | null) =>
+    post<{ ok: boolean }>('/api/requirement-subs', { requires_mod_id, sub_mod_id }),
   config: () => get<ConfigData>('/api/config'),
   saveConfig: (values: Record<string, string>) =>
     post<{ saved: boolean; restart_required: boolean; stored: Record<string, string> }>('/api/config', values),

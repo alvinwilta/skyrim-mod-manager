@@ -27,6 +27,28 @@ nav button.on { border-color: var(--blue); color: var(--blue); }
 main { padding: 18px 24px 60px; max-width: 1200px; margin: 0 auto; }
 
 .toolgroup { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px 12px; background: #12151c; }
+/* resizable box: body scrolls, a handle on the bottom edge drags the height.
+   When .toolgroup is also .rpanel the padding moves onto the scrolling body so
+   the border + handle stay put while content scrolls. */
+.rpanel { position: relative; display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box; }
+.rpanel.toolgroup { padding: 0; }
+.rpanel-body { flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 10px 12px 12px; display: flex; flex-direction: column; }
+/* fixed header/toolbar rows keep their size; the subtab group grows to fill the
+   panel and its panel scrolls internally, so resizing the container resizes the
+   readable content area (not just the outer box) */
+.rpanel-body > :not(.subtabs) { flex: 0 0 auto; }
+.rpanel .subtabs { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.rpanel .subtabpanel { flex: 1 1 auto; min-height: 0; max-height: none; }
+.rpanel-handle {
+  flex: 0 0 auto; height: 10px; cursor: ns-resize; touch-action: none;
+  border-top: 1px solid var(--border); border-radius: 0 0 8px 8px;
+  background: #0f1218; position: relative;
+}
+.rpanel-handle::after {
+  content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 34px; height: 3px; border-radius: 2px; background: #3a4150;
+}
+.rpanel-handle:hover::after { background: var(--blue); }
 .toolgroup-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
 .toolgroup-label {
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
@@ -582,3 +604,47 @@ input.switch:disabled { cursor: default; }
 .band-divider.band-unsorted .band-name { color: var(--amber); }
 .band-divider.band-output { border-color: var(--green); }
 .band-divider.band-output .band-name { color: var(--green); }
+
+/* Requirements tab: missing-requirement -> owned-mod substitute */
+.reqtab { max-width: 900px; }
+.reqtab .err { color: var(--red); margin: 8px 0; }
+.reqlist { list-style: none; padding: 0; margin: 0; }
+.reqrow {
+  display: flex; align-items: center; gap: 16px; justify-content: space-between;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel); margin-bottom: 8px;
+}
+.reqrow.resolved { border-color: #2a3d2c; }
+.reqrow.resolved .reqrow-missing a { color: var(--dim); }
+.reqrow-main { min-width: 0; }
+.reqrow-missing { font-weight: 600; }
+.reqrow-by { font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 460px; }
+
+.reqrow-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.reqrow-actions .li-x { font-size: 18px; }
+
+/* searchable substitute picker */
+.subpick { position: relative; display: flex; align-items: center; gap: 6px; flex: none; }
+.subpick-btn { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subpick-btn.has-val { border-color: #2f6b3a; color: var(--green); }
+.subpick-clear { padding: 4px 8px; }
+/* coords set inline (position:fixed) so it escapes the resizable panel's
+   scroll clipping */
+.subpick-pop {
+  z-index: 60; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); padding: 6px;
+}
+.subpick-search {
+  width: 100%; box-sizing: border-box; background: #12151c;
+  border: 1px solid var(--border); color: var(--text); border-radius: 4px;
+  padding: 6px 8px; margin-bottom: 6px;
+}
+.subpick-list { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow-y: auto; }
+.subpick-list li button {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  color: var(--text); padding: 6px 8px; border-radius: 4px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.subpick-list li button:hover { background: #12151c; }
+.subpick-list li button.on { background: #16233a; }
+.subpick-empty { padding: 6px 8px; }

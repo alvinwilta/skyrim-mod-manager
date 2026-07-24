@@ -9,14 +9,20 @@ export function RequirementsView({
   msg,
   missing,
   d,
+  ridD,
   onJump,
 }: {
   msg: string
   missing: MissingRequirement[]
   d: Dismissed
+  /** required-mod-level dismissals (keyed by requires_mod_id), shared with the
+   *  Substitutes subtab — a mod X'd there is hidden here too. */
+  ridD: Dismissed
   onJump: (id: number) => void
 }) {
-  const shown = missing.filter((m) => !d.has(requirementKey(m)))
+  const shown = missing.filter(
+    (m) => !d.has(requirementKey(m)) && !ridD.has(String(m.requires_mod_id)),
+  )
   return (
     <div>
       <div className="dim">
@@ -24,11 +30,6 @@ export function RequirementsView({
       </div>
       {shown.length > 0 && (
         <div className="grp">
-          <h2>
-            <span className="badge" style={{ background: '#3a2b12', color: 'var(--amber)' }}>
-              Missing requirements · {shown.length}
-            </span>
-          </h2>
           <ul className="dim dismiss-list">
             {shown.map((m, i) => (
               <li key={i}>

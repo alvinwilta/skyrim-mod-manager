@@ -128,6 +128,26 @@ export interface MissingRequirement {
   notes: string | null
 }
 
+/** One owned mod, for the substitute picker. */
+export interface LibraryRef {
+  mod_id: number
+  mod_name: string
+}
+/** One missing required mod + its current owned-mod substitute (GET /api/requirement-subs). */
+export interface RequirementSub {
+  requires_mod_id: number
+  requires_mod_name: string
+  requires_url: string
+  notes: string | null
+  requiring: LibraryRef[]
+  sub_mod_id: number | null
+  sub_mod_name: string | null
+}
+export interface RequirementSubs {
+  items: RequirementSub[]
+  library: LibraryRef[]
+}
+
 /** GET /api/collections item */
 export interface Collection {
   id: number

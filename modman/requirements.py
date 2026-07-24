@@ -10,6 +10,7 @@ missing-requirement warning; it does not feed the ordering pass."""
 
 import logging
 import threading
+import time
 
 from . import db, jobs, nexus
 
@@ -141,13 +142,15 @@ def start_scan():
 
 def missing():
     """Requirements pointing at a mod that isn't in the library at all --
-    'X requires Y, which you don't have.'"""
+    'X requires Y, which you don't have.' Excludes any required mod the user has
+    marked as satisfied by an owned substitute (requirement_subs)."""
     with db.connect() as conn:
         rows = conn.execute(
             "SELECT r.mod_id, m.mod_name, m.game, r.requires_mod_id, r.requires_mod_name, r.notes"
             " FROM mod_requirements r"
             " JOIN mods m ON m.mod_id = r.mod_id AND m.status = 'ok'"
             " WHERE r.requires_mod_id NOT IN (SELECT mod_id FROM mods WHERE status = 'ok')"
+            " AND r.requires_mod_id NOT IN (SELECT requires_mod_id FROM requirement_subs)"
             " GROUP BY r.mod_id, r.requires_mod_id"
         ).fetchall()
     return [
@@ -163,3 +166,78 @@ def missing():
         }
         for r in rows
     ]
+
+
+def substitutions():
+    """Every distinct MISSING required mod (one that isn't an ok library mod),
+    grouped, with the mods that require it and the current user-asserted
+    substitute (if any). Plus a deduped library list for the picker.
+
+    This backs the Requirements tab: the user maps 'missing mod Y is actually
+    covered by owned mod Z', which drops Y off the missing-requirements list."""
+    # name any still-unnamed required mod directly from Nexus first (cheap: a
+    # handful of ids, one batched query), so the picker list never shows a bare
+    # id when Nexus actually knows the name. Best-effort — offline just leaves
+    # the blanks, and a genuinely deleted/hidden mod stays id-only.
+    backfill_required_names()
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT r.requires_mod_id, r.requires_mod_name, r.notes, m.mod_id, m.mod_name, m.game"
+            " FROM mod_requirements r"
+            " JOIN mods m ON m.mod_id = r.mod_id AND m.status = 'ok'"
+            " WHERE r.requires_mod_id NOT IN (SELECT mod_id FROM mods WHERE status = 'ok')"
+            " ORDER BY r.requires_mod_id"
+        ).fetchall()
+        subs = {s["requires_mod_id"]: s["sub_mod_id"] for s in conn.execute(
+            "SELECT requires_mod_id, sub_mod_id FROM requirement_subs"
+        )}
+        libnames = {r["mod_id"]: r["mod_name"] for r in conn.execute(
+            "SELECT DISTINCT mod_id, mod_name FROM mods WHERE status = 'ok'"
+        )}
+
+    grouped = {}
+    for r in rows:
+        g = grouped.setdefault(r["requires_mod_id"], {
+            "requires_mod_id": r["requires_mod_id"],
+            "requires_mod_name": r["requires_mod_name"] or "",
+            "requires_url": nexus.mod_url(r["game"], r["requires_mod_id"]),
+            "notes": r["notes"],
+            "requiring": [],
+        })
+        g["requiring"].append({"mod_id": r["mod_id"], "mod_name": r["mod_name"]})
+
+    items = []
+    for rid, g in grouped.items():
+        sub = subs.get(rid)
+        g["sub_mod_id"] = sub
+        g["sub_mod_name"] = libnames.get(sub) if sub else None
+        items.append(g)
+    # unresolved first, then alphabetical by the missing mod's name
+    items.sort(key=lambda g: (g["sub_mod_id"] is not None, (g["requires_mod_name"] or "").lower()))
+
+    library = sorted(
+        ({"mod_id": mid, "mod_name": nm} for mid, nm in libnames.items()),
+        key=lambda x: (x["mod_name"] or "").lower(),
+    )
+    return {"items": items, "library": library}
+
+
+def set_substitute(requires_mod_id, sub_mod_id):
+    """Map a missing required mod to an owned library mod (sub_mod_id), or clear
+    it (sub_mod_id None). Validates the substitute is an ok mod. Raises
+    ValueError on a bad substitute."""
+    with db.connect() as conn:
+        if sub_mod_id is None:
+            conn.execute("DELETE FROM requirement_subs WHERE requires_mod_id = ?", (requires_mod_id,))
+            return
+        ok = conn.execute(
+            "SELECT 1 FROM mods WHERE mod_id = ? AND status = 'ok' LIMIT 1", (sub_mod_id,)
+        ).fetchone()
+        if not ok:
+            raise ValueError(f"mod {sub_mod_id} isn't an ok mod in your library")
+        conn.execute(
+            "INSERT INTO requirement_subs (requires_mod_id, sub_mod_id, created_at)"
+            " VALUES (?, ?, ?) ON CONFLICT(requires_mod_id) DO UPDATE SET"
+            " sub_mod_id = excluded.sub_mod_id, created_at = excluded.created_at",
+            (requires_mod_id, sub_mod_id, time.strftime("%Y-%m-%d %H:%M:%S")),
+        )

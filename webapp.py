@@ -486,6 +486,31 @@ def requirements_missing():
     return {"missing": requirements.missing()}
 
 
+@app.get("/api/requirement-subs")
+def requirement_subs():
+    """Missing required mods grouped, each with its requiring mods + current
+    owned-mod substitute, plus the library list for the picker."""
+    return requirements.substitutions()
+
+
+@app.post("/api/requirement-subs")
+async def set_requirement_sub(request: Request):
+    """Assign (or clear, sub_mod_id null) the owned mod that satisfies a missing
+    required mod."""
+    body = await request.json()
+    try:
+        rid = int(body["requires_mod_id"])
+    except (KeyError, TypeError, ValueError):
+        return JSONResponse({"error": "expected {requires_mod_id, sub_mod_id}"}, status_code=400)
+    raw = body.get("sub_mod_id")
+    try:
+        sub = int(raw) if raw is not None else None
+        requirements.set_substitute(rid, sub)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "requires_mod_id": rid, "sub_mod_id": sub}
+
+
 @app.post("/api/enforce-order")
 def enforce_order():
     frozen = _order_frozen("applying collection rules")

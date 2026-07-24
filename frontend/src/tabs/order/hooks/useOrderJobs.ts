@@ -48,6 +48,10 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     notes: useDismissed('notes'),
     rules: useDismissed('rules'),
     requirements: useDismissed('requirements'),
+    // required-mod-level dismissals (keyed by requires_mod_id) shared by the
+    // Missing Requirements and Substitutes subtabs: X'ing a mod in one hides
+    // it in both. See RequirementsView / SubstitutesView.
+    requirementMods: useDismissed('requirementMods'),
   }
 
   const takeSnapshot = () => {

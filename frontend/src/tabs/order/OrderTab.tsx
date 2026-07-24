@@ -26,7 +26,9 @@ import { HighlightBar } from './HighlightBar'
 import { DEFAULT_HIGHLIGHTS, CLEARABLE_FLAG_KIND, flagCategory, type HighlightKey } from './lib/highlights'
 import { SelectionToolbar } from './SelectionToolbar'
 import { Subtabs } from './subtabs/Subtabs'
+import { ResizablePanel } from './ResizablePanel'
 import { RequirementsView, requirementKey } from './subtabs/RequirementsView'
+import { SubstitutesView } from './subtabs/SubstitutesView'
 import { ConflictDetail } from './subtabs/ConflictDetail'
 import { NoteText } from './ModJump'
 import { scrollToMod } from './lib/scrollToMod'
@@ -125,6 +127,7 @@ export function OrderTab() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmPull, setConfirmPull] = useState(false)
   const [confirmPush, setConfirmPush] = useState(false)
+  const [subCount, setSubCount] = useState(0)
 
   const toggleHl = (key: HighlightKey) => setHl((h) => ({ ...h, [key]: !h[key] }))
 
@@ -572,7 +575,7 @@ export function OrderTab() {
 
       {data.error && <p className="c-red">{data.error}</p>}
 
-      <div className="toolgroup">
+      <ResizablePanel storageKey="ordering" className="toolgroup" initial={260} min={140}>
         <div className="toolgroup-h">
           <span className="toolgroup-label">Ordering</span>
           <span className="dim" style={{ fontSize: 12 }}>
@@ -648,9 +651,9 @@ export function OrderTab() {
             </>
           )}
         </Subtabs>
-      </div>
+      </ResizablePanel>
 
-      <div className="toolgroup" style={{ marginTop: 10 }}>
+      <ResizablePanel storageKey="tools" className="toolgroup" style={{ marginTop: 10 }} initial={300} min={140}>
         <div className="toolgroup-h">
           <span className="toolgroup-label">Tools</span>
           <span className="dim" style={{ fontSize: 12 }}>
@@ -728,9 +731,15 @@ export function OrderTab() {
           tabs={[
             {
               id: 'requirements',
-              label: 'Requirements',
-              count: jobs.missing.filter((m) => !jobs.dismissed.requirements.keys.has(requirementKey(m))).length || undefined,
+              label: 'Missing Requirements',
+              count:
+                jobs.missing.filter(
+                  (m) =>
+                    !jobs.dismissed.requirements.keys.has(requirementKey(m)) &&
+                    !jobs.dismissed.requirementMods.keys.has(String(m.requires_mod_id)),
+                ).length || undefined,
             },
+            { id: 'substitutes', label: 'Substitutes', count: subCount || undefined },
           ]}
         >
           {(active) => (
@@ -740,13 +749,21 @@ export function OrderTab() {
                   msg={jobs.reqMsg}
                   missing={jobs.missing}
                   d={jobs.dismissed.requirements}
+                  ridD={jobs.dismissed.requirementMods}
                   onJump={jumpToMod}
+                />
+              )}
+              {active === 'substitutes' && (
+                <SubstitutesView
+                  pairD={jobs.dismissed.requirements}
+                  ridD={jobs.dismissed.requirementMods}
+                  onCountChange={setSubCount}
                 />
               )}
             </>
           )}
         </Subtabs>
-      </div>
+      </ResizablePanel>
 
       <div className="searchwrap" ref={searchWrapRef} style={{ margin: '12px 0 0' }}>
         <input

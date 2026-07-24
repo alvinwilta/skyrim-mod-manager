@@ -144,6 +144,14 @@ def init_db():
         cols_req = [r[1] for r in conn.execute("PRAGMA table_info(mod_requirements)")]
         if "requires_mod_name" not in cols_req:
             conn.execute("ALTER TABLE mod_requirements ADD COLUMN requires_mod_name TEXT")
+        # user-asserted substitutes: "this missing required mod is actually
+        # satisfied by an owned library mod". Keyed by the MISSING required
+        # Nexus mod_id (global — every mod requiring it is satisfied at once);
+        # sub_mod_id points at an ok mod. See modman/requirements.py.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS requirement_subs (requires_mod_id INTEGER PRIMARY KEY,"
+            " sub_mod_id INTEGER NOT NULL, created_at TEXT)"
+        )
         # which collection(s) a mod came from, if any -- absent = manually installed
         conn.execute(
             "CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY AUTOINCREMENT,"
