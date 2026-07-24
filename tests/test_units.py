@@ -9,36 +9,45 @@ from modman import buckets, collection_rules, commit, conflicts, engine, llm_ref
 
 
 class ParseReply(unittest.TestCase):
+    # band model: the second field is a separator band id, validated against the
+    # assignable-band set passed as `valid`.
+    _BANDS = {101, 202, 401, 506, 1402}
+
     def test_basic_lines(self):
-        r = llm_refine._parse_reply("123|4\n55|2|UNCERTAIN")
-        self.assertEqual(r["order"], [{"id": 123, "b": 4}, {"id": 55, "b": 2, "f": ["UNCERTAIN"]}])
+        r = llm_refine._parse_reply("123|401\n55|202|UNCERTAIN", valid=self._BANDS)
+        self.assertEqual(r["order"], [{"id": 123, "b": 401}, {"id": 55, "b": 202, "f": ["UNCERTAIN"]}])
         self.assertEqual(r["conflicts"], [])
 
     def test_negative_ids_kept(self):
         # adopted local mods carry negative ids
-        r = llm_refine._parse_reply("-123456789|4")
-        self.assertEqual(r["order"], [{"id": -123456789, "b": 4}])
+        r = llm_refine._parse_reply("-123456789|401", valid=self._BANDS)
+        self.assertEqual(r["order"], [{"id": -123456789, "b": 401}])
 
     def test_conflicts_section(self):
-        r = llm_refine._parse_reply("12|3\nCONFLICTS:\n12 (A) vs 34 (B): A wins")
-        self.assertEqual(r["order"], [{"id": 12, "b": 3}])
+        r = llm_refine._parse_reply("12|101\nCONFLICTS:\n12 (A) vs 34 (B): A wins", valid=self._BANDS)
+        self.assertEqual(r["order"], [{"id": 12, "b": 101}])
         self.assertEqual(r["conflicts"], ["12 (A) vs 34 (B): A wins"])
 
     def test_code_fences_and_noise_skipped(self):
-        r = llm_refine._parse_reply("```\n12|3\nnot a line\n```")
-        self.assertEqual(r["order"], [{"id": 12, "b": 3}])
+        r = llm_refine._parse_reply("```\n12|101\nnot a line\n```", valid=self._BANDS)
+        self.assertEqual(r["order"], [{"id": 12, "b": 101}])
 
-    def test_out_of_range_bucket_dropped(self):
-        # a hallucinated bucket (STEP has exactly 1-20) must not reach mod_sort
-        r = llm_refine._parse_reply("12|25\n13|0\n14|20")
-        self.assertEqual(
-            r["order"], [{"id": 12}, {"id": 13}, {"id": 14, "b": 20}]
-        )
+    def test_invalid_band_dropped(self):
+        # a band the model invents that isn't an assignable band must not reach
+        # mod_sort (would strand a mod on a nonexistent separator)
+        r = llm_refine._parse_reply("12|9999\n13|0\n14|506", valid=self._BANDS)
+        self.assertEqual(r["order"], [{"id": 12}, {"id": 13}, {"id": 14, "b": 506}])
+
+    def test_no_valid_set_keeps_any_int_band(self):
+        r = llm_refine._parse_reply("12|9999", valid=None)
+        self.assertEqual(r["order"], [{"id": 12, "b": 9999}])
 
     def test_invented_flags_dropped(self):
         # only UNCERTAIN / CONFLICT:<id> / DUPLICATE:<id> are clearable later
-        r = llm_refine._parse_reply("12|3|UNCERTAIN,BOGUS,CONFLICT 55,CONFLICT:55,DUPLICATE:-9")
-        self.assertEqual(r["order"], [{"id": 12, "b": 3, "f": ["UNCERTAIN", "CONFLICT:55", "DUPLICATE:-9"]}])
+        r = llm_refine._parse_reply(
+            "12|101|UNCERTAIN,BOGUS,CONFLICT 55,CONFLICT:55,DUPLICATE:-9", valid=self._BANDS
+        )
+        self.assertEqual(r["order"], [{"id": 12, "b": 101, "f": ["UNCERTAIN", "CONFLICT:55", "DUPLICATE:-9"]}])
 
 
 class Classify(unittest.TestCase):
