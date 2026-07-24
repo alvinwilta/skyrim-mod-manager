@@ -5,7 +5,7 @@ Run: .venv/bin/python -m unittest discover -s tests
 
 import unittest
 
-from modman import buckets, collection_rules, commit, conflicts, engine, llm_refine, mo2_order, precedence
+from modman import buckets, collection_rules, commit, conflicts, engine, llm_refine, mo2_order, ordering, precedence, rules
 
 
 class ParseReply(unittest.TestCase):
@@ -222,6 +222,49 @@ class DiffHelpers(unittest.TestCase):
         }
         idx = engine._local_name_index(by_mod)
         self.assertIsNone(engine._local_match(idx, "Cool Mod 3"))
+
+
+class OrderRules(unittest.TestCase):
+    def test_tables_loaded_from_toml(self):
+        # the editable order_rules.toml is parsed into the public tables
+        self.assertTrue(rules.CATEGORY_BAND)   # category -> band
+        self.assertTrue(rules.RULES)           # keyword rules
+        self.assertEqual(rules.HEAD_PRIORITY_IDS, [30379, 32444])  # SKSE, AddrLib
+        # bucket keys are ints (TOML stores them as strings)
+        self.assertTrue(all(isinstance(k, int) for k in rules.BUCKET_BAND))
+
+    def test_rule_shape(self):
+        parents, pos, band, rx = rules.RULES[0]
+        # STRONG rule -> parents is None; pos/band are ints; re is compiled
+        self.assertIn(parents, (None,) if parents is None else (parents,))
+        self.assertIsInstance(band, int)
+        self.assertIn(pos, (0, 1, 2))
+        self.assertTrue(hasattr(rx, "search"))
+
+    def test_separators_alias_is_same_object(self):
+        # separators.CATEGORY_SEPARATOR aliases rules.CATEGORY_BAND so a reload
+        # keeps both in sync
+        from modman import separators
+        self.assertIs(separators.CATEGORY_SEPARATOR, rules.CATEGORY_BAND)
+
+    def test_reload_mutates_in_place(self):
+        # reload() must NOT rebind the containers (aliases would go stale)
+        cat, rul, head = rules.CATEGORY_BAND, rules.RULES, rules.HEAD_PRIORITY_IDS
+        rules.reload()
+        self.assertIs(rules.CATEGORY_BAND, cat)
+        self.assertIs(rules.RULES, rul)
+        self.assertIs(rules.HEAD_PRIORITY_IDS, head)
+
+    def test_classify_strong_rule_beats_category(self):
+        # an animation framework filed under "Utilities" -> ANIMATIONS band, TOP
+        valid = set(range(0, 10000))
+        band, pos = ordering._classify("FNIS Behavior", "Utilities", valid)
+        self.assertEqual((band, pos), (1402, ordering.POS_TOP))
+
+    def test_classify_category_when_no_rule(self):
+        valid = set(range(0, 10000))
+        band, pos = ordering._classify("Some Weapon Pack", "Weapons", valid)
+        self.assertEqual(band, 1302)
 
 
 if __name__ == "__main__":

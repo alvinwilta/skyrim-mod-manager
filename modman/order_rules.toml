@@ -1,0 +1,226 @@
+# Editable ordering rules for the Phase 3 engine (modman/ordering.py).
+# Loaded by modman/rules.py; re-read every time the Sort button runs, so edits
+# here apply without a restart. Band numbers are separator ids (major*100+minor,
+# see separators.TAXONOMY): 101 = "01.1 EARLY LOADERS", 1402 = "14.2 ANIMATIONS",
+# 9900 = "99 NEW & UNSORTED". Lower band = installed earlier = overwritten by
+# higher bands.
+#
+# Precedence in the engine: category -> band (from [category]); if that misses
+# (blank/unmapped category) the keyword bucket fallback ([bucket]) is used; then
+# the FIRST matching [[rules]] entry overrides band + within-band position.
+
+# --- forced head of the order, by Nexus mod id --------------------------------
+# These load first, in this order, before anything else in Early Loaders. Keyed
+# by mod id (exact + rename-proof). Keep this list tiny.
+# (Must stay ABOVE the [category] table -- TOML top-level keys precede all tables.)
+head = [
+  30379,  # Skyrim Script Extender (SKSE64)
+  32444,  # Address Library for SKSE Plugins
+]
+
+# --- Nexus category -> band ---------------------------------------------------
+# Coarse first pass. Anything not listed falls back to the keyword bucket, then
+# to NEW & UNSORTED (9900).
+[category]
+"Utilities" = 102
+"Modders Resources" = 102
+"User Interface" = 201
+"Audio" = 301
+"Models and Textures" = 401
+"Items and Objects - Player" = 403
+"Items and Objects - World" = 403
+"Environmental" = 501
+"Visuals and Graphics" = 501
+"Cities, Towns, Villages, and Hamlets" = 601
+"Buildings" = 601
+"Locations - New" = 703
+"Locations - Vanilla" = 702
+"Player homes" = 704
+"Skills and Leveling" = 901
+"Races, Classes, and Birthsigns" = 901
+"Shouts" = 902
+"Magic - Spells & Enchantments" = 902
+"Magic - Gameplay" = 904
+"Crafting" = 903
+"Alchemy" = 903
+"Gameplay" = 904
+"Overhauls" = 904
+"Immersion" = 904
+"Stealth" = 904
+"Guilds/Factions" = 904
+"Quests and Adventures" = 1001
+"Collectables, Treasure Hunts, and Puzzles" = 1001
+"Body, Face, and Hair" = 1101
+"NPC" = 1102
+"Followers & Companions" = 1104
+"Creatures and Mounts" = 1202
+"Weapons" = 1302
+"Armour" = 1302
+"Weapons and Armour" = 1302
+"Clothing and Accessories" = 1303
+"Combat" = 1401
+"Animation" = 1402
+# Most "Bug Fixes" are foundational engine/game fixes -> CORE FIXES (load early,
+# overwritten by real content), not the late Misc Patches band. Mod-specific bug
+# fixes get pulled to their base's band by the name-regroup pass; genuinely-late
+# compat patches ("Patches") stay in 1501.
+"Bug Fixes" = 102
+"Patches" = 1501
+"Presets - ENB and ReShade" = 1601
+# explicitly unsorted: too broad to place without a look
+"Miscellaneous" = 9900
+"Cheats and God items" = 9900
+"Save Games" = 9900
+
+# --- keyword bucket fallback -> band ------------------------------------------
+# Used only when the category is blank/unmapped (adopted MO2-only rows, metadata
+# gaps): buckets.classify() gives a STEP bucket 1-20, bridged to a band here so
+# nothing lands in the Unsorted tail for lack of a category.
+[bucket]
+"1" = 101     # Extenders               -> EARLY LOADERS - CORE
+"2" = 102     # Resources               -> MODDER RESOURCES - UTILITIES
+"3" = 102     # Foundation              -> MODDER RESOURCES - UTILITIES
+"4" = 1402    # Animation & Physics     -> ANIMATIONS
+"5" = 401     # Models & Textures       -> BASE MESHES & TEXTURES
+"6" = 301     # Sounds & Music          -> AUDIO - SOUND
+"7" = 1101    # Character Appearance    -> SKELETON - PHYSICS - BODY - FACE - HAIR
+"8" = 1501    # Fixes                   -> MISC PATCHES - BUG FIXES
+"9" = 904     # Gameplay — General      -> GAMEPLAY - IMMERSION
+"10" = 1401   # Gameplay — AI & Combat  -> COMBAT
+"11" = 904    # Gameplay — Economy      -> GAMEPLAY - IMMERSION
+"12" = 904    # Gameplay — Immersion    -> GAMEPLAY - IMMERSION
+"13" = 1001   # Gameplay — Quests       -> NEW QUESTS
+"14" = 901    # Gameplay — Skills/Perks -> PERKS - RACIAL - CLASSES
+"15" = 201    # Interface               -> MENUS - HUD - CONSOLE
+"16" = 703    # Locations               -> NEW LOCATIONS
+"17" = 801    # Lighting & Weather      -> LIGHTING
+"18" = 102    # Utilities               -> MODDER RESOURCES - UTILITIES
+"19" = 1501   # Patches                 -> MISC PATCHES - BUG FIXES
+"20" = 1601   # Post-Processing         -> COMMUNITY SHADERS
+
+# --- keyword rules ------------------------------------------------------------
+# Checked top to bottom, FIRST match wins. Each rule sets a band + within-band
+# position (pos = "top" | "mid" | "bottom").
+#   parents = "*"        -> STRONG: reclassify a mod into `band` no matter its
+#                           category (the keyword is unambiguous infrastructure).
+#   parents = [ids...]   -> REFINE: only fires when the category already put the
+#                           mod in one of those bands (safe for ambiguous words
+#                           like "camera").
+# `re` is a Python regex (case-insensitive), written as a TOML literal string
+# (single quotes) so backslashes need no escaping.
+
+# STRONG overrides -> band + TOP (they're foundations everything builds on)
+[[rules]]  # animation / behavior frameworks
+parents = "*"
+re = '\b(nemesis|pandora|FNIS|open animation replacer|OAR|DAR|behavior data injector|SCAR|payload interpreter|animation motion revolution|dynamic animation replacer)\b'
+band = 1402
+pos = "top"
+
+[[rules]]  # skeleton / physics / body framework
+parents = "*"
+re = '\b(XP32|XPMSSE|maximum skeleton|HDT-?SMP|CBPC|CBP physics|racemenu|bodyslide|bhunp|face ?gen)\b'
+band = 1101
+pos = "top"
+
+[[rules]]  # SKSE + core script extenders / engine frameworks
+parents = "*"
+re = '\b(SKSE|skse64|address library|powerofthree|po3|papyrusutil|engine fixes|scrambled bugs|SSE display tweaks|\.NET script framework|backported extended|base object swapper|spell perk item distributor|SPID|keyword item distributor)\b'
+band = 101
+pos = "top"
+
+[[rules]]  # USSEP + unofficial base-game patches -> CORE FIXES
+parents = "*"
+re = '\b(USSEP|unofficial skyrim (special|anniversary) edition patch|unofficial .* patch|unofficial material fix)\b'
+band = 102
+pos = "top"
+
+# REFINE within a parent band -> finer leaf (position MID unless noted)
+[[rules]]
+parents = [501]
+re = '\b(weather|climate|storm|rain|snowfall|sky|cloud|aurora)\b'
+band = 506
+pos = "mid"
+
+[[rules]]
+parents = [501]
+re = '\b(water|rivers?|waves?|ocean|sea|lake)\b'
+band = 505
+pos = "mid"
+
+[[rules]]
+parents = [501]
+re = '\b(grass|flora|trees?|landscape flora|folkvangr|forest)\b'
+band = 504
+pos = "mid"
+
+[[rules]]
+parents = [501]
+re = '\b(mountains?|rocks?|cliffs?)\b'
+band = 502
+pos = "mid"
+
+[[rules]]
+parents = [501]
+re = '\b(particle lights?|enb light|lux(?! orbis)|window shadows)\b'
+band = 507
+pos = "mid"
+
+[[rules]]
+parents = [501]
+re = '\b(fire|flames?|embers?)\b'
+band = 508
+pos = "mid"
+
+[[rules]]
+parents = [201, 904]
+re = '\b(camera|smoothcam|3pco|conversation camera|improved camera)\b'
+band = 202
+pos = "mid"
+
+[[rules]]
+parents = [201]
+re = '\b(map|world map|paper map|map markers?)\b'
+band = 203
+pos = "mid"
+
+[[rules]]
+parents = [201]
+re = '\b(controls?|hotkeys?|keybinds?|controller)\b'
+band = 204
+pos = "mid"
+
+[[rules]]
+parents = [301]
+re = '\b(music|soundtrack|jeremy soule|bard songs?)\b'
+band = 302
+pos = "mid"
+
+[[rules]]
+parents = [102, 1501]
+re = '\bdyndolod\b'
+band = 1503
+pos = "bottom"
+
+[[rules]]
+parents = [102, 1501]
+re = '\b(synthesis|bashed patch|smashed patch|late loader)\b'
+band = 1502
+pos = "bottom"
+
+[[rules]]
+parents = [501, 904, 1501]
+re = '\bseasons? of skyrim\b|\bseasons\b'
+band = 1602
+pos = "mid"
+
+[[rules]]
+parents = [601, 603, 904, 1001]
+re = '\b(player home|player house|homestead|cottage|manor|estate)\b'
+band = 704
+pos = "mid"
+
+[[rules]]
+parents = [904, 1102]
+re = '\b(dragons?|creatures?|animals?|monsters?|wildlife)\b'
+band = 1202
+pos = "mid"

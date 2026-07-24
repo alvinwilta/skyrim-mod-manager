@@ -26,35 +26,11 @@ on a scratch copy and scores it against `conflicting_mods_file.txt`.
 
 import re
 
-from . import buckets, order_store, separators
+from . import buckets, order_store, rules, separators
 
-# Fallback when a mod's Nexus category is blank or maps to NEW & UNSORTED: run
-# the keyword classifier (buckets.classify) and bridge its STEP bucket to a
-# separator band. Category-first stays the rule -- this only rescues mods with
-# no usable category (adopted MO2-only rows, metadata gaps) from the Unsorted
-# tail, which is strictly better than dumping them there.
-_BUCKET_BAND = {
-    1: 101,    # Extenders            -> EARLY LOADERS - CORE
-    2: 102,    # Resources            -> MODDER RESOURCES - UTILITIES
-    3: 102,    # Foundation           -> MODDER RESOURCES - UTILITIES
-    4: 1402,   # Animation & Physics  -> ANIMATIONS
-    5: 401,    # Models & Textures    -> BASE MESHES & TEXTURES
-    6: 301,    # Sounds & Music       -> AUDIO - SOUND
-    7: 1101,   # Character Appearance -> SKELETON - PHYSICS - BODY - FACE - HAIR
-    8: 1501,   # Fixes                -> MISC PATCHES - BUG FIXES
-    9: 904,    # Gameplay — General   -> GAMEPLAY - IMMERSION
-    10: 1401,  # Gameplay — AI & Combat -> COMBAT
-    11: 904,   # Gameplay — Economy   -> GAMEPLAY - IMMERSION
-    12: 904,   # Gameplay — Immersion -> GAMEPLAY - IMMERSION
-    13: 1001,  # Gameplay — Quests    -> NEW QUESTS
-    14: 901,   # Gameplay — Skills & Perks -> PERKS - RACIAL - CLASSES
-    15: 201,   # Interface            -> MENUS - HUD - CONSOLE
-    16: 703,   # Locations            -> NEW LOCATIONS
-    17: 801,   # Lighting & Weather   -> LIGHTING
-    18: 102,   # Utilities            -> MODDER RESOURCES - UTILITIES
-    19: 1501,  # Patches              -> MISC PATCHES - BUG FIXES
-    20: 1601,  # Post-Processing      -> COMMUNITY SHADERS
-}
+# The category->band map, keyword-bucket fallback, keyword rules, and forced
+# head-priority ids all live in the editable `order_rules.toml` (loaded by
+# `rules.py`, re-read on every compute()). See that file for the tables.
 
 # Name signals for within-band / cross-band overwrite direction. A mod whose
 # name marks it as a patch/fix/compatibility layer is meant to overwrite the
@@ -93,82 +69,30 @@ def _tier(name):
 # decide not just WHICH band but WHERE in it.
 POS_TOP, POS_MID, POS_BOTTOM = 0, 1, 2
 
-# Explicit hardcoded head of the whole order, keyed by NEXUS MOD ID (exact +
-# stable -- a name regex breaks on renames/variants): SKSE loads first, then
-# Address Library, before anything else in Early Loaders. List order == forced
-# rank; every other mod sorts after (index == len). The only two mods named
-# explicitly anywhere in the engine.
-_HEAD_PRIORITY_IDS = [
-    30379,  # Skyrim Script Extender (SKSE64)
-    32444,  # Address Library for SKSE Plugins
-]
-
-
+# Head-priority (SKSE, Address Library, ...) is keyed by NEXUS MOD ID -- exact +
+# rename-proof. The id list lives in `order_rules.toml` (`head = [...]`); list
+# order == forced rank, every other mod sorts after (index == len).
 def _head_priority(mod_id):
     try:
-        return _HEAD_PRIORITY_IDS.index(mod_id)
+        return rules.HEAD_PRIORITY_IDS.index(mod_id)
     except ValueError:
-        return len(_HEAD_PRIORITY_IDS)
-
-# Rule-based classification: (parents, name-keyword, band, position). Checked in
-# order, first match wins. This is where combining the Nexus category with name
-# signals beats the raw category -- e.g. a mod filed under "Utilities" whose name
-# says it's an animation framework goes to the TOP of the Animations band, not
-# left in Utilities. `parents`:
-#   - None       => STRONG override: applies whatever the category-mapped band
-#                   was (the keyword is unambiguous enough to reclassify).
-#   - a band set => REFINE only when the category already put the mod in one of
-#                   those bands (safer for ambiguous words like "camera").
-# (This table is the tunable core; it will move to an editable rules file next.)
-_RULES = [
-    # --- STRONG overrides (any category) -> band + TOP, they're foundations ---
-    # animation/behavior frameworks
-    (None, POS_TOP, 1402, r"\b(nemesis|pandora|FNIS|open animation replacer|OAR|DAR|"
-                          r"behavior data injector|SCAR|payload interpreter|animation motion revolution|"
-                          r"dynamic animation replacer)\b"),
-    # skeleton / physics / body framework
-    (None, POS_TOP, 1101, r"\b(XP32|XPMSSE|maximum skeleton|HDT-?SMP|CBPC|CBP physics|"
-                          r"racemenu|bodyslide|bhunp|face ?gen)\b"),
-    # SKSE + core script extenders / engine frameworks -> EARLY LOADERS
-    (None, POS_TOP, 101, r"\b(SKSE|skse64|address library|powerofthree|po3|papyrusutil|"
-                         r"engine fixes|scrambled bugs|SSE display tweaks|\.NET script framework|"
-                         r"backported extended|base object swapper|spell perk item distributor|SPID|keyword item distributor)\b"),
-    # USSEP + the unofficial base-game patches: master fixes everything depends
-    # on -> CORE FIXES, at the very top.
-    (None, POS_TOP, 102, r"\b(USSEP|unofficial skyrim (special|anniversary) edition patch|"
-                         r"unofficial .* patch|unofficial material fix)\b"),
-    # --- REFINE within a parent band -> finer leaf (position MID) ---
-    (frozenset({501}), POS_MID, 506, r"\b(weather|climate|storm|rain|snowfall|sky|cloud|aurora)\b"),
-    (frozenset({501}), POS_MID, 505, r"\b(water|rivers?|waves?|ocean|sea|lake)\b"),
-    (frozenset({501}), POS_MID, 504, r"\b(grass|flora|trees?|landscape flora|folkvangr|forest)\b"),
-    (frozenset({501}), POS_MID, 502, r"\b(mountains?|rocks?|cliffs?)\b"),
-    (frozenset({501}), POS_MID, 507, r"\b(particle lights?|enb light|lux(?! orbis)|window shadows)\b"),
-    (frozenset({501}), POS_MID, 508, r"\b(fire|flames?|embers?)\b"),
-    (frozenset({201, 904}), POS_MID, 202, r"\b(camera|smoothcam|3pco|conversation camera|improved camera)\b"),
-    (frozenset({201}), POS_MID, 203, r"\b(map|world map|paper map|map markers?)\b"),
-    (frozenset({201}), POS_MID, 204, r"\b(controls?|hotkeys?|keybinds?|controller)\b"),
-    (frozenset({301}), POS_MID, 302, r"\b(music|soundtrack|jeremy soule|bard songs?)\b"),
-    (frozenset({102, 1501}), POS_BOTTOM, 1503, r"\bdyndolod\b"),
-    (frozenset({102, 1501}), POS_BOTTOM, 1502, r"\b(synthesis|bashed patch|smashed patch|late loader)\b"),
-    (frozenset({501, 904, 1501}), POS_MID, 1602, r"\bseasons? of skyrim\b|\bseasons\b"),
-    (frozenset({601, 603, 904, 1001}), POS_MID, 704, r"\b(player home|player house|homestead|cottage|manor|estate)\b"),
-    (frozenset({904, 1102}), POS_MID, 1202, r"\b(dragons?|creatures?|animals?|monsters?|wildlife)\b"),
-]
-_RULES = [(parents, pos, band, re.compile(rx, re.I)) for parents, pos, band, rx in _RULES]
+        return len(rules.HEAD_PRIORITY_IDS)
 
 
 def _classify(name, category, valid):
     """(band, position) for a mod. Start from the Nexus category (keyword-bucket
     fallback for blank/unmapped), then let the first matching rule override the
     band and set the within-band position. STRONG rules (parents None) reclassify
-    regardless of category; REFINE rules only fire within their parent bands."""
-    band = separators.CATEGORY_SEPARATOR.get((category or "").strip(), separators.UNSORTED)
+    regardless of category; REFINE rules only fire within their parent bands. The
+    category map, bucket fallback, and rule table all come from `rules` (loaded
+    from the editable order_rules.toml)."""
+    band = rules.CATEGORY_BAND.get((category or "").strip(), separators.UNSORTED)
     if band == separators.UNSORTED:
         bucket, _ = buckets.classify(name, category)
-        band = _BUCKET_BAND.get(bucket, separators.UNSORTED)
+        band = rules.BUCKET_BAND.get(bucket, separators.UNSORTED)
     pos = POS_MID
     n = name or ""
-    for parents, rpos, rband, rx in _RULES:
+    for parents, rpos, rband, rx in rules.RULES:
         if parents is not None and band not in parents:
             continue
         if rband not in valid:
@@ -338,6 +262,7 @@ def compute(conn):
       - pins: {mod_id: reason} for cross-band auto-pins (conflict_pin rows)
     Locked mods keep their band; the engine still ranks around them (apply()
     re-pins them via order_store._write_ranks, same as every other rewrite)."""
+    rules.reload()  # pick up any edits to order_rules.toml without a restart
     separators.seed(conn)
     valid = {r["id"] for r in conn.execute("SELECT id FROM separator")}
     rows = conn.execute(

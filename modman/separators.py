@@ -12,7 +12,7 @@ GROUPS; it never reorders (Phase 3's engine does band-driven ordering).
 import os
 import re
 
-from . import db
+from . import db, rules
 from .config import ROOT_DIR
 
 SEP_DIR = os.path.join(ROOT_DIR, "separator")
@@ -146,59 +146,11 @@ def _special_kind(key):
 
 
 # Nexus category -> band sort key. Category-first, coarse; the AI refine (Phase
-# 3) nudges into finer sub-bands. Anything absent falls back to UNSORTED.
-CATEGORY_SEPARATOR = {
-    "Utilities": 102,
-    "Modders Resources": 102,
-    "User Interface": 201,
-    "Audio": 301,
-    "Models and Textures": 401,
-    "Items and Objects - Player": 403,
-    "Items and Objects - World": 403,
-    "Environmental": 501,
-    "Visuals and Graphics": 501,
-    "Cities, Towns, Villages, and Hamlets": 601,
-    "Buildings": 601,
-    "Locations - New": 703,
-    "Locations - Vanilla": 702,
-    "Player homes": 704,
-    "Skills and Leveling": 901,
-    "Races, Classes, and Birthsigns": 901,
-    "Shouts": 902,
-    "Magic - Spells & Enchantments": 902,
-    "Magic - Gameplay": 904,
-    "Crafting": 903,
-    "Alchemy": 903,
-    "Gameplay": 904,
-    "Overhauls": 904,
-    "Immersion": 904,
-    "Stealth": 904,
-    "Guilds/Factions": 904,
-    "Quests and Adventures": 1001,
-    "Collectables, Treasure Hunts, and Puzzles": 1001,
-    "Body, Face, and Hair": 1101,
-    "NPC": 1102,
-    "Followers & Companions": 1104,
-    "Creatures and Mounts": 1202,
-    "Weapons": 1302,
-    "Armour": 1302,
-    "Weapons and Armour": 1302,
-    "Clothing and Accessories": 1303,
-    "Combat": 1401,
-    "Animation": 1402,
-    # Most "Bug Fixes" are foundational engine/game fixes that belong in CORE
-    # FIXES (load early, overwritten by real content), not the late Misc Patches
-    # band. Mod-specific bug fixes get pulled to their base's band by the
-    # name-regroup pass; genuinely-late compat patches ("Patches" category) stay
-    # in 1501.
-    "Bug Fixes": 102,
-    "Patches": 1501,
-    "Presets - ENB and ReShade": 1601,
-    # explicitly unsorted: too broad to place without a look
-    "Miscellaneous": UNSORTED,
-    "Cheats and God items": UNSORTED,
-    "Save Games": UNSORTED,
-}
+# 3) nudges into finer sub-bands. Anything absent falls back to UNSORTED. The map
+# itself now lives in the editable `order_rules.toml` (loaded by `rules.py`);
+# this is an alias to the same dict object so existing `CATEGORY_SEPARATOR`
+# callers and a live `rules.reload()` both stay in sync.
+CATEGORY_SEPARATOR = rules.CATEGORY_BAND
 
 
 def seed(conn):
