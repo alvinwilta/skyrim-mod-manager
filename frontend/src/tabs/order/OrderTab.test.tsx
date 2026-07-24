@@ -48,6 +48,16 @@ const ORDER = {
 }
 const IDLE = { phase: 'idle', running: false, error: null }
 
+// Separator taxonomy for the Change-group dropdown: one band present in the
+// order (mod_count > 0), one empty, one structural header (excluded from targets).
+const SEPARATORS = {
+  separators: [
+    { id: 100, name: 'CORE MODS', special_kind: 'header', collapsed: 0, mod_count: 0 },
+    { id: 201, name: 'MENUS - HUD', special_kind: null, collapsed: 0, mod_count: 2 },
+    { id: 102, name: 'CORE FIXES', special_kind: null, collapsed: 0, mod_count: 0 },
+  ],
+}
+
 const routes = (extra: Record<string, unknown> = {}) => ({
   'GET /api/installorder': ORDER,
   'GET /api/sort-state': IDLE,
@@ -218,7 +228,7 @@ describe('OrderTab selection + bulk actions', () => {
     expect(screen.queryByRole('toolbar', { name: 'bulk actions' })).not.toBeInTheDocument()
   })
 
-  it('bulk move to top posts position 1 for the selection', async () => {
+  it('bulk move to an exact position posts that position for the selection', async () => {
     const { calls } = mockApi(routes({ 'POST /api/order/move': { moved: [2, 3], position: 1 } }))
     renderTab()
     await screen.findByText('SkyUI')
@@ -227,22 +237,37 @@ describe('OrderTab selection + bulk actions', () => {
     await user.keyboard('{Control>}')
     await user.click(screen.getByText('USSEP'))
     await user.keyboard('{/Control}')
-    await user.click(screen.getByRole('button', { name: 'Top' }))
+    await user.type(screen.getByLabelText('bulk move to position'), '1')
+    await user.click(toolbarBtn('Move'))
     await waitFor(() =>
       expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [2, 3], position: 1, separator_id: null }),
     )
   })
 
-  it('move-to-group targets the end of that bucket run', async () => {
+  it('change separator moves the selection to the END of the chosen band', async () => {
+    const { calls } = mockApi(
+      routes({ 'GET /api/separators': SEPARATORS, 'POST /api/order/move': { moved: [3], position: 4 } }),
+    )
+    renderTab()
+    await screen.findByText('SkyUI')
+    await userEvent.click(screen.getByText('USSEP'))
+    // pick band 201; the frontend sends position = list length + 1 (clamped to
+    // the tail server-side) with the target separator id
+    await userEvent.selectOptions(screen.getByLabelText('change separator'), '201')
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [3], position: 4, separator_id: 201 }),
+    )
+  })
+
+  it('change group moves the selection to the end of that bucket run', async () => {
     const { calls } = mockApi(routes({ 'POST /api/order/move': { moved: [3], position: 3 } }))
     renderTab()
     await screen.findByText('SkyUI')
     await userEvent.click(screen.getByText('USSEP'))
-    await userEvent.selectOptions(screen.getByLabelText('move to group'), '3')
+    // Interface (bucket 3) last remaining mod (MoreHUD) is index 1 once USSEP is
+    // excluded; end-of-group = position 3, on the group (bucket) axis (no band)
+    await userEvent.selectOptions(screen.getByLabelText('change group'), '3')
     await waitFor(() =>
-      // Interface's last remaining mod (MoreHUD) is at index 1 once USSEP is
-      // excluded; the backend inserts after removing the moved block, so
-      // end-of-group = position 3
       expect(calls.find((c) => c.path === '/api/order/move')?.body).toEqual({ mod_ids: [3], position: 3, separator_id: null }),
     )
   })

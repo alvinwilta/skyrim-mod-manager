@@ -142,14 +142,18 @@ const RowCells = memo(function RowCells({
           </span>
         ) : mod.mo2_state === 'disabled' ? (
           <span
-            className="badge"
-            style={{ background: '#3a2b12', color: 'var(--amber)' }}
+            className="badge b-new b-icon"
+            style={{ background: '#4d191c', color: 'var(--red)' }}
             title="Installed in MO2 but disabled (as of the last pull)"
           >
-            MO2 off{' '}
+            ✗{' '}
           </span>
         ) : (
-          mod.installed && <span className="badge b-new">installed </span>
+          mod.installed && (
+            <span className="badge b-new b-icon" title="installed in MO2">
+              ✓{' '}
+            </span>
+          )
         )}
         {mod.source === 'mo2' && (
           <span
@@ -162,11 +166,11 @@ const RowCells = memo(function RowCells({
         )}
         {mod.conflict_pin && (
           <span
-            className="badge"
+            className="badge b-icon"
             style={{ background: '#2b1e3a', color: 'var(--purple, #b98bff)' }}
             title={mod.pin_reason || 'pinned by the ordering engine to satisfy a real cross-band file conflict'}
           >
-            📌 pinned{' '}
+            📌{' '}
           </span>
         )}
         {mod.file_type === 'bsa' && (
@@ -222,9 +226,13 @@ const RowCells = memo(function RowCells({
         )}
       </div>
       <div className="hide-sm dim">
-        {bandName ? <span className="bandtag" title="separator band (grouping)">{bandName}</span> : mod.category || ''}
+        {bandName ? (
+          <span className="bandtag" title={`${bandName} — separator band (grouping)`}>{bandName}</span>
+        ) : (
+          <span title={mod.category || ''}>{mod.category || ''}</span>
+        )}
       </div>
-      <div className="num">
+      <div className="num groupcell">
         <GroupBadge bucket={mod.bucket} buckets={buckets} />
       </div>
     </>

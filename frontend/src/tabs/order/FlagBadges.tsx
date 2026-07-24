@@ -20,7 +20,7 @@ export function FlagBadge({
   // between siblings — without it a long badge run is one unbreakable line
   return (
     <>
-      <span className="badge" style={STYLE[severity]} title={hint}>
+      <span className="badge badge-flag" style={STYLE[severity]} title={hint}>
         {label}
       </span>{' '}
     </>

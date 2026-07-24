@@ -56,7 +56,7 @@ textarea { height: 120px; font-family: monospace; font-size: 12px; resize: verti
   border-radius: 6px; font: inherit; cursor: pointer;
 }
 .btn:disabled { opacity: .4; cursor: default; }
-.btn.ghost { background: none; border: 1px solid var(--border); color: var(--text); }
+.btn.ghost { background: none; border: 1px solid #4b5464; color: var(--text); }
 .btn.ghost.ai { border-color: var(--blue); color: var(--blue); }
 select {
   background: #12151c; border: 1px solid var(--border); color: var(--text);
@@ -167,6 +167,18 @@ tr.runhead td {
   cursor: pointer; padding: 5px 10px; user-select: none;
 }
 tr.runhead:hover td { background: #161a23; }
+/* Change-separator / Change-group dropdowns: fixed width fitting the placeholder,
+   with a CUSTOM chevron (native arrow sat flush against the border) inset 10px
+   from the edge so it isn't cramped. Both read identically. */
+.grpselect {
+  width: 156px; padding-right: 28px; text-overflow: ellipsis;
+  appearance: none; -webkit-appearance: none;
+  background-color: #12151c;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a93a3' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+}
 .seltoolbar {
   position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
   z-index: 12; background: var(--panel);
@@ -205,14 +217,16 @@ tr.runhead:hover td { background: #161a23; }
    a hidden .hide-sm cell is skipped by grid auto-placement (display:none
    items aren't part of the box tree), so the mobile override below just
    drops its track rather than fighting to collapse it. */
-:root { --ord-cols: 28px 84px minmax(220px, 1fr) 84px 168px 176px; }
+:root { --ord-cols: 28px 84px minmax(220px, 1fr) 84px 104px 104px; }
 /* the table keeps its columns at a comfortable min width and scrolls
    horizontally inside this wrapper when the window is too narrow — so nothing
    (position editor, group badge) ever gets clipped */
 /* overflow-y hidden (not the default visible) so this axis doesn't get promoted
    to auto — a nested vertical scroll box would break the window virtualizer.
    The list's own height fits, so nothing is clipped vertically. */
-.ordwrap { overflow-x: auto; overflow-y: hidden; }
+/* padding-bottom: space below the table so the floating selection toolbar
+   (.seltoolbar, fixed at bottom:18px) can't cover the last rows. */
+.ordwrap { overflow-x: auto; overflow-y: hidden; padding-bottom: 96px; }
 .ordtable { min-width: 780px; }
 /* default grid `align-items`/`justify-items` is stretch, so a plain block
    cell still fills its row's full height for a solid hover/state background
@@ -224,6 +238,16 @@ tr.runhead:hover td { background: #161a23; }
   text-align: left; color: var(--dim); font-size: 11px; text-transform: uppercase;
   letter-spacing: .05em; padding: 6px 10px; border-bottom: 1px solid var(--border);
 }
+/* right-align the numeric column headers (Mod ID, Group) so each label sits over
+   its right-aligned body cell (.num uses justify-content:flex-end) */
+.ordtable-head > div.num { text-align: right; }
+/* the pos header mirrors the body pos cell: the all-lock toggle on the left over
+   the row locks, the "Order" label on the right over the position numbers */
+.ordtable-head > div.poshead {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-left: 2px; padding-right: 6px;
+}
+.ordtable-head > div.poshead .lockbtn { font-size: 13px; }
 .ordrow > div {
   padding: 6px 10px; border-bottom: 1px solid #1c202a;
   /* one line per cell so every row is the same height — the virtualizer
@@ -239,6 +263,19 @@ tr.runhead:hover td { background: #161a23; }
 .ordrow > div.modcell { display: flex; align-items: center; gap: 6px; overflow: hidden; }
 .ordrow > div.hide-sm { overflow: hidden; text-overflow: ellipsis; }
 .modcell > .badge, .modcell > a { flex: 0 0 auto; }
+/* Category + Group columns are narrow — truncate their content with ellipsis and
+   rely on the title tooltip for the full text. The group badge is a nowrap pill,
+   so cap it to the cell and ellipsize inside. */
+.groupcell { overflow: hidden; }
+.groupcell > .badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* the category cell is flex, so ellipsis must live on its inner text/badge */
+.ordrow > div.hide-sm > * { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Flag badges (MOVED / CONFLICT / DUPLICATE …) can carry long group/mod names.
+   Cap width + ellipsize; the full text stays in the title tooltip on hover. They
+   may shrink (flex 0 1) so a busy row's flags don't push the layout wide. */
+.modcell > .badge-flag { flex: 0 1 auto; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+/* icon-only badges (installed ✓, pinned 📌) — tighter padding, no label */
+.badge.b-icon { padding: 1px 5px; }
 .modname { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .ordrow:hover > div { background: #141720; }
 /* fixed height — must equal MOD_ROW_H (36) in OrderTab so the virtualizer's
@@ -476,7 +513,17 @@ input.switch:disabled { cursor: default; }
 .band-mod { flex: 1; }
 .band-lock { font-size: 11px; }
 
-/* inline separator band label in the flat order table */
+/* Overview marks on the NATIVE (window) scrollbar — Chromium only. The track's
+   background is a gradient built in OrderTab (--sb-marks) with a hard colour band
+   at each flagged mod's document position; a wider bar makes them legible. The
+   thumb overlays the track (bands show around/behind it as you scroll). Firefox
+   ignores all of this and just shows a normal scrollbar. */
+::-webkit-scrollbar { width: 14px; }
+::-webkit-scrollbar-track { background: var(--sb-marks, transparent); }
+::-webkit-scrollbar-thumb {
+  background: #39414f; border-radius: 7px; border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: #4b5464; }
 .bandtag {
   font-size: 10px; color: var(--blue); background: #12202f;
   border-radius: 4px; padding: 1px 6px; white-space: nowrap;

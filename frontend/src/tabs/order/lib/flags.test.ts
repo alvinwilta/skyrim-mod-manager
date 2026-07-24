@@ -28,17 +28,17 @@ describe('parseFlag', () => {
     expect(f.label).toBe('CONFLICT ↔ 999')
   })
 
-  it('MOVED:<from>><to> — amber with bucket names', () => {
+  it('MOVED:<from>><to> — full label (truncated in CSS), detail in the hint', () => {
     const f = parseFlag('MOVED:3>5', names, buckets)
     expect(f.severity).toBe('amber')
-    expect(f.label).toBe('MOVED Interface → Foundation')
-    expect(f.hint).toBe('Claude moved this from 3 · Interface to 5 · Foundation')
+    expect(f.label).toBe('Interface → Foundation')
+    expect(f.hint).toBe('Sort/Refine moved this from Interface to Foundation')
   })
 
-  it('MOVED:None><to> — unsorted source', () => {
+  it('MOVED:None><to> — unknown source id falls back to the raw id', () => {
     const f = parseFlag('MOVED:None>5', names, buckets)
-    expect(f.label).toBe('MOVED None → Foundation')
-    expect(f.hint).toContain('None · unsorted')
+    expect(f.label).toBe('None → Foundation')
+    expect(f.hint).toBe('Sort/Refine moved this from None to Foundation')
   })
 
   it('WRONG SPOT:<id> — red, names the expected group', () => {

@@ -23,7 +23,7 @@ import { BandDivider } from './BandDivider'
 import { OrderToolbar } from './OrderToolbar'
 import type { OrderMod, Separator } from '../../api/types'
 import { HighlightBar } from './HighlightBar'
-import { ALL_HIGHLIGHTS_ON, CLEARABLE_FLAG_KIND, flagCategory, type HighlightKey } from './lib/highlights'
+import { DEFAULT_HIGHLIGHTS, CLEARABLE_FLAG_KIND, flagCategory, type HighlightKey } from './lib/highlights'
 import { SelectionToolbar } from './SelectionToolbar'
 import { Subtabs } from './subtabs/Subtabs'
 import { ConflictsView, conflictKey } from './subtabs/ConflictsView'
@@ -46,6 +46,17 @@ const MOD_ROW_H = 36
 // assumption). A taller divider (was 46) shifted by a dragged 36px row left a
 // 10px overlap mid-drag ("divider locked to row height"). Equal heights = exact.
 const SEP_ROW_H = MOD_ROW_H
+
+// Native-scrollbar overview marks: colour per flag kind (mirrors the badge/chip
+// tints); the ORDER is severity — first match wins when a mod has several flags.
+const SCROLL_MARK_COLOR: Record<HighlightKey, string> = {
+  duplicate: '#d9534f',
+  drift: '#e0554f',
+  conflict: '#d6a53a',
+  moved: '#c8934a',
+  uncertain: '#8a93a3',
+}
+const SCROLL_MARK_ORDER: HighlightKey[] = ['duplicate', 'drift', 'conflict', 'moved', 'uncertain']
 
 function NotesList({
   notes,
@@ -108,7 +119,7 @@ export function OrderTab() {
   const [grp, setGrp] = useState('')
   const [q, setQ] = useState('')
   const searchWrapRef = useStickyTop<HTMLDivElement>()
-  const [hl, setHl] = useState(ALL_HIGHLIGHTS_ON)
+  const [hl, setHl] = useState(DEFAULT_HIGHLIGHTS)
   const [showLocked, setShowLocked] = useState(true)
   const [dragId, setDragId] = useState<number | null>(null)
   const [confirmCommit, setConfirmCommit] = useState(false)
@@ -240,6 +251,7 @@ export function OrderTab() {
   }, [data.mods, cat, grp, q, showLocked])
 
   const lockedCount = useMemo(() => data.mods.filter((m) => m.locked).length, [data.mods])
+  const allLocked = data.mods.length > 0 && lockedCount === data.mods.length
 
   // How many rows each highlight would tag right now — shown on the chips so
   // an empty pass reads as (0) instead of a chip that does nothing.
@@ -306,6 +318,62 @@ export function OrderTab() {
   // mod_id → index in `visibleAll` (mods only) — this is the index space the
   // selection hook's shift-range uses, so it MUST exclude dividers.
   const selIndex = useMemo(() => new Map(visibleAll.map((r, i) => [r.mod.mod_id, i])), [visibleAll])
+
+  // Overview markers painted onto the native scrollbar (Chromium only — see the
+  // ::-webkit-scrollbar-track gradient in css). One per flagged mod, at its
+  // fraction down the combined list; kind decides colour. Respects the highlight
+  // toggles (moved/uncertain default off), so the scrollbar only marks kinds the
+  // user has turned on. Highest-severity kind wins when a mod has several.
+  const scrollMarks = useMemo(() => {
+    const n = combined.length
+    const out: { frac: number; color: string }[] = []
+    combined.forEach((it, i) => {
+      if (it.kind !== 'mod') return
+      const mod = it.row.mod
+      const kinds = new Set<HighlightKey>()
+      for (const f of mod.flags || []) {
+        const c = flagCategory(f)
+        if (c && hl[c]) kinds.add(c)
+      }
+      if (hl.drift && jobs.wrongById.has(mod.mod_id)) kinds.add('drift')
+      const kind = SCROLL_MARK_ORDER.find((k) => kinds.has(k))
+      if (kind) out.push({ frac: n > 1 ? i / (n - 1) : 0, color: SCROLL_MARK_COLOR[kind] })
+    })
+    return out
+  }, [combined, hl, jobs.wrongById])
+
+  // Build the ::-webkit-scrollbar-track background gradient from the marks and
+  // stamp it on :root as --sb-marks. The list is window-scrolled, so map each
+  // mark's list fraction to its DOCUMENT position (list offset + fraction·list
+  // height) over the full scrollHeight — that's what the native track spans.
+  // Recompute when the marks or layout (row count → total size, viewport) change.
+  useEffect(() => {
+    const root = document.documentElement
+    const paint = () => {
+      const listEl = listRef.current
+      const docH = root.scrollHeight
+      if (!listEl || !docH || !scrollMarks.length) {
+        root.style.removeProperty('--sb-marks')
+        return
+      }
+      const listTop = listEl.getBoundingClientRect().top + window.scrollY
+      const listH = listEl.offsetHeight || 1
+      const seg: string[] = []
+      for (const m of scrollMarks) {
+        const f = Math.min(100, Math.max(0, ((listTop + m.frac * listH) / docH) * 100))
+        const a = Math.max(0, f - 0.18)
+        const b = Math.min(100, f + 0.18)
+        seg.push(`transparent ${a}%`, `${m.color} ${a}%`, `${m.color} ${b}%`, `transparent ${b}%`)
+      }
+      root.style.setProperty('--sb-marks', `linear-gradient(to bottom, ${seg.join(', ')})`)
+    }
+    paint()
+    window.addEventListener('resize', paint)
+    return () => {
+      window.removeEventListener('resize', paint)
+      root.style.removeProperty('--sb-marks')
+    }
+  }, [scrollMarks])
 
   // Stable reference: SortableContext re-derives its internal `items` off this
   // array's identity, not its contents — an inline `.map()` here would hand it
@@ -765,16 +833,25 @@ export function OrderTab() {
 
       <SelectionToolbar
         count={sel.selected.size}
+        separators={separators}
         buckets={data.buckets}
         mods={data.mods}
         selected={sel.selected}
         disabled={frozen}
         onLock={(locked) => void doLock([...sel.selected], locked)}
-        // bulk moves (Top/Bottom/Move/group) are one-shot: the rows land at
-        // their target, so keeping them selected only invites an accidental
-        // second move — clear right away (the optimistic reorder already ran)
+        // bulk moves (Move / Change group / Change separator) are one-shot: the
+        // rows land at their target, so keeping them selected only invites an
+        // accidental second move — clear right away (the optimistic reorder ran)
         onMoveTo={(p) => {
           void doMove([...sel.selected], p)
+          sel.clear()
+        }}
+        // Change separator: drop the selection at the END of the chosen band. A
+        // position past the list clamps to its tail, and move()'s band regroup
+        // then slots them into that band. Refresh separators so the new band's
+        // count reflects the move.
+        onMoveToSeparator={(sepId) => {
+          void doMove([...sel.selected], data.mods.length + 1, sepId).then(loadSeparators)
           sel.clear()
         }}
         onDelete={() => setConfirmDelete(true)}
@@ -801,7 +878,22 @@ export function OrderTab() {
             >
               <div className="ordtable-head" role="row">
                 <div role="columnheader"></div>
-                <div role="columnheader">#</div>
+                <div className="poshead" role="columnheader">
+                  <button
+                    className={`lockbtn${allLocked ? ' on' : ''}`}
+                    disabled={frozen || !data.mods.length}
+                    title={allLocked ? 'all pinned — click to unpin every mod' : 'pin every mod at its current position'}
+                    onClick={() =>
+                      void doLock(
+                        data.mods.map((mm) => mm.mod_id),
+                        !allLocked,
+                      )
+                    }
+                  >
+                    {allLocked ? '🔒' : '🔓'}
+                  </button>
+                  <span>Order</span>
+                </div>
                 <div role="columnheader">Mod</div>
                 <div className="num" role="columnheader">Mod ID</div>
                 <div className="hide-sm" role="columnheader">Category</div>

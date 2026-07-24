@@ -17,6 +17,22 @@ export const ALL_HIGHLIGHTS_ON: Highlights = {
   drift: true,
 }
 
+/**
+ * Initial state for the order table. The ACTIONABLE tags stay on (conflicts,
+ * duplicates, drift — things you'd want to fix); the INFORMATIONAL ones start
+ * OFF so every row isn't drowned in badges. `moved` in particular is transient
+ * sort-audit noise ("Sort changed this mod's group") that stacks a long badge on
+ * every touched row; `uncertain` is a soft hint. The user opts into either via
+ * its highlight chip.
+ */
+export const DEFAULT_HIGHLIGHTS: Highlights = {
+  conflict: true,
+  duplicate: true,
+  moved: false,
+  uncertain: false,
+  drift: true,
+}
+
 /** Which toggle governs a given mod_sort flag (WRONG SPOT is synthesized by the
  *  drift check). null = an unknown flag, always shown so nothing silently hides. */
 export function flagCategory(flag: string): HighlightKey | null {

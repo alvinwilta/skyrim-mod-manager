@@ -47,10 +47,14 @@ export function parseFlag(
 
   const mv = flag.startsWith('MOVED:') && flag.slice(6).match(/^(\d+|None)>(\d+)$/)
   if (mv) {
-    const from = buckets[mv[1]]
-    const to = buckets[mv[2]]
-    label = `MOVED ${from || mv[1]} → ${to || mv[2]}`
-    hint = `Claude moved this from ${mv[1]} · ${from || 'unsorted'} to ${mv[2]} · ${to || '?'}`
+    // Group names come from whichever id space the mover used — bucket ids for
+    // the legacy sorter, band ids for the engine — so fall back to the raw id
+    // when it isn't a known bucket. Long labels are truncated in CSS (.badge-flag,
+    // ellipsis) with the full text in the tooltip, so this can stay descriptive.
+    const from = buckets[mv[1]] || mv[1]
+    const to = buckets[mv[2]] || mv[2]
+    label = `${from} → ${to}`
+    hint = `Sort/Refine moved this from ${from} to ${to}`
   }
 
   return { label, hint, severity }
