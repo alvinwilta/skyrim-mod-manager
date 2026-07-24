@@ -10,6 +10,8 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'guide', label: 'Guide' },
 ]
 
+export const TAB_IDS = TABS.map((t) => t.id)
+
 interface Props {
   active: TabId
   onSelect: (tab: TabId) => void

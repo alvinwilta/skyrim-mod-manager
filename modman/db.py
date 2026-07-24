@@ -98,6 +98,16 @@ def init_db():
         # (shows under NEW & UNSORTED). Cosmetic in Phase 2; feeds bands in P3.
         if "separator_id" not in cols_sort:
             conn.execute("ALTER TABLE mod_sort ADD COLUMN separator_id INTEGER")
+        # Phase 3 ordering engine (modman/ordering.py): a cross-band auto-pin.
+        # conflict_pin = 1 when the engine forced this mod out of its band's
+        # natural slot to satisfy a real file-overlap that band order alone
+        # would resolve backwards; pin_reason = the human-readable "why" (the
+        # shared path + the mod it must overwrite/yield to). Both NULL = the
+        # mod sits where its band+cluster naturally places it.
+        if "conflict_pin" not in cols_sort:
+            conn.execute("ALTER TABLE mod_sort ADD COLUMN conflict_pin INTEGER NOT NULL DEFAULT 0")
+        if "pin_reason" not in cols_sort:
+            conn.execute("ALTER TABLE mod_sort ADD COLUMN pin_reason TEXT")
         # real (not guessed) file-path overlaps between archives -- see modman/conflicts.py
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mod_files (file_id INTEGER NOT NULL, path TEXT NOT NULL,"

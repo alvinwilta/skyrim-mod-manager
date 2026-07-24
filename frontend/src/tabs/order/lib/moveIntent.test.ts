@@ -13,6 +13,8 @@ const m = (mod_id: number): OrderMod => ({
   mo2_state: null,
   source: null,
   separator_id: null,
+  conflict_pin: false,
+  pin_reason: null,
   file_type: null,
   flags: [],
 })

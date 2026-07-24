@@ -50,10 +50,18 @@ export function useOrderData() {
   // round-trip completes, so dnd-kit's transform resets to 0 the instant the
   // drop lands — visually snapping the row back to its old spot before the
   // reload snaps it again to the real one.
-  const reorderLocal = useCallback((ids: number[], position: number) => {
+  //
+  // `separatorId` (a cross-band drag) is stamped onto the moved mods HERE too,
+  // so the very next render already groups them into the destination band. Skip
+  // it and the row would splice to the new index while still carrying its old
+  // band — the exact stale-band frame that used to flash a broken/duplicate
+  // divider before the server reload corrected it.
+  const reorderLocal = useCallback((ids: number[], position: number, separatorId?: number | null) => {
     setMods((prev) => {
       const movingSet = new Set(ids)
-      const moving = prev.filter((m) => movingSet.has(m.mod_id))
+      const moving = prev
+        .filter((m) => movingSet.has(m.mod_id))
+        .map((m) => (separatorId != null ? { ...m, separator_id: separatorId } : m))
       const rest = prev.filter((m) => !movingSet.has(m.mod_id))
       const pos = Math.max(0, Math.min(rest.length, position - 1))
       const next = rest.slice()

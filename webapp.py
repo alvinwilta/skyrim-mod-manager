@@ -8,7 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from modman import commit, conflicts, config, db, engine, importlocal, jobs, llm_refine, mo2, mo2_order, mo2_pull, order_store, precedence, requirements, separators
+from modman import commit, conflicts, config, db, engine, importlocal, jobs, llm_refine, mo2, mo2_order, mo2_pull, order_store, ordering, precedence, requirements, separators
 
 app = FastAPI(title="Mod Manager")
 db.init_db()
@@ -19,7 +19,11 @@ db.init_db()
 # MODMAN_EXTRA_ORIGINS (comma-separated) mirrors the MODMAN_DB_PATH pattern:
 # read at import time so a throwaway test server on another port (e.g. 7799)
 # can accept its own browser origin without loosening the default.
-ALLOWED_ORIGINS = {"http://127.0.0.1:7788", "http://localhost:7788"}
+ALLOWED_ORIGINS = {f"http://127.0.0.1:{config.PORT}", f"http://localhost:{config.PORT}"}
+# In dev the frontend is the vite server (5173) proxying /api here; allow its
+# origin so direct (non-proxied) calls also pass the CSRF guard.
+if config.IS_DEV:
+    ALLOWED_ORIGINS |= {"http://127.0.0.1:5173", "http://localhost:5173"}
 ALLOWED_ORIGINS |= {o.strip() for o in os.environ.get("MODMAN_EXTRA_ORIGINS", "").split(",") if o.strip()}
 
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
@@ -413,6 +417,19 @@ def assign_separators():
     return {"assigned": n}
 
 
+@app.post("/api/order/generate")
+def generate_order():
+    """Regenerate the whole install order from scratch with the Phase 3 engine
+    (category -> separator band, family-clustered within, cross-band conflicts
+    auto-pinned). Ignores the current rank entirely -- this is the "let the tool
+    decide the order" action. Refuse while the order is committed to disk or a
+    rank-rewriting job is mid-flight."""
+    frozen = _order_frozen("regenerating the order") or _order_rewrite_busy()
+    if frozen:
+        return frozen
+    return ordering.generate()
+
+
 @app.post("/api/separators/collapse")
 async def collapse_separator(request: Request):
     body = await request.json()
@@ -492,14 +509,18 @@ async def sort_mods(request: Request):
     if running:
         return JSONResponse({"error": running}, status_code=409)
     try:
-        n = await run_in_threadpool(order_store.heuristic_sort)
+        # Sort now runs the full Phase 3 ordering engine: category -> separator
+        # band (keyword fallback rescues blank categories, so nothing is stranded
+        # in NEW & UNSORTED), family-clustered within each band, real cross-band
+        # file conflicts auto-pinned. One button does grouping + ordering + pins.
+        res = await run_in_threadpool(ordering.generate)
     finally:
         jobs.end_exclusive(_sort_state)
     if (body or {}).get("llm"):
         err = llm_refine.start_llm_refine((body or {}).get("model") or "haiku")
         if err:
             return JSONResponse({"error": err}, status_code=409)
-    return {"sorted": n, "llm": bool((body or {}).get("llm"))}
+    return {"sorted": res["ordered"], "pins": res["pins"], "llm": bool((body or {}).get("llm"))}
 
 
 @app.post("/api/sort-desc")
@@ -645,4 +666,7 @@ if os.path.isdir(os.path.join(DIST_DIR, "assets")):
 if __name__ == "__main__":
     # timeout_graceful_shutdown: open SSE streams (/api/events) never close on
     # their own, so cap the connection-drain wait or SIGTERM hangs forever.
-    uvicorn.run(app, host="127.0.0.1", port=7788, timeout_graceful_shutdown=3)
+    # Port + db come from config.ENVIRONMENT (dev 7799/mods.dev.db, live
+    # 7788/mods.db).
+    print(f"[modman] environment={config.ENVIRONMENT or 'live'} db={config.DB_PATH} port={config.PORT}")
+    uvicorn.run(app, host="127.0.0.1", port=config.PORT, timeout_graceful_shutdown=3)

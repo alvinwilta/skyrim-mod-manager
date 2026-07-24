@@ -74,6 +74,10 @@ export interface OrderMod {
   source: string | null
   /** separator band this mod is grouped under (separator.id), or null if unassigned */
   separator_id: number | null
+  /** the ordering engine forced this mod out of its band's natural slot to satisfy a real cross-band file conflict */
+  conflict_pin: boolean
+  /** human-readable why for a conflict_pin (shared path + the mod it must overwrite) */
+  pin_reason: string | null
   file_type: string | null
   flags: string[]
 }

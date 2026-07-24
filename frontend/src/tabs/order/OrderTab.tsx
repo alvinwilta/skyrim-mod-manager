@@ -16,11 +16,12 @@ import { api } from '../../api/endpoints'
 import { useRowSelection } from '../library/useRowSelection'
 import { useOrderData, matchesFilter, errText } from './hooks/useOrderData'
 import { useOrderJobs } from './hooks/useOrderJobs'
-import { resolveMove } from './lib/moveIntent'
+import { resolveDrop, type DropCell } from './lib/moveIntent'
 import { type VisibleRow } from './lib/runs'
 import { OrderRow } from './OrderRow'
+import { BandDivider } from './BandDivider'
 import { OrderToolbar } from './OrderToolbar'
-import type { Separator } from '../../api/types'
+import type { OrderMod, Separator } from '../../api/types'
 import { HighlightBar } from './HighlightBar'
 import { ALL_HIGHLIGHTS_ON, CLEARABLE_FLAG_KIND, flagCategory, type HighlightKey } from './lib/highlights'
 import { SelectionToolbar } from './SelectionToolbar'
@@ -40,7 +41,11 @@ import { LoadingOverlay } from '../../components/LoadingOverlay'
 // the virtualizer's positions are exact and don't depend on the async measure
 // pass (which is what let stacked dividers overlap).
 const MOD_ROW_H = 36
-const SEP_ROW_H = 46
+// Separators MUST match MOD_ROW_H: dnd-kit's verticalListSortingStrategy shifts
+// every item past the drop point by the ACTIVE item's height (uniform-height
+// assumption). A taller divider (was 46) shifted by a dragged 36px row left a
+// 10px overlap mid-drag ("divider locked to row height"). Equal heights = exact.
+const SEP_ROW_H = MOD_ROW_H
 
 function NotesList({
   notes,
@@ -139,7 +144,6 @@ export function OrderTab() {
   // Separator bands: dividers live INLINE in the single draggable order.
   const [separators, setSeparators] = useState<Separator[]>([])
   const [collapsedBands, setCollapsedBands] = useState<Set<number>>(new Set())
-  const [assigning, setAssigning] = useState(false)
   const loadSeparators = useCallback(() => {
     api
       .separators()
@@ -163,34 +167,9 @@ export function OrderTab() {
     })
   }
 
-  const assignBands = async () => {
-    setAssigning(true)
-    try {
-      const r = await api.assignSeparators()
-      jobs.setMsg(`assigned ${r.assigned} mod(s) to separator bands`)
-      loadSeparators()
-      await data.reload()
-    } catch (e) {
-      jobs.setMsg(errText(e))
-    } finally {
-      setAssigning(false)
-    }
-  }
-
-  // Organise into bands once per mount, after any pull settles — so the order
-  // is always band-grouped (contiguous dividers) without a manual click.
-  // assign+rerank is idempotent and preserves manual within/cross-band moves,
-  // so running it on tab entry just re-enforces the invariant. Skipped while
-  // committed (frozen) or a pull is still in flight.
-  const autoAssignedRef = useRef(false)
-  useEffect(() => {
-    if (autoAssignedRef.current || jobs.pulling || assigning || data.committed) return
-    if (data.mods.length === 0) return
-    autoAssignedRef.current = true
-    void assignBands()
-    // assignBands is stable enough for this one-shot guard; deps intentionally minimal
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.mods, jobs.pulling, assigning, data.committed])
+  // Sort (the engine) assigns every mod its band + order; refresh the band
+  // counts shown on the dividers after it runs.
+  const runSortAndRefresh = () => void jobs.runSort(false).then(loadSeparators)
 
   // Resolve the drift check's {mod_id → expected bucket} map against the
   // order cache so the panel can list the drifted mods by name/position.
@@ -236,16 +215,29 @@ export function OrderTab() {
   const frozen = data.refining || data.committed
 
   // Rank positions are absolute over the full list; filters only hide rows.
-  // Hiding locked rows is just another filter: positions stay global (i+1 over
-  // the full list), so a move onto a visible row still lands at that mod's real
-  // rank — locked rows keep their place relative to the moved block.
-  const visibleAll: VisibleRow[] = useMemo(
-    () =>
-      data.mods
-        .map((mod, i) => ({ mod, pos: i + 1 }))
-        .filter((r) => matchesFilter(r.mod, cat, grp, q) && (showLocked || !r.mod.locked)),
-    [data.mods, cat, grp, q, showLocked],
-  )
+  // The ordered, filtered row list — the SINGLE source the whole tab derives
+  // pos, selection indices and the divider list from. It is built by GROUPING
+  // mods into their separator band (band id ascending; unassigned last), NOT by
+  // trusting the raw rank order to already be band-contiguous. This is the
+  // invariant that makes duplicate/overlapping dividers structurally impossible:
+  // every band is one contiguous run here by construction, so a stale rank (mid
+  // optimistic move, or a backend that regressed) can never split a band into
+  // two divider runs. `pos` is the 1-based index in THIS grouped order, which
+  // also equals the backend's band-grouped rank (order_store.move keeps them in
+  // sync), so a move position computed here lands correctly on the server.
+  const NO_BAND = Number.MAX_SAFE_INTEGER
+  const visibleAll: VisibleRow[] = useMemo(() => {
+    const filtered = data.mods.filter((m) => matchesFilter(m, cat, grp, q) && (showLocked || !m.locked))
+    const byBand = new Map<number, OrderMod[]>()
+    for (const m of filtered) {
+      const b = m.separator_id ?? NO_BAND
+      const arr = byBand.get(b)
+      if (arr) arr.push(m)
+      else byBand.set(b, [m])
+    }
+    const seq = [...byBand.keys()].sort((a, b) => a - b).flatMap((b) => byBand.get(b)!)
+    return seq.map((mod, i) => ({ mod, pos: i + 1 }))
+  }, [data.mods, cat, grp, q, showLocked])
 
   const lockedCount = useMemo(() => data.mods.filter((m) => m.locked).length, [data.mods])
 
@@ -278,21 +270,30 @@ export function OrderTab() {
     [visibleAll, blockDrag, dragId, sel.selected],
   )
 
-  // Combined render list: separator dividers interleaved with the (band-grouped)
-  // mod rows — one draggable order, MO2-style. A divider is emitted at each band
-  // boundary; a collapsed band keeps its divider but drops its mod rows.
+  // Combined render list: one divider per band, followed by that band's mod
+  // rows — one draggable order, MO2-style. Built by GROUPING (band id ascending;
+  // unassigned last), so exactly one divider can ever exist per band regardless
+  // of the input row order — the duplicate/overlapping-divider class of bug is
+  // impossible here by construction. A collapsed band keeps its divider but
+  // drops its rows. `visible` may hide some rows mid-drag (blockDrag), which
+  // only shrinks a band's run, never splits it.
   const combined = useMemo(() => {
-    const out: ({ kind: 'sep'; sepId: number } | { kind: 'mod'; row: VisibleRow })[] = []
-    let prev: number | null | undefined
+    const byBand = new Map<number, VisibleRow[]>()
     for (const row of visible) {
-      const sid = row.mod.separator_id
-      if (sid != null && sid !== prev) out.push({ kind: 'sep', sepId: sid })
-      prev = sid
-      if (sid != null && collapsedBands.has(sid)) continue // band collapsed: hide its mods
-      out.push({ kind: 'mod', row })
+      const b = row.mod.separator_id ?? NO_BAND
+      const arr = byBand.get(b)
+      if (arr) arr.push(row)
+      else byBand.set(b, [row])
+    }
+    const out: ({ kind: 'sep'; sepId: number } | { kind: 'mod'; row: VisibleRow })[] = []
+    for (const b of [...byBand.keys()].sort((x, y) => x - y)) {
+      const hasBand = b !== NO_BAND
+      if (hasBand) out.push({ kind: 'sep', sepId: b })
+      if (hasBand && collapsedBands.has(b)) continue // collapsed: divider only
+      for (const row of byBand.get(b)!) out.push({ kind: 'mod', row })
     }
     return out
-  }, [visible, collapsedBands])
+  }, [visible, collapsedBands, NO_BAND])
 
   // mod_id → index in `combined` (interleaved with dividers) — for the
   // virtualizer's scrollToIndex when jumping to a mod.
@@ -310,8 +311,23 @@ export function OrderTab() {
   // array's identity, not its contents — an inline `.map()` here would hand it
   // a new array (and force that recompute) on every OrderTab re-render for any
   // unrelated reason (job polling, a message update) while a drag is in flight.
-  const visibleIds = useMemo(
-    () => combined.flatMap((it) => (it.kind === 'mod' ? [it.row.mod.mod_id] : [])),
+  // Sortable ids in render order — dividers INCLUDED (`sep-<id>`) so they take
+  // part in dnd-kit's reflow (see BandDivider). Mixing string + number ids is
+  // fine (dnd-kit's UniqueIdentifier). Mods keep their numeric mod_id so the
+  // OrderRow useSortable ids match.
+  const visibleIds = useMemo<(string | number)[]>(
+    () => combined.map((it) => (it.kind === 'sep' ? `sep-${it.sepId}` : it.row.mod.mod_id)),
+    [combined],
+  )
+
+  // Same order as `combined`, shaped for resolveDrop (id + band + modId).
+  const dropCells = useMemo<DropCell[]>(
+    () =>
+      combined.map((it) =>
+        it.kind === 'sep'
+          ? { id: `sep-${it.sepId}`, band: it.sepId, modId: null }
+          : { id: it.row.mod.mod_id, band: it.row.mod.separator_id ?? null, modId: it.row.mod.mod_id },
+      ),
     [combined],
   )
 
@@ -327,8 +343,8 @@ export function OrderTab() {
   const rowVirtualizer = useWindowVirtualizer({
     count: combined.length,
     // Per-item height so positions are deterministic and don't rely on the
-    // async measure pass: separator dividers are a FIXED 46px (see .band-divider
-    // in css), mod rows a fixed single-line ~35.5px. A single flat estimate made
+    // async measure pass: separator dividers and mod rows are both a FIXED 36px
+    // (see .band-divider in css / MOD_ROW_H). A single flat estimate made
     // stacked dividers overlap (each ~10px taller than the estimate) until — or
     // unless — ResizeObserver corrected them.
     estimateSize: (i) => (combined[i]?.kind === 'sep' ? SEP_ROW_H : MOD_ROW_H),
@@ -371,7 +387,7 @@ export function OrderTab() {
     // the drop target when dnd-kit resets the dragged row's transform — the
     // await below would otherwise leave the array stale for a network
     // round-trip, and the row visibly snaps back to its old spot first.
-    data.reorderLocal(ids, position)
+    data.reorderLocal(ids, position, separatorId)
     try {
       const r = await api.orderMove(ids, position, separatorId)
       jobs.setMsg(`moved ${ids.length > 1 ? ids.length + ' mods ' : ''}to #${r.position}`)
@@ -435,12 +451,12 @@ export function OrderTab() {
   const onDragEnd = (e: DragEndEvent) => {
     setDragId(null)
     if (!e.over) return
-    const intent = resolveMove(Number(e.active.id), Number(e.over.id), sel.selected, data.mods)
-    if (!intent) return
-    // dropping onto a mod joins that mod's band — this is how a drag across a
-    // divider re-bands the moved mod(s).
-    const overMod = data.mods.find((m) => m.mod_id === Number(e.over!.id))
-    void doMove(intent.ids, intent.position, overMod?.separator_id ?? null)
+    // active is always a mod (dividers aren't draggable); over may be a mod OR a
+    // `sep-<id>` divider. resolveDrop works in the combined space and derives the
+    // destination band from the divider above the block's new spot.
+    const r = resolveDrop(dropCells, Number(e.active.id), e.over.id, sel.selected)
+    if (!r) return
+    void doMove(r.ids, r.position, r.separatorId)
   }
 
   const dragName = dragId !== null ? data.names.get(dragId) : ''
@@ -463,8 +479,8 @@ export function OrderTab() {
         <div className="toolgroup-h">
           <span className="toolgroup-label">Ordering</span>
           <span className="dim" style={{ fontSize: 12 }}>
-            Places mods into STEP groups and orders them — heuristic first, Claude refine + collection rules on top.
-            These actually move mods.
+            Sort generates the whole order: every mod into its separator band, family-clustered, real cross-band
+            conflicts auto-pinned. Claude refine + collection rules layer on top. These actually move mods.
           </span>
         </div>
         <OrderToolbar
@@ -473,7 +489,7 @@ export function OrderTab() {
           refining={data.refining}
           enforcing={jobs.enforcing}
           committed={data.committed}
-          onSort={() => void jobs.runSort(false)}
+          onSort={runSortAndRefresh}
           onRefine={() => void jobs.refineOrStop()}
           onRefineUncertain={() => void jobs.runDesc()}
           onEnforce={() => void jobs.runEnforce()}
@@ -552,41 +568,6 @@ export function OrderTab() {
         </div>
       </div>
 
-      <div className="toolgroup" style={{ marginTop: 10 }}>
-        <div className="toolgroup-h">
-          <span className="toolgroup-label">Grouping</span>
-          <span className="dim" style={{ fontSize: 12 }}>
-            Separator bands (STEP-style) appear as collapsible dividers inline in the order below. Organise groups
-            mods by their Nexus category band; drag a mod under a different divider to re-band it.
-          </span>
-        </div>
-        <div className="toolbar" style={{ margin: 0 }}>
-          <button
-            className="btn ghost"
-            disabled={assigning || frozen}
-            title="Assign each mod to its separator band (from its Nexus category) and group the order by band. Unmapped/uncategorised mods land in NEW & UNSORTED."
-            onClick={() => void assignBands()}
-          >
-            {assigning ? 'Organising…' : 'Organise into bands'}
-          </button>
-          <button
-            className="btn ghost"
-            disabled={!separators.length}
-            title="Collapse every band"
-            onClick={() => setCollapsedBands(new Set(separators.map((s) => s.id)))}
-          >
-            Collapse all
-          </button>
-          <button
-            className="btn ghost"
-            disabled={!collapsedBands.size}
-            title="Expand every band"
-            onClick={() => setCollapsedBands(new Set())}
-          >
-            Expand all
-          </button>
-        </div>
-      </div>
 
       <div className="toolgroup" style={{ marginTop: 10 }}>
         <div className="toolgroup-h">
@@ -753,6 +734,23 @@ export function OrderTab() {
             ({visible.length} of {data.mods.length} shown)
           </span>
         )}
+        <button
+          className="btn ghost"
+          style={{ marginLeft: 'auto' }}
+          disabled={!separators.length}
+          title="Collapse every band"
+          onClick={() => setCollapsedBands(new Set(separators.map((s) => s.id)))}
+        >
+          Collapse all
+        </button>
+        <button
+          className="btn ghost"
+          disabled={!collapsedBands.size}
+          title="Expand every band"
+          onClick={() => setCollapsedBands(new Set())}
+        >
+          Expand all
+        </button>
       </div>
 
       <HighlightBar
@@ -817,7 +815,10 @@ export function OrderTab() {
                     <div
                       key={key}
                       data-index={vRow.index}
-                      ref={rowVirtualizer.measureElement}
+                      // NO measureElement ref: row/divider heights are fixed and
+                      // already exact via estimateSize (SEP_ROW_H/MOD_ROW_H match
+                      // the CSS). Attaching the async measure pass here is what let
+                      // a lagging re-measure stack a row over a divider mid-scroll.
                       style={{
                         position: 'absolute',
                         top: 0,
@@ -831,17 +832,15 @@ export function OrderTab() {
                   )
                   if (item.kind === 'sep') {
                     const sep = sepById.get(item.sepId)
-                    const isCol = collapsedBands.has(item.sepId)
                     return wrap(
-                      <button
-                        className={`band-divider${sep?.special_kind ? ` band-${sep.special_kind}` : ''}`}
-                        onClick={() => toggleBand(item.sepId)}
-                        title="click to collapse/expand this band"
-                      >
-                        <span className="band-caret">{isCol ? '▸' : '▾'}</span>
-                        <span className="band-name">{sep?.name ?? item.sepId}</span>
-                        <span className="band-count">{sep?.mod_count ?? ''}</span>
-                      </button>,
+                      <BandDivider
+                        sepId={item.sepId}
+                        name={sep?.name}
+                        specialKind={sep?.special_kind}
+                        collapsed={collapsedBands.has(item.sepId)}
+                        count={sep?.mod_count}
+                        onToggle={toggleBand}
+                      />,
                       `sep-${item.sepId}`,
                     )
                   }

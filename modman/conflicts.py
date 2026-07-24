@@ -45,6 +45,22 @@ WRAPPER = "data"  # an explicit top-level "Data" folder just means "start here"
 # pairs for it
 _MAX_SHARERS = 8
 
+# Paths that are NOT real Data-asset overrides: FOMOD installer metadata (every
+# fomod archive ships identical fomod/*.xml + wizard scripts), MCM settings and
+# localization strings (many unrelated mods ship them). Counting these invents
+# conflicts between totally unrelated mods, which then get glued/pinned together.
+# Both the conflicts view and the ordering engine exclude them. Applied as a SQL
+# fragment on `mf.path` (stored lowercased by _normalize).
+INCIDENTAL_PATH_SQL = (
+    " AND mf.path NOT LIKE 'fomod/%'"
+    " AND mf.path NOT LIKE '%/fomod/%'"
+    " AND mf.path NOT LIKE 'mcm/config/%'"
+    " AND mf.path NOT LIKE '%/mcm/config/%'"
+    " AND mf.path NOT LIKE 'interface/translations/%'"
+    " AND mf.path NOT LIKE '%wizard.txt'"
+    " AND mf.path NOT LIKE '%readme%'"
+)
+
 
 def _normalize(path):
     parts = path.replace("\\", "/").split("/")
@@ -210,6 +226,7 @@ def pairs():
             "WITH shared AS ("
             "  SELECT mf.path FROM mod_files mf"
             "  JOIN mods m ON m.file_id = mf.file_id AND m.status = 'ok'"
+            "  WHERE 1 = 1" + INCIDENTAL_PATH_SQL +
             "  GROUP BY mf.path HAVING COUNT(DISTINCT m.mod_id) BETWEEN 2 AND ?)"
             " SELECT mf.path, m.mod_id, m.mod_name, s.bucket FROM mod_files mf"
             " JOIN shared ON shared.path = mf.path"

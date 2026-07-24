@@ -1,9 +1,25 @@
 import { defineConfig, type Plugin } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
-// Dev backend. Point at a throwaway server (safe-live-test pattern) with:
-//   MODMAN_BACKEND=http://127.0.0.1:7799 npm run dev
-const backend = process.env.MODMAN_BACKEND ?? 'http://127.0.0.1:7788'
+// Read ENVIRONMENT from the repo-root .env (same toggle the Python backend uses)
+// so ONE switch drives both sides: dev -> proxy to the dev backend :7799, live
+// -> :7788. MODMAN_BACKEND env still overrides for ad-hoc targets.
+function repoEnvironment(): string {
+  try {
+    for (const line of readFileSync(resolve(__dirname, '..', '.env'), 'utf8').split('\n')) {
+      const m = line.match(/^\s*ENVIRONMENT\s*=\s*(.*)$/)
+      if (m) return m[1].trim().replace(/^["']|["']$/g, '').toLowerCase()
+    }
+  } catch {
+    /* no .env -> live */
+  }
+  return ''
+}
+
+const isDev = repoEnvironment() === 'dev'
+const backend = process.env.MODMAN_BACKEND ?? (isDev ? 'http://127.0.0.1:7799' : 'http://127.0.0.1:7788')
 
 // The backend rejects any request whose Origin header isn't in its static
 // allowlist (CSRF guard in webapp.py), but explicitly passes requests with

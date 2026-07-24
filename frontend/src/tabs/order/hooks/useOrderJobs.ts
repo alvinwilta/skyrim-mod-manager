@@ -309,7 +309,9 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
         data.setRefining(true) // the refine poller unlocks + reloads when done
       } else {
         setMsg('')
-        setHeuristicLog(`${r.sorted} mods sorted (last run)`)
+        setHeuristicLog(
+          `${r.sorted} mods sorted into bands${r.pins ? `, ${r.pins} cross-band conflict pin(s)` : ''} (last run)`,
+        )
         await finishAction()
       }
     } catch (e) {

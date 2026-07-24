@@ -375,6 +375,7 @@ def load_order():
             " s.rank AS sort_rank, s.flags AS sort_flags, s.locked AS sort_locked,"
             " s.file_type AS sort_file_type, s.mo2_state AS sort_mo2_state,"
             " s.separator_id AS sort_separator_id,"
+            " s.conflict_pin AS sort_conflict_pin, s.pin_reason AS sort_pin_reason,"
             " json_group_array(m.filename) AS fns"
             " FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
             " WHERE m.status = 'ok' GROUP BY m.mod_id"
@@ -394,6 +395,8 @@ def load_order():
             "mo2_state": r["sort_mo2_state"],
             "source": r["mod_source"],
             "separator_id": r["sort_separator_id"],
+            "conflict_pin": bool(r["sort_conflict_pin"]),
+            "pin_reason": r["sort_pin_reason"],
             # MO2 is the truth once pulled (a mod installed in MO2 whose download
             # archive was cleaned still counts as installed); fall back to the
             # download .meta sidecar only before the first pull.
@@ -512,45 +515,62 @@ def persist_pull(ordered_ids, state_by_id, removed_ids):
             )
 
 
-def move(mod_ids, position, separator_id=None):
-    """Move one or several mods (as a block, keeping their relative order) to
-    a 1-based position in the global order, shifting the rest. Moved mods
-    adopt the bucket of their new neighbor above (below when moved to the
-    top) so the grouped view stays coherent; expected_bucket is untouched,
-    which is what check_order compares against.
+# Bands sort last-when-unassigned: a mod with no separator_id sinks below every
+# real band (which are all < this). Keeps the null group at the bottom.
+_NO_BAND = 10 ** 12
 
-    When `separator_id` is given (a drag that landed under a separator divider),
-    the moved mods are re-banded to it — this is how dragging across a divider
-    changes a mod's band. None leaves separator_id untouched."""
+
+def move(mod_ids, position, separator_id=None):
+    """Move one or several mods (as a block, keeping their relative order) to a
+    1-based position in the global order, then RE-GROUP so ranks stay band-
+    grouped. This is the invariant the whole order tab relies on: the rank order
+    always equals (band ascending, within-band manual order), so grouping is
+    never something the display has to reconstruct from a fragile rank-scan.
+
+    A cross-band drag passes `separator_id` (the band the mods were dropped
+    under); the moved mods adopt it, then the stable band regroup drops them into
+    that band at the spot the drop implied. Same-band moves (`separator_id=None`)
+    just reorder within the band. Moved mods adopt the bucket of their new
+    neighbour (cosmetic legacy grouping); expected_bucket is untouched."""
     if isinstance(mod_ids, int):
         mod_ids = [mod_ids]
     with _rank_lock, db.connect() as conn:
         rows = conn.execute(
-            "SELECT m.mod_id, s.bucket FROM mods m LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
+            "SELECT m.mod_id, s.bucket, s.separator_id FROM mods m"
+            " LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
             " WHERE m.status = 'ok' GROUP BY m.mod_id"
             " ORDER BY s.rank IS NULL, s.rank, s.bucket, m.mod_name COLLATE NOCASE"
         ).fetchall()
         ids = [r["mod_id"] for r in rows]
+        bucket_of = {r["mod_id"]: r["bucket"] for r in rows}
+        band_of = {r["mod_id"]: r["separator_id"] for r in rows}
         moving_set = set(mod_ids)
         moving = [i for i in ids if i in moving_set]  # keep current relative order
         if len(moving) != len(moving_set):
             return "unknown mod"
-        bucket_of = {r["mod_id"]: r["bucket"] for r in rows}
-        ids = [i for i in ids if i not in moving_set]
-        pos = max(0, min(len(ids), int(position) - 1))
-        ids[pos:pos] = moving
-        neighbor = ids[pos - 1] if pos > 0 else (ids[pos + len(moving)] if len(ids) > len(moving) else moving[0])
-        for mid in moving:
-            bucket_of[mid] = bucket_of[neighbor]
-        for rank, mid in enumerate(ids):
-            conn.execute(
-                "INSERT INTO mod_sort (mod_id, rank, bucket) VALUES (?, ?, ?)"
-                " ON CONFLICT(mod_id) DO UPDATE SET rank = excluded.rank, bucket = excluded.bucket",
-                (mid, rank, bucket_of[mid]),
-            )
+        # 1. splice the block out and back in at the requested linear position
+        rest = [i for i in ids if i not in moving_set]
+        pos = max(0, min(len(rest), int(position) - 1))
+        linear = rest[:pos] + moving + rest[pos:]
+        # 2. re-band the moved mods (cross-band drag) + adopt neighbour bucket
         if separator_id is not None:
             for mid in moving:
-                conn.execute("UPDATE mod_sort SET separator_id = ? WHERE mod_id = ?", (separator_id, mid))
+                band_of[mid] = separator_id
+        neighbor = linear[pos - 1] if pos > 0 else (linear[pos + len(moving)] if len(linear) > len(moving) else moving[0])
+        for mid in moving:
+            bucket_of[mid] = bucket_of.get(neighbor)
+        # 3. STABLE regroup by band (ascending; unassigned last), preserving the
+        #    linear order within each band -> ranks are band-grouped again
+        order_of = {mid: i for i, mid in enumerate(linear)}
+        grouped = sorted(linear, key=lambda mid: (band_of[mid] if band_of[mid] is not None else _NO_BAND, order_of[mid]))
+        # 4. renumber
+        for rank, mid in enumerate(grouped):
+            conn.execute(
+                "INSERT INTO mod_sort (mod_id, rank, bucket, separator_id) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(mod_id) DO UPDATE SET rank = excluded.rank,"
+                " bucket = excluded.bucket, separator_id = excluded.separator_id",
+                (mid, rank, bucket_of[mid], band_of[mid]),
+            )
     return None
 
 

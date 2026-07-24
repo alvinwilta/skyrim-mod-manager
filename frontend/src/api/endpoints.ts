@@ -65,7 +65,8 @@ export const api = {
   mo2Pull: () => post<{ started: boolean }>('/api/mo2-pull'),
   mo2PullState: () =>
     get<JobState & { matched: number; adopted: number; removed: number; skipped: number }>('/api/mo2-pull-state'),
-  sort: (llm: boolean, model: string) => post<{ sorted: number; llm: boolean }>('/api/sort', { llm, model }),
+  sort: (llm: boolean, model: string) =>
+    post<{ sorted: number; pins?: number; llm: boolean }>('/api/sort', { llm, model }),
   sortDesc: (model: string) => post<{ started: boolean }>('/api/sort-desc', { model }),
   sortStop: () => post<{ stopped: boolean }>('/api/sort-stop'),
   sortPrompt: () => get<SortPrompt>('/api/sort-prompt'),
@@ -84,6 +85,7 @@ export const api = {
   browse: (path?: string) => get<BrowseResult>(`/api/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   separators: () => get<{ separators: Separator[] }>('/api/separators'),
   assignSeparators: () => post<{ assigned: number }>('/api/separators/assign'),
+  generateOrder: () => post<{ ordered: number; pins: number }>('/api/order/generate'),
   collapseSeparator: (id: number, collapsed: boolean) =>
     post<{ id: number; collapsed: boolean }>('/api/separators/collapse', { id, collapsed }),
 }

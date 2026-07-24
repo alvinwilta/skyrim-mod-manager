@@ -1,18 +1,15 @@
 # local state / artifacts
 mods.db*
 *.log
-
 # python
 .venv/
 __pycache__/
-
 # frontend
 node_modules/
 frontend/dist/
 frontend/e2e/.tmp/
-
 # secrets/local config
 .env
-
 CLAUDE.md
 .claude/skills
+mods.dev.db*

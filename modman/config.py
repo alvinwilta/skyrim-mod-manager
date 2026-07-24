@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import sqlite3
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,6 +24,36 @@ def _load_env():
 
 _env = _load_env()
 
+# ENVIRONMENT (from .env / OS env): the single dev-vs-live toggle.
+#   dev            -> sandbox db (mods.dev.db) + dev port 7799
+#   empty / other  -> LIVE: real mods.db + port 7788   (the default)
+# One switch drives BOTH the backend db+port and (via vite.config.ts reading the
+# same .env) the dev frontend's proxy target. An explicit MODMAN_DB_PATH /
+# MODMAN_PORT still overrides either (test isolation).
+ENVIRONMENT = (_env.get("ENVIRONMENT") or os.environ.get("ENVIRONMENT") or "").strip().lower()
+IS_DEV = ENVIRONMENT == "dev"
+
+_LIVE_DB = os.path.join(ROOT_DIR, "mods.db")
+_DEV_DB = os.path.join(ROOT_DIR, "mods.dev.db")
+
+
+def _seed_dev_db(path):
+    """Semi-permanent dev sandbox: on first dev run copy the live db to
+    mods.dev.db and UNLOCK everything (so the ordering engine can reorder
+    freely to demonstrate its output). Never auto-deleted; tweak it at will.
+    Uses raw sqlite3 (config.py must not import db.py -- circular)."""
+    if os.path.isfile(path) or not os.path.isfile(_LIVE_DB):
+        return
+    shutil.copy2(_LIVE_DB, path)
+    try:
+        conn = sqlite3.connect(path)
+        conn.execute("UPDATE mod_sort SET locked = 0 WHERE locked = 1")
+        conn.commit()
+        conn.close()
+    except sqlite3.Error:
+        pass
+
+
 # DB_PATH is resolved FIRST: the config table lives inside it, so it can't be
 # a config-table value itself (would be circular). Stays env/file only -- must
 # be a real env var read at import time, not a post-import monkeypatch:
@@ -30,7 +61,16 @@ _env = _load_env()
 # from this module at that moment, so anything that patches config.DB_PATH
 # afterward is too late in the same process. A fresh subprocess with this env
 # var set is the only reliable way to point a test server at a throwaway copy.
-DB_PATH = os.environ.get("MODMAN_DB_PATH") or os.path.join(ROOT_DIR, "mods.db")
+if os.environ.get("MODMAN_DB_PATH"):
+    DB_PATH = os.environ["MODMAN_DB_PATH"]
+elif IS_DEV:
+    DB_PATH = _DEV_DB
+    _seed_dev_db(DB_PATH)
+else:
+    DB_PATH = _LIVE_DB
+
+# Server port: dev 7799, live 7788. MODMAN_PORT overrides.
+PORT = int(os.environ.get("MODMAN_PORT") or (7799 if IS_DEV else 7788))
 
 
 def _load_db_config():

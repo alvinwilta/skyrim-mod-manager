@@ -160,6 +160,15 @@ const RowCells = memo(function RowCells({
             MO2 only{' '}
           </span>
         )}
+        {mod.conflict_pin && (
+          <span
+            className="badge"
+            style={{ background: '#2b1e3a', color: 'var(--purple, #b98bff)' }}
+            title={mod.pin_reason || 'pinned by the ordering engine to satisfy a real cross-band file conflict'}
+          >
+            📌 pinned{' '}
+          </span>
+        )}
         {mod.file_type === 'bsa' && (
           <span
             className="badge b-bsa"
@@ -241,6 +250,12 @@ export const OrderRow = memo(function OrderRow({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: mod.mod_id,
     disabled,
+    // Kill dnd-kit's post-drop layout animation. Rows are positioned absolutely
+    // by the virtualizer; the separator dividers are NOT sortable, so they snap
+    // to their new slot instantly. If the sortable rows instead ANIMATE to their
+    // slots, a drag that crosses a divider leaves the divider misaligned (shifted
+    // a few px) for the animation window. Snapping both keeps them in lockstep.
+    animateLayoutChanges: () => false,
   })
   // whole-row drag: after a drop, the browser still fires a click on the row —
   // remember the drag so that click doesn't toggle selection

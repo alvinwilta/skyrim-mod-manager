@@ -30,6 +30,8 @@ const m = (over: Partial<OrderMod>): OrderMod => ({
   mo2_state: null,
   source: null,
   separator_id: null,
+  conflict_pin: false,
+  pin_reason: null,
   file_type: null,
   flags: [],
   ...over,
@@ -290,7 +292,7 @@ describe('OrderTab sort machinery', () => {
     await waitFor(() =>
       expect(calls.find((c) => c.path === '/api/sort')?.body).toEqual({ llm: false, model: 'haiku' }),
     )
-    expect(await screen.findByText('3 mods sorted (last run)')).toBeInTheDocument()
+    expect(await screen.findByText('3 mods sorted into bands (last run)')).toBeInTheDocument()
   })
 
   it('refine enters refining mode: button becomes Force Stop, stop posts sort-stop', async () => {

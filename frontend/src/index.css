@@ -487,9 +487,10 @@ input.switch:disabled { cursor: default; }
    read like a selected row (which uses the blue accent). */
 .band-divider {
   display: flex; align-items: center; gap: 10px; width: 100%;
-  /* fixed height — the virtualizer positions by SEP_ROW_H (46) in OrderTab; a
+  /* fixed height — MUST equal MOD_ROW_H/SEP_ROW_H (36) in OrderTab so dnd-kit's
+     uniform-height reflow doesn't leave a gap when a row is dragged past it; a
      content-driven height would drift and overlap the next row */
-  height: 46px; box-sizing: border-box;
+  height: 36px; box-sizing: border-box;
   background: #10131a;
   border: 1px solid #333b49; border-radius: 6px;
   box-shadow: 0 3px 9px rgba(0, 0, 0, .5), inset 0 1px 0 #2a313d;
