@@ -61,6 +61,9 @@ export const api = {
   mo2Pull: () => post<{ started: boolean }>('/api/mo2-pull'),
   mo2PullState: () =>
     get<JobState & { matched: number; adopted: number; removed: number; skipped: number }>('/api/mo2-pull-state'),
+  mo2Push: () => post<{ started: boolean }>('/api/mo2-push'),
+  mo2PushState: () =>
+    get<JobState & { moved: number; skipped: number; backup: string | null }>('/api/mo2-push-state'),
   sort: (llm: boolean, model: string) =>
     post<{ sorted: number; pins?: number; llm: boolean }>('/api/sort', { llm, model }),
   sortDesc: (model: string) => post<{ started: boolean }>('/api/sort-desc', { model }),

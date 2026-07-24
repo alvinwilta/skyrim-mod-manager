@@ -34,6 +34,8 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const [hiding, setHiding] = useState(false) // hide-installed move job in flight
   const [pulling, setPulling] = useState(false) // MO2 pull job in flight
   const [pullMsg, setPullMsg] = useState('')
+  const [pushing, setPushing] = useState(false) // MO2 push job in flight
+  const [pushMsg, setPushMsg] = useState('')
   const [justChanged, setJustChanged] = useState<ReadonlySet<number>>(new Set())
   const snapshot = useRef<BucketSnapshot | null>(null)
 
@@ -220,6 +222,32 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     }
   }
 
+  // Push watcher: 1s. Writes the tool's order out to MO2's modlist.txt; nothing
+  // on the tool side changes, so no reload/highlight — just clear the flag.
+  usePoller(
+    async () => {
+      const s = await api.mo2PushState()
+      setPushMsg(s.phase + (s.error ? ' — ' + s.error : ''))
+      if (!s.running) {
+        setPushing(false)
+        return false
+      }
+      return true
+    },
+    1000,
+    pushing,
+  )
+
+  const runPush = async () => {
+    setPushMsg('writing modlist.txt…')
+    try {
+      await api.mo2Push()
+      setPushing(true)
+    } catch (e) {
+      setPushMsg(errText(e))
+    }
+  }
+
   const runCommit = async () => {
     takeSnapshot()
     setCommitError(false)
@@ -352,6 +380,9 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     pulling,
     pullMsg,
     runPull,
+    pushing,
+    pushMsg,
+    runPush,
     justChanged,
     runSort,
     refineOrStop,

@@ -8,7 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from modman import commit, conflicts, config, db, engine, importlocal, jobs, llm_refine, mo2, mo2_pull, order_store, ordering, precedence, requirements, separators
+from modman import commit, conflicts, config, db, engine, importlocal, jobs, llm_refine, mo2, mo2_pull, mo2_push, order_store, ordering, precedence, requirements, separators
 
 app = FastAPI(title="Mod Manager")
 db.init_db()
@@ -397,6 +397,25 @@ def mo2_pull_start():
 @app.get("/api/mo2-pull-state")
 def mo2_pull_state():
     return mo2_pull.state
+
+
+@app.post("/api/mo2-push")
+def mo2_push_start():
+    """Write the tool's install order back out to MO2's modlist.txt (reorders
+    managed mods, preserves separators/outputs/unmanaged, backs up first).
+    Blocked while the order is committed to disk (renames in flight)."""
+    frozen = _order_frozen("pushing to MO2")
+    if frozen:
+        return frozen
+    err = mo2_push.start_push()
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"started": True}
+
+
+@app.get("/api/mo2-push-state")
+def mo2_push_state():
+    return mo2_push.state
 
 
 @app.get("/api/separators")

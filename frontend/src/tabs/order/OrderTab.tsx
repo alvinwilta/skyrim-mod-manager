@@ -123,6 +123,8 @@ export function OrderTab() {
   const [dragId, setDragId] = useState<number | null>(null)
   const [confirmCommit, setConfirmCommit] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmPull, setConfirmPull] = useState(false)
+  const [confirmPush, setConfirmPush] = useState(false)
 
   const toggleHl = (key: HighlightKey) => setHl((h) => ({ ...h, [key]: !h[key] }))
 
@@ -652,8 +654,9 @@ export function OrderTab() {
         <div className="toolgroup-h">
           <span className="toolgroup-label">Tools</span>
           <span className="dim" style={{ fontSize: 12 }}>
-            Pull MO2's live order as the starting point and flag missing Nexus requirements (both read-only); hide
-            already-installed archives or commit the order to disk (both rename/move files).
+            Pull MO2's live order as the starting point or push this order back to MO2; flag missing Nexus
+            requirements (read-only); hide already-installed archives or commit the order to disk (both rename/move
+            files).
           </span>
         </div>
         <div className="toolbar" style={{ margin: 0 }}>
@@ -667,15 +670,23 @@ export function OrderTab() {
           </button>
           <button
             className="btn ghost"
-            disabled={jobs.pulling || frozen}
+            disabled={jobs.pulling || jobs.pushing || frozen}
             title="Read the active MO2 profile's modlist.txt + installed folders and set this list's order + install-state to match. Auto-runs once on first load; re-run after changing mods in MO2. Read-only for MO2."
-            onClick={() => void jobs.runPull()}
+            onClick={() => setConfirmPull(true)}
           >
             {jobs.pulling ? 'Pulling…' : 'Pull from MO2'}
           </button>
-          {jobs.pullMsg && (
+          <button
+            className="btn ghost"
+            disabled={jobs.pushing || jobs.pulling || frozen}
+            title="Write this list's order back out to the active MO2 profile's modlist.txt. Reorders the mods MO2 has to match the tool; separators, tool outputs and DLC/CC lines stay put; a timestamped backup is taken first. Close MO2 before pushing."
+            onClick={() => setConfirmPush(true)}
+          >
+            {jobs.pushing ? 'Pushing…' : 'Push to MO2'}
+          </button>
+          {(jobs.pullMsg || jobs.pushMsg) && (
             <span className="dim" style={{ fontSize: 12 }}>
-              {jobs.pullMsg}
+              {jobs.pushing || jobs.pushMsg ? jobs.pushMsg : jobs.pullMsg}
             </span>
           )}
           <span style={{ flex: 1 }} />
@@ -955,6 +966,25 @@ export function OrderTab() {
         confirmLabel="Delete"
         danger
         onConfirm={() => void doDelete()}
+      />
+
+      <ConfirmDialog
+        open={confirmPull}
+        onOpenChange={setConfirmPull}
+        title="Pull install order from MO2?"
+        description="Reads the active MO2 profile and overwrites this list's order + install-state to match MO2's. Any reordering you've done here that you haven't pushed back will be replaced. Read-only for MO2 — nothing on MO2's side changes."
+        confirmLabel="Pull"
+        onConfirm={() => void jobs.runPull()}
+      />
+
+      <ConfirmDialog
+        open={confirmPush}
+        onOpenChange={setConfirmPush}
+        title="Push install order to MO2?"
+        description="Rewrites the active MO2 profile's modlist.txt so its mods sit in this list's order. Separators, tool outputs and DLC/CC lines are preserved; a timestamped backup is taken first. Close Mod Organizer before pushing — it overwrites modlist.txt when it exits."
+        confirmLabel="Push"
+        danger
+        onConfirm={() => void jobs.runPush()}
       />
 
       <ConfirmDialog
