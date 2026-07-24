@@ -43,11 +43,12 @@ class ParseReply(unittest.TestCase):
         self.assertEqual(r["order"], [{"id": 12, "b": 9999}])
 
     def test_invented_flags_dropped(self):
-        # only UNCERTAIN / CONFLICT:<id> / DUPLICATE:<id> are clearable later
+        # only UNCERTAIN / DUPLICATE:<id> are clearable later; the CONFLICT tag was
+        # dropped (real overwrite data replaces it) so CONFLICT:<id> is not kept
         r = llm_refine._parse_reply(
-            "12|101|UNCERTAIN,BOGUS,CONFLICT 55,CONFLICT:55,DUPLICATE:-9", valid=self._BANDS
+            "12|101|UNCERTAIN,BOGUS,CONFLICT:55,DUPLICATE:-9", valid=self._BANDS
         )
-        self.assertEqual(r["order"], [{"id": 12, "b": 101, "f": ["UNCERTAIN", "CONFLICT:55", "DUPLICATE:-9"]}])
+        self.assertEqual(r["order"], [{"id": 12, "b": 101, "f": ["UNCERTAIN", "DUPLICATE:-9"]}])
 
 
 class Classify(unittest.TestCase):

@@ -42,7 +42,7 @@ const ORDER = {
   mods: [
     m({ mod_id: 1, mod_name: 'SkyUI', bucket: 3 }),
     m({ mod_id: 2, mod_name: 'MoreHUD', bucket: 3, locked: true }),
-    m({ mod_id: 3, mod_name: 'USSEP', bucket: 5, category: 'Patches', flags: ['CONFLICT:1'] }),
+    m({ mod_id: 3, mod_name: 'USSEP', bucket: 5, category: 'Patches', flags: ['DUPLICATE:1'] }),
   ],
   notes: [],
 }
@@ -62,7 +62,6 @@ const routes = (extra: Record<string, unknown> = {}) => ({
   'GET /api/installorder': ORDER,
   'GET /api/sort-state': IDLE,
   'GET /api/enforce-state': IDLE,
-  'GET /api/conflicts': { pairs: [], scanned: 0, total: 0 },
   'GET /api/requirements-missing': { missing: [] },
   'GET /api/sort-prompt': { prompt: 'sort {{MODS}} into {{BUCKETS}}', default: 'default prompt' },
   ...extra,
@@ -78,8 +77,6 @@ const renderTab = () =>
 // Toolbar buttons share labels with subtab nav buttons — disambiguate by class.
 const toolbarBtn = (name: string | RegExp) =>
   screen.getAllByRole('button', { name }).find((b) => b.className.includes('btn'))!
-const subtabBtn = (name: string | RegExp) =>
-  screen.getAllByRole('button', { name }).find((b) => !b.className.includes('btn'))!
 
 describe('OrderTab list', () => {
   it('renders rows in a flat list (no group separators), with badges', async () => {
@@ -88,8 +85,8 @@ describe('OrderTab list', () => {
     expect(await screen.findByText('SkyUI')).toBeInTheDocument()
     // no run/group header rows anymore
     expect(screen.queryByText('2 mods · #1–2')).not.toBeInTheDocument()
-    // conflict badge resolves target name
-    expect(screen.getByText('CONFLICT ↔ SkyUI')).toBeInTheDocument()
+    // duplicate badge resolves target name
+    expect(screen.getByText('DUPLICATE ↔ SkyUI')).toBeInTheDocument()
     // locked row shows pinned lock
     expect(screen.getByTitle(/pinned — sorts will not move/)).toBeInTheDocument()
   })
@@ -117,15 +114,15 @@ describe('OrderTab highlight + locked toggles', () => {
     const { calls } = mockApi(routes())
     renderTab()
     await screen.findByText('SkyUI')
-    expect(screen.getByText('CONFLICT ↔ SkyUI')).toBeInTheDocument()
-    // one mod (USSEP) carries a CONFLICT tag → chip shows (1)
-    expect(chipBtn(/Conflicts/)).toHaveTextContent('Conflicts (1)')
+    expect(screen.getByText('DUPLICATE ↔ SkyUI')).toBeInTheDocument()
+    // one mod (USSEP) carries a DUPLICATE tag → chip shows (1)
+    expect(chipBtn(/Duplicates/)).toHaveTextContent('Duplicates (1)')
     const fetches = calls.filter((c) => c.path === '/api/installorder').length
 
-    await userEvent.click(chipBtn(/Conflicts/))
-    expect(screen.queryByText('CONFLICT ↔ SkyUI')).not.toBeInTheDocument()
-    await userEvent.click(chipBtn(/Conflicts/))
-    expect(screen.getByText('CONFLICT ↔ SkyUI')).toBeInTheDocument()
+    await userEvent.click(chipBtn(/Duplicates/))
+    expect(screen.queryByText('DUPLICATE ↔ SkyUI')).not.toBeInTheDocument()
+    await userEvent.click(chipBtn(/Duplicates/))
+    expect(screen.getByText('DUPLICATE ↔ SkyUI')).toBeInTheDocument()
     // pure display toggle — never re-hits the backend
     expect(calls.filter((c) => c.path === '/api/installorder').length).toBe(fetches)
   })
@@ -390,95 +387,6 @@ describe('OrderTab sort machinery', () => {
     expect(await screen.findByRole('button', { name: 'Force Stop Claude' })).toBeInTheDocument()
   })
 
-  it('drift check marks wrong rows red with expected-group tooltip', async () => {
-    mockApi(routes({ 'GET /api/order/check': { mismatches: [{ mod_id: 3, expected: 3 }] } }))
-    renderTab()
-    await screen.findByText('USSEP')
-    // title-disambiguated: a subtab button shares the same label
-    await userEvent.click(screen.getByTitle(/Flags mods whose current group disagrees/))
-    await userEvent.click(subtabBtn(/Check for drift/)) // message lives in its panel
-
-    expect(await screen.findByText(/1 mod\(s\) sit in a different group/)).toBeInTheDocument()
-    await waitFor(() => {
-      // the drift panel now also lists the mod by name — pick the table row
-      const row = screen
-        .getAllByText('USSEP')
-        .map((el) => el.closest('.ordrow'))
-        .find(Boolean)
-      expect(row).toHaveClass('r-wrong')
-      expect(row?.getAttribute('title')).toMatch(/Sort\/Refine expected "Interface"/)
-    })
-    expect(screen.getByText('WRONG SPOT → Interface')).toBeInTheDocument()
-    // drifted-mods list names the mod with a jump link and both groups
-    expect(screen.getByText(/Drifted mods · 1/)).toBeInTheDocument()
-    expect(
-      screen.getByText((_, el) => el?.tagName === 'LI' && /now in “Foundation”, sorter expected “Interface”/.test(el.textContent || '')),
-    ).toBeInTheDocument()
-  })
-
-  it('jump link scrolls to the mod row; hidden-by-filter miss shows a message', async () => {
-    mockApi(routes({ 'GET /api/order/check': { mismatches: [{ mod_id: 3, expected: 3 }] } }))
-    const scrolls: Element[] = []
-    Element.prototype.scrollIntoView = function () {
-      scrolls.push(this)
-    }
-    renderTab()
-    await screen.findByText('USSEP')
-    await userEvent.click(screen.getByTitle(/Flags mods whose current group disagrees/))
-    await userEvent.click(subtabBtn(/Check for drift/))
-    await screen.findByText(/Drifted mods · 1/)
-
-    // virtualized: the target row may not be mounted yet when the jump
-    // lands, so the retry-until-mounted loop settles a frame or two later
-    await userEvent.click(screen.getByTitle('jump to USSEP in the list below'))
-    await waitFor(() => expect(scrolls[0]).toHaveAttribute('data-mid', '3'))
-    expect(scrolls[0]).toHaveClass('row-flash')
-
-    // filter USSEP's row out → the jump can't land, message explains why
-    await userEvent.selectOptions(screen.getByLabelText('filter group'), '3')
-    await userEvent.click(screen.getByTitle('jump to USSEP in the list below'))
-    await waitFor(() => expect(screen.getByText(/mod 3 is hidden by the current filter/)).toBeInTheDocument())
-    expect(scrolls).toHaveLength(1)
-  })
-
-  it('scan archives starts the job, polls scan-state, then reloads conflicts', async () => {
-    let started = false
-    mockApi(
-      routes({
-        'POST /api/scan-conflicts': () => {
-          started = true
-          return { started: true }
-        },
-        // first poll after start reports done — poller stops and reloads
-        'GET /api/scan-state': () => ({ phase: started ? 'done' : 'idle', running: false, error: null }),
-        'GET /api/conflicts': () =>
-          started
-            ? {
-                pairs: [
-                  {
-                    a: { mod_id: 1, mod_name: 'SkyUI' },
-                    b: { mod_id: 2, mod_name: 'MoreHUD' },
-                    paths: ['f.dds'],
-                    expected: false,
-                  },
-                ],
-                scanned: 3,
-                total: 3,
-              }
-            : { pairs: [], scanned: 0, total: 0 },
-      }),
-    )
-    renderTab()
-    expect(await screen.findByText('SkyUI')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Scan archives' }))
-    expect(
-      await screen.findByText(
-        (_, el) => el?.tagName === 'LI' && /SkyUI \(1\) vs MoreHUD \(2\): 1 shared file/.test(el.textContent || ''),
-      ),
-    ).toBeInTheDocument()
-    expect(screen.getByText(/3\/3 archives scanned/)).toBeInTheDocument()
-  })
 })
 
 describe('OrderTab commit to disk', () => {
@@ -494,7 +402,7 @@ describe('OrderTab commit to disk', () => {
 
     // escape hatch + read-only tools stay enabled
     expect(screen.getByRole('button', { name: /Committed to disk — click to revert/ })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Scan archives' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Sync requirements' })).toBeEnabled()
     expect(screen.getByLabelText('filter category')).toBeEnabled()
   })
 

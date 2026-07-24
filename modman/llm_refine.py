@@ -111,13 +111,14 @@ Mods:
 
 
 def _valid_flag(flag):
-    """Only persist flags the UI understands and clear_flags can strip:
-    UNCERTAIN, CONFLICT:<mod_id>, DUPLICATE:<mod_id>. Anything else the model
-    invents would be stored verbatim and stuck (unclearable) forever."""
+    """Only persist flags the UI understands and clear_flags can strip: UNCERTAIN,
+    DUPLICATE:<mod_id>. The old CONFLICT tag was dropped — real file-overlap
+    overwrite data (conflicts.relations) replaces the LLM's conflict guess — so a
+    CONFLICT flag is no longer persisted."""
     if flag == "UNCERTAIN":
         return True
     kind, _, arg = flag.partition(":")
-    return kind in ("CONFLICT", "DUPLICATE") and arg.strip().lstrip("-").isdigit()
+    return kind == "DUPLICATE" and arg.strip().lstrip("-").isdigit()
 
 
 def _parse_reply(text, valid=None):

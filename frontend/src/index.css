@@ -296,6 +296,32 @@ tr.runhead:hover td { background: #161a23; }
 .ordrow.r-wrong:hover > div { background: #341a1d; }
 .ordrow.r-locked > div { background: #1d2a45; }
 .ordrow.r-sel > div:first-child { border-left: 3px solid var(--blue); border-radius: 4px 0 0 4px; }
+.ordrow.r-sel > div { background: #16233a; }
+.ordrow.r-sel:hover > div { background: #1b2b47; }
+/* select-to-tint: rows that conflict with the currently-selected mod(s) */
+.ordrow.r-cf-green > div { background: #1d3d18; }
+.ordrow.r-cf-green:hover > div { background: #26501f; }
+.ordrow.r-cf-red > div { background: #451c20; }
+.ordrow.r-cf-red:hover > div { background: #57242a; }
+.ordrow.r-cf-orange > div { background: #443318; }
+.ordrow.r-cf-orange:hover > div { background: #574120; }
+/* per-row overwrite conflict icons: ▲ green = overwrites others, ▼ red = overwritten */
+.cflag { flex: 0 0 auto; font-size: 10px; line-height: 1; cursor: help; }
+.cflag.c-over { color: #5fbf6a; }
+.cflag.c-under { color: var(--red); }
+/* Sort-tab overwrite detail for the selected mod(s) */
+.cd-wrap { margin-top: 10px; display: grid; gap: 10px; }
+.cd-mod-block { border-left: 2px solid var(--border); padding-left: 10px; }
+.cd-title { font-weight: 600; margin-bottom: 4px; }
+.cd-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0; }
+.cd-verb { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; min-width: 108px; }
+.cd-verb.c-over { color: #5fbf6a; }
+.cd-verb.c-under { color: var(--red); }
+.cd-mod {
+  background: #12151c; border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.cd-mod:hover { border-color: #4b5464; }
 .ordrow.row-flash > div { animation: rowflash 0.8s ease-in-out 3; }
 @media (max-width: 640px) {
   :root { --ord-cols: 30px 70px minmax(200px, 1fr) 90px 110px; }

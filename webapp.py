@@ -8,7 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from modman import commit, conflicts, config, db, engine, importlocal, jobs, llm_refine, mo2, mo2_order, mo2_pull, order_store, ordering, precedence, requirements, separators
+from modman import commit, conflicts, config, db, engine, importlocal, jobs, llm_refine, mo2, mo2_pull, order_store, ordering, precedence, requirements, separators
 
 app = FastAPI(title="Mod Manager")
 db.init_db()
@@ -441,23 +441,12 @@ async def collapse_separator(request: Request):
     return {"id": sep_id, "collapsed": bool(body.get("collapsed"))}
 
 
-@app.post("/api/scan-conflicts")
-def scan_conflicts():
-    err = conflicts.start_scan()
-    if err:
-        return JSONResponse({"error": err}, status_code=409)
-    return {"started": True}
-
-
-@app.get("/api/scan-state")
-def scan_state():
-    return conflicts.state
-
-
-@app.get("/api/conflicts")
-def get_conflicts():
-    scanned, total = conflicts.scan_progress()
-    return {"pairs": conflicts.pairs(), "scanned": scanned, "total": total}
+@app.get("/api/conflict-relations")
+def conflict_relations():
+    """MO2-style directed overwrite relations per mod (overwrites / overwritten
+    by), from real file overlaps + current install order. Drives the row
+    icons, select-to-tint, and the Sort-tab conflict detail."""
+    return {"relations": conflicts.relations()}
 
 
 @app.post("/api/sync-requirements")
@@ -513,7 +502,15 @@ async def sort_mods(request: Request):
         # band (keyword fallback rescues blank categories, so nothing is stranded
         # in NEW & UNSORTED), family-clustered within each band, real cross-band
         # file conflicts auto-pinned. One button does grouping + ordering + pins.
-        res = await run_in_threadpool(ordering.generate)
+        # Scan any not-yet-scanned archives FIRST (idempotent, one-time per file)
+        # so the conflict pins + the MO2-style overwrite relations are built on
+        # fresh file-overlap data — this replaces the old manual "Scan archives".
+        def _scan_then_generate():
+            conflicts.scan()
+            conflicts.classify_file_types()
+            return ordering.generate()
+
+        res = await run_in_threadpool(_scan_then_generate)
     finally:
         jobs.end_exclusive(_sort_state)
     if (body or {}).get("llm"):
@@ -599,16 +596,6 @@ async def order_clear_flags(request: Request):
     if err:
         return JSONResponse({"error": err}, status_code=400)
     return {"cleared": cleared, "kinds": kinds}
-
-
-@app.get("/api/order/check")
-def order_check():
-    return order_store.check_order()
-
-
-@app.get("/api/order/mo2-check")
-def order_mo2_check():
-    return mo2_order.compare()
 
 
 @app.post("/api/order/commit")

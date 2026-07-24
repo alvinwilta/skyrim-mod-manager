@@ -53,11 +53,7 @@ export function HighlightBar({ hl, counts, onToggle, onClear, showLocked, onTogg
             <button
               type="button"
               className="chip chip-clear"
-              title={
-                c.key === 'drift'
-                  ? 'Clear this drift check result (run Check for drift again to re-flag)'
-                  : `Clear all ${c.label.toLowerCase()} tags permanently — the next Sort/Refine re-adds any that still apply`
-              }
+              title={`Clear all ${c.label.toLowerCase()} tags permanently — the next Sort/Refine re-adds any that still apply`}
               aria-label={`clear ${c.label.toLowerCase()} tags`}
               onClick={() => onClear(c.key)}
             >

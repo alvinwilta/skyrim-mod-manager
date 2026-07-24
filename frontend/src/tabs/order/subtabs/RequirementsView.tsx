@@ -42,7 +42,7 @@ export function RequirementsView({
                   className="extlink"
                   title="opens the Nexus page in your browser"
                 >
-                  mod {m.requires_mod_id} ↗
+                  {m.requires_mod_name ? `${m.requires_mod_name} (${m.requires_mod_id})` : `mod ${m.requires_mod_id}`} ↗
                 </a>
                 {m.notes ? ` — ${m.notes}` : ''} — not in your library
               </li>

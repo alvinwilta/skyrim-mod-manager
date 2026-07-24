@@ -100,8 +100,7 @@ export function GuideTab() {
             </div>
             <div className="guide-hflow-name">Install in MO2</div>
             <div className="guide-hflow-desc">
-              Install archives in prefix order, then <b>Check vs MO2 order</b>. Revert the commit before changing
-              anything.
+              Install archives in prefix order in MO2. Revert the commit before changing anything.
             </div>
           </div>
         </div>
@@ -307,22 +306,15 @@ export function GuideTab() {
         <h3>Analysis row — read-only, changes nothing by itself</h3>
         <ul>
           <li>
-            <b>Scan archives</b> — real file-path overlaps between archives (via <code>7z</code>), not a guess →{' '}
-            <b>Conflicts</b> tab.
-          </li>
-          <li>
             <b>Sync requirements</b> — flags Nexus "requires" mods missing from your library → <b>Requirements</b> tab.
           </li>
-          <li>
-            <b>Check for drift</b> — flags mods no longer where the last sort put them (manual drag since) with a{' '}
-            <b>WRONG SPOT</b> badge → <b>Check for drift</b> tab.
-          </li>
-          <li>
-            <b>Check vs MO2 order</b> — compares against what MO2 actually has installed (active profile's{' '}
-            <code>modlist.txt</code> + each mod's <code>meta.ini</code>): out of order, in MO2 but not listed, listed
-            but not installed → <b>vs MO2</b> tab. Available only after committing the order to disk.
-          </li>
         </ul>
+        <p className="dim">
+          Overwrite conflicts are shown live on each row: <span className="c-over">▲</span> = its files win over other
+          mods, <span className="c-under">▼</span> = overwritten. Select a mod to highlight what it overwrites (green) /
+          what overwrites it (red); the details list in the <b>Sort</b> tab. Real overlaps are scanned automatically by{' '}
+          <b>Sort</b>.
+        </p>
 
         <h3>Commit order to disk — the one button that changes real files</h3>
         <div className="guide-callout">

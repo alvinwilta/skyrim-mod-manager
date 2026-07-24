@@ -258,6 +258,69 @@ def pairs():
     return sorted(found.values(), key=lambda p: (p["expected"], -len(p["paths"])))
 
 
+def relations():
+    """Per-mod DIRECTED overwrite relations, MO2-style. Two mods that share a
+    real Data-relative loose path conflict; the one installed LATER (higher
+    `mod_sort.rank` = lower in the left panel) wins and OVERWRITES the other.
+
+    Returns {mod_id: {"overwrites": [{mod_id, mod_name, files}],
+                      "overwritten_by": [{mod_id, mod_name, files}]}} for every
+    mod involved in at least one conflict. `files` = shared-path count for that
+    directed pair. Incidental paths (fomod/mcm-config/translations) are excluded
+    (same filter as pairs()); BSA-only mods never surface (7z can't read .bsa so
+    they have no loose paths). A pair where either side has no rank is skipped —
+    direction is undefined until the order is generated."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "WITH shared AS ("
+            "  SELECT mf.path FROM mod_files mf"
+            "  JOIN mods m ON m.file_id = mf.file_id AND m.status = 'ok'"
+            "  WHERE 1 = 1" + INCIDENTAL_PATH_SQL +
+            "  GROUP BY mf.path HAVING COUNT(DISTINCT m.mod_id) BETWEEN 2 AND ?)"
+            " SELECT mf.path, m.mod_id, m.mod_name, s.rank FROM mod_files mf"
+            " JOIN shared ON shared.path = mf.path"
+            " JOIN mods m ON m.file_id = mf.file_id AND m.status = 'ok'"
+            " LEFT JOIN mod_sort s ON s.mod_id = m.mod_id"
+            " GROUP BY mf.path, m.mod_id",
+            (_MAX_SHARERS,),
+        ).fetchall()
+
+    by_path = {}
+    for r in rows:
+        by_path.setdefault(r["path"], {})[r["mod_id"]] = (r["mod_name"], r["rank"])
+
+    # directed shared-file counts: winner -> {loser: count}
+    over = {}      # mod_id -> {other_id: files}  (mod_id overwrites other)
+    under = {}     # mod_id -> {other_id: files}  (mod_id overwritten by other)
+    name_of = {}
+    for path, mods in by_path.items():
+        if len(mods) < 2 or len(mods) > _MAX_SHARERS:
+            continue
+        ids = sorted(mods)
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                a, b = ids[i], ids[j]
+                ra, rb = mods[a][1], mods[b][1]
+                if ra is None or rb is None or ra == rb:
+                    continue  # direction undefined
+                winner, loser = (a, b) if ra > rb else (b, a)
+                name_of[a], name_of[b] = mods[a][0], mods[b][0]
+                over.setdefault(winner, {})[loser] = over.setdefault(winner, {}).get(loser, 0) + 1
+                under.setdefault(loser, {})[winner] = under.setdefault(loser, {}).get(winner, 0) + 1
+
+    def _list(d):
+        # most-shared first, then by name for stability
+        return sorted(
+            ({"mod_id": oid, "mod_name": name_of.get(oid, str(oid)), "files": n} for oid, n in d.items()),
+            key=lambda e: (-e["files"], e["mod_name"].lower()),
+        )
+
+    out = {}
+    for mid in set(over) | set(under):
+        out[mid] = {"overwrites": _list(over.get(mid, {})), "overwritten_by": _list(under.get(mid, {}))}
+    return out
+
+
 def summary_for(mod_ids, limit=40):
     """Compact 'ModA vs ModB: N shared files' lines for a set of mod ids --
     meant to be injected into the sorter's LLM prompt as ground truth,

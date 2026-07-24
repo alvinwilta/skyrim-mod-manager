@@ -99,42 +99,24 @@ export interface CommitState extends JobState {
   hidden: boolean
 }
 
-/** GET /api/order/check */
-export interface OrderCheck {
-  mismatches: { mod_id: number; expected: number | null }[]
-}
-
-/** an entry in an /api/order/mo2-check list (mod_id is null for unmatched MO2 folders) */
-export interface Mo2Entry {
-  mod_id: number | null
-  mod_name: string
-}
-
-/** GET /api/order/mo2-check — app install list vs MO2's real enabled install order */
-export interface Mo2Check {
-  out_of_order: Mo2Entry[]
-  in_mo2_not_list: Mo2Entry[]
-  in_list_not_mo2: Mo2Entry[]
-}
-
 /** GET /api/sort-prompt */
 export interface SortPrompt {
   prompt: string
   default: string
 }
 
-/** GET /api/conflicts */
-export interface ConflictPair {
-  a: { mod_id: number; mod_name: string }
-  b: { mod_id: number; mod_name: string }
-  paths: string[]
-  expected: boolean
+/** One directed conflict edge: this mod overwrites / is overwritten by `mod_id`. */
+export interface ConflictEdge {
+  mod_id: number
+  mod_name: string
+  files: number // shared file paths for this directed pair
 }
-export interface ConflictsResult {
-  pairs: ConflictPair[]
-  scanned: number
-  total: number
+export interface ConflictRelation {
+  overwrites: ConflictEdge[] // mods this mod wins over (its files win)
+  overwritten_by: ConflictEdge[] // mods that win over this mod
 }
+/** GET /api/conflict-relations — keyed by mod_id (string in JSON). */
+export type ConflictRelations = Record<string, ConflictRelation>
 
 /** GET /api/requirements-missing item */
 export interface MissingRequirement {
@@ -142,6 +124,7 @@ export interface MissingRequirement {
   mod_name: string
   requires_url: string
   requires_mod_id: number
+  requires_mod_name: string
   notes: string | null
 }
 

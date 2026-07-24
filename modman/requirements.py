@@ -40,9 +40,6 @@ def scan():
             " WHERE m.status = 'ok' AND m.mod_id > 0 AND COALESCE(m.requirements_alert, 1) != 0"
             " AND COALESCE(s.requirements_checked, 0) = 0 GROUP BY m.mod_id, m.game"
         ).fetchall()]
-    if not candidates:
-        state["phase"] = "No mods need a requirements check"
-        return 0
 
     by_domain = {}
     for c in candidates:
@@ -68,9 +65,11 @@ def scan():
                     found = reqs.get(mod_id, [])
                     for r in found:
                         conn.execute(
-                            "INSERT OR IGNORE INTO mod_requirements (mod_id, requires_mod_id, notes)"
-                            " VALUES (?, ?, ?)",
-                            (mod_id, r["modId"], r["notes"]),
+                            "INSERT INTO mod_requirements (mod_id, requires_mod_id, notes, requires_mod_name)"
+                            " VALUES (?, ?, ?, ?)"
+                            " ON CONFLICT(mod_id, requires_mod_id) DO UPDATE SET"
+                            " notes = excluded.notes, requires_mod_name = excluded.requires_mod_name",
+                            (mod_id, r["modId"], r["notes"], r.get("modName") or ""),
                         )
                     conn.execute(
                         "UPDATE mods SET requirements_alert = ? WHERE mod_id = ?",
@@ -82,15 +81,60 @@ def scan():
                         (mod_id,),
                     )
                     checked += 1
-    return checked
+
+    named = backfill_required_names()
+    return checked, named
+
+
+def backfill_required_names():
+    """Fill `requires_mod_name` for any requirement row that still lacks one, by
+    fetching the required mod's own name DIRECTLY (nexus.fetch_mod_names), not the
+    `modName` carried in the requiring mod's node (which Nexus often leaves blank
+    — that's why some names were missing). Grouped by the requiring mod's game
+    domain (the required mod is virtually always the same game). Deleted/hidden
+    required mods have no name and stay id-only. Returns count filled."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT r.requires_mod_id, m.game FROM mod_requirements r"
+            " JOIN mods m ON m.mod_id = r.mod_id AND m.status = 'ok'"
+            " WHERE r.requires_mod_id > 0 AND (r.requires_mod_name IS NULL OR r.requires_mod_name = '')"
+        ).fetchall()
+    by_domain = {}
+    for r in rows:
+        if r["game"]:
+            by_domain.setdefault(r["game"], set()).add(r["requires_mod_id"])
+    filled = 0
+    for domain, ids in by_domain.items():
+        state["phase"] = f"Naming {len(ids)} required mod(s) ({domain})"
+        try:
+            names = nexus.fetch_mod_names(domain, list(ids))
+        except Exception as e:
+            log.warning("requirement name backfill failed for %s: %s", domain, e)
+            continue
+        if not names:
+            continue
+        with db.connect() as conn:
+            for mid, name in names.items():
+                conn.execute(
+                    "UPDATE mod_requirements SET requires_mod_name = ? WHERE requires_mod_id = ?"
+                    " AND (requires_mod_name IS NULL OR requires_mod_name = '')",
+                    (name, mid),
+                )
+                filled += 1
+    return filled
 
 
 def start_scan():
     """Async requirements sync. Returns error string or None (mirrors start_download)."""
 
     def work():
-        n = scan()
-        return f"Checked {n} mod(s)" if n else "Nothing new to check"
+        n, named = scan()
+        parts = []
+        if n:
+            parts.append(f"Checked {n} mod(s)")
+        if named:
+            parts.append(f"named {named} required mod(s)")
+        return " · ".join(parts) if parts else "Nothing new to check"
 
     return jobs.start(_lock, state, "a requirements sync is already running", work)
 
@@ -100,7 +144,8 @@ def missing():
     'X requires Y, which you don't have.'"""
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT r.mod_id, m.mod_name, m.game, r.requires_mod_id, r.notes FROM mod_requirements r"
+            "SELECT r.mod_id, m.mod_name, m.game, r.requires_mod_id, r.requires_mod_name, r.notes"
+            " FROM mod_requirements r"
             " JOIN mods m ON m.mod_id = r.mod_id AND m.status = 'ok'"
             " WHERE r.requires_mod_id NOT IN (SELECT mod_id FROM mods WHERE status = 'ok')"
             " GROUP BY r.mod_id, r.requires_mod_id"
@@ -109,6 +154,7 @@ def missing():
         {
             "mod_id": r["mod_id"], "mod_name": r["mod_name"],
             "requires_mod_id": r["requires_mod_id"],
+            "requires_mod_name": r["requires_mod_name"] or "",
             # requires_mod_id isn't in `mods` (that's the whole point) so it has
             # no stored mod_url of its own -- build one from the requiring mod's
             # own game domain, which is virtually always the same game.

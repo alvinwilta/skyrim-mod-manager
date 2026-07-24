@@ -235,6 +235,16 @@ def fetch_summaries(domain, mod_ids):
     return {n["modId"]: n.get("summary") or "" for n in nodes}
 
 
+def fetch_mod_names(domain, mod_ids):
+    """{mod_id(int): name} for a batch of mods on one domain -- a direct
+    legacyMods metadata lookup (the mod's own `name`), used to name the required
+    mods in the missing-requirements list. More reliable than the `modName` field
+    carried inside a *requiring* mod's requirements node, which Nexus sometimes
+    leaves blank. A deleted/hidden mod simply isn't in the result."""
+    nodes = _legacy_mods(game_id_for(domain), mod_ids, "modId name")
+    return {int(n["modId"]): n["name"] for n in nodes if n.get("name")}
+
+
 def fetch_requirements(domain, mod_ids):
     """Batch-fetch each mod's real Nexus-declared requirements (the mod's own
     'Requirements' section) for several mods on one domain.

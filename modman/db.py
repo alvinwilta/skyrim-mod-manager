@@ -139,6 +139,11 @@ def init_db():
             " requires_mod_id INTEGER NOT NULL, notes TEXT,"
             " PRIMARY KEY (mod_id, requires_mod_id))"
         )
+        # the required mod's Nexus name (from the same requirements fetch), so the
+        # missing-requirements list can show a name, not just an id
+        cols_req = [r[1] for r in conn.execute("PRAGMA table_info(mod_requirements)")]
+        if "requires_mod_name" not in cols_req:
+            conn.execute("ALTER TABLE mod_requirements ADD COLUMN requires_mod_name TEXT")
         # which collection(s) a mod came from, if any -- absent = manually installed
         conn.execute(
             "CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY AUTOINCREMENT,"

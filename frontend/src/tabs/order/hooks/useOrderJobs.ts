@@ -2,19 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../../api/endpoints'
 import { usePoller } from '../../../hooks/usePoller'
 import { useActivity } from '../../../events/EventsProvider'
-import type { ConflictsResult, MissingRequirement, Mo2Check } from '../../../api/types'
+import type { MissingRequirement } from '../../../api/types'
 import { snapshotBuckets, diffChanged, type BucketSnapshot } from '../lib/changeDiff'
 import { useDismissed } from './useDismissed'
 import { errText, type useOrderData } from './useOrderData'
 
 const NOT_RUN = 'Not run yet this session.'
-const EMPTY_MO2: Mo2Check = { out_of_order: [], in_mo2_not_list: [], in_list_not_mo2: [] }
 
 /**
  * All background-job machinery for the Install Order tab: heuristic sort,
- * the two Claude refine passes, collection-rule enforcement, archive scan,
- * requirements sync, and drift check — with the legacy watcher semantics
- * (poll while running, reload + change-highlight when an action finishes).
+ * the two Claude refine passes, collection-rule enforcement, requirements sync,
+ * and the MO2 pull — with the legacy watcher semantics (poll while running,
+ * reload + change-highlight when an action finishes).
  */
 export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const { sorting } = useActivity()
@@ -26,22 +25,15 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const [enforceMsg, setEnforceMsg] = useState('')
   const [enforceLog, setEnforceLog] = useState<string[]>([])
   const [enforcing, setEnforcing] = useState(false)
-  const [scanMsg, setScanMsg] = useState('')
-  const [scanning, setScanning] = useState(false)
-  const [conflicts, setConflicts] = useState<ConflictsResult>({ pairs: [], scanned: 0, total: 0 })
   const [reqMsg, setReqMsg] = useState('')
   const [syncing, setSyncing] = useState(false)
   const [missing, setMissing] = useState<MissingRequirement[]>([])
-  const [driftMsg, setDriftMsg] = useState('')
-  const [mo2, setMo2] = useState<Mo2Check>(EMPTY_MO2)
-  const [mo2Msg, setMo2Msg] = useState(NOT_RUN)
   const [commitMsg, setCommitMsg] = useState('')
   const [commitError, setCommitError] = useState(false)
   const [committing, setCommitting] = useState(false)
   const [hiding, setHiding] = useState(false) // hide-installed move job in flight
   const [pulling, setPulling] = useState(false) // MO2 pull job in flight
   const [pullMsg, setPullMsg] = useState('')
-  const [wrongById, setWrongById] = useState<ReadonlyMap<number, number | null>>(new Map())
   const [justChanged, setJustChanged] = useState<ReadonlySet<number>>(new Set())
   const snapshot = useRef<BucketSnapshot | null>(null)
 
@@ -53,9 +45,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const dismissed = {
     notes: useDismissed('notes'),
     rules: useDismissed('rules'),
-    conflicts: useDismissed('conflicts'),
     requirements: useDismissed('requirements'),
-    mo2: useDismissed('mo2'),
   }
 
   const takeSnapshot = () => {
@@ -71,17 +61,6 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     }
   }, [data])
 
-  const loadConflicts = useCallback(async () => {
-    try {
-      const d = await api.conflicts()
-      setConflicts(d)
-      const unscanned = d.total - d.scanned
-      setScanMsg(unscanned ? `${d.scanned}/${d.total} archives scanned — ${unscanned} new` : `${d.scanned}/${d.total} archives scanned`)
-    } catch (e) {
-      setScanMsg(errText(e))
-    }
-  }, [])
-
   const loadMissing = useCallback(async () => {
     try {
       setMissing((await api.requirementsMissing()).missing)
@@ -94,7 +73,6 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   // panels + last non-running refine/enforce phase messages (legacy
   // loadRefineState/loadEnforceState).
   useEffect(() => {
-    void loadConflicts()
     void loadMissing()
     api
       .enforceState()
@@ -112,7 +90,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
         else setBulkMsg(m)
       })
       .catch(() => {})
-  }, [loadConflicts, loadMissing])
+  }, [loadMissing])
 
   // SSE says a sort STARTED (elsewhere / mid-session) → enter refining.
   // Rising-edge only: reacting to the level re-entered refining from a stale
@@ -163,23 +141,6 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     },
     1000,
     enforcing,
-  )
-
-  // Scan watcher: 1s.
-  usePoller(
-    async () => {
-      const s = await api.scanState()
-      setScanMsg(s.phase + (s.error ? ' — ' + s.error : ''))
-      if (!s.running) {
-        setScanning(false)
-        dismissed.conflicts.clear()
-        await loadConflicts()
-        return false
-      }
-      return true
-    },
-    1000,
-    scanning,
   )
 
   // Requirements watcher: 1s.
@@ -359,15 +320,6 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     }
   }
 
-  const runScan = async () => {
-    try {
-      await api.scanConflicts()
-      setScanning(true)
-    } catch (e) {
-      setScanMsg(errText(e))
-    }
-  }
-
   const runSync = async () => {
     try {
       await api.syncRequirements()
@@ -377,59 +329,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     }
   }
 
-  const checkDrift = useCallback(
-    async (silent: boolean) => {
-      try {
-        const d = await api.orderCheck()
-        const wrong = new Map(d.mismatches.map((m) => [m.mod_id, m.expected]))
-        setWrongById(wrong)
-        if (!silent) {
-          setDriftMsg(
-            wrong.size
-              ? `${wrong.size} mod(s) sit in a different group than the last Sort/Refine put them ` +
-                `— usually a manual drag/move dragged them out. Highlighted red below; each badge ` +
-                `shows the group the sorter expected (→ group). Drag them back or re-run Sort.`
-              : 'order matches the sorter — nothing misplaced (no manual moves have drifted from Sort/Refine)',
-          )
-          await data.reload()
-        }
-      } catch (e) {
-        setDriftMsg(errText(e))
-      }
-    },
-    [data],
-  )
-
-  // The drift result lives only in this session (WRONG SPOT is computed, not
-  // stored) — clearing it un-highlights everything until the next check.
-  const clearDrift = useCallback(() => {
-    setWrongById(new Map())
-    setDriftMsg('cleared — run Check for drift to re-check')
-  }, [])
-
   const clearJustChanged = useCallback(() => setJustChanged(new Set()), [])
-
-  const dismissedMo2Clear = dismissed.mo2.clear
-  const checkMo2 = useCallback(async () => {
-    setMo2Msg('reading MO2 install state…')
-    dismissedMo2Clear() // every click is a fresh check
-    try {
-      const d = await api.orderMo2Check()
-      setMo2(d)
-      const n = d.out_of_order.length
-      setMo2Msg(
-        n
-          ? `${n} installed mod(s) sit in a different order than your list — highlighted red below. ` +
-            `Re-install/re-sort in MO2 to match, or adjust the list.`
-          : d.in_mo2_not_list.length || d.in_list_not_mo2.length
-            ? 'Install order matches for every mod present in both. See the set differences below.'
-            : 'Install order matches MO2 exactly — nothing out of place.',
-      )
-    } catch (e) {
-      setMo2(EMPTY_MO2)
-      setMo2Msg(errText(e))
-    }
-  }, [dismissedMo2Clear])
 
   return {
     model,
@@ -442,13 +342,9 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     enforceMsg,
     enforceLog,
     enforcing,
-    scanMsg,
-    scanning,
-    conflicts,
     reqMsg,
     syncing,
     missing,
-    driftMsg,
     commitMsg,
     commitError,
     committing,
@@ -456,22 +352,15 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     pulling,
     pullMsg,
     runPull,
-    wrongById,
-    mo2,
-    mo2Msg,
-    checkMo2,
     justChanged,
     runSort,
     refineOrStop,
     runDesc,
     runEnforce,
-    runScan,
     runSync,
     runCommit,
     runUncommit,
     runHideInstalled,
-    checkDrift,
-    clearDrift,
     clearJustChanged,
     dismissed,
   }

@@ -19,9 +19,10 @@ interface Props {
   bandName?: string
   hl: Highlights
   selected: boolean
-  wrongExpected: number | null | undefined // bucket id when drift-flagged
-  mo2Wrong: boolean // true when this mod is out of order vs MO2's install order
   justChanged: boolean
+  overwritesCount: number // # mods this one overwrites (its loose files win)
+  overwrittenCount: number // # mods that overwrite this one
+  conflictTint?: 'green' | 'red' | 'orange' // set when a SELECTED mod conflicts with this row
   disabled: boolean // refining: no drag, no lock, no move
   // mod_id-first signatures so the parent can pass ONE stable handler to every
   // row (identity-stable → the memo boundaries actually hold)
@@ -91,9 +92,8 @@ const RowCells = memo(function RowCells({
   buckets,
   bandName,
   hl,
-  wrong,
-  wrongExpected,
-  mo2Wrong,
+  overwritesCount,
+  overwrittenCount,
   disabled,
   onToggleLock,
   onMoveTo,
@@ -104,14 +104,14 @@ const RowCells = memo(function RowCells({
   buckets: Record<string, string>
   bandName?: string
   hl: Highlights
-  wrong: boolean
-  wrongExpected: number | null | undefined
-  mo2Wrong: boolean
+  overwritesCount: number
+  overwrittenCount: number
   disabled: boolean
   onToggleLock: (mid: number, locked: boolean) => void
   onMoveTo: (mid: number, position: number) => void
 }) {
   const shownFlags = (mod.flags || []).filter((f) => {
+    if (f.startsWith('CONFLICT')) return false // CONFLICT tag dropped — real overwrite data replaces it
     const cat = flagCategory(f)
     return cat === null || hl[cat]
   })
@@ -164,6 +164,25 @@ const RowCells = memo(function RowCells({
             MO2 only{' '}
           </span>
         )}
+        {overwritesCount > 0 && (
+          <span
+            className="cflag c-over"
+            title={`Overwrites ${overwritesCount} mod(s) — this mod's loose files win. Select it to highlight them.`}
+          >
+            ▲
+          </span>
+        )}
+        {overwrittenCount > 0 && (
+          <span
+            className="cflag c-under"
+            title={`Overwritten by ${overwrittenCount} mod(s) — those mods' files win over this one. Select it to highlight them.`}
+          >
+            ▼
+          </span>
+        )}
+        <span className="modname" title={mod.mod_name}>
+          {mod.mod_name}
+        </span>{' '}
         {mod.conflict_pin && (
           <span
             className="badge b-icon"
@@ -178,12 +197,9 @@ const RowCells = memo(function RowCells({
             className="badge b-bsa"
             title="archive contains only packed BSA/BA2 + plugin files — no loose Data assets, position barely matters for real conflicts"
           >
-            BSA-only{' '}
+            BSA{' '}
           </span>
         )}
-        <span className="modname" title={mod.mod_name}>
-          {mod.mod_name}
-        </span>{' '}
         {shownFlags.slice(0, MAX_FLAG_BADGES).map((f) => (
           <FlagBadge key={f} flag={f} names={names} buckets={buckets} />
         ))}
@@ -200,18 +216,6 @@ const RowCells = memo(function RowCells({
               +{shownFlags.length - MAX_FLAG_BADGES} more
             </span>{' '}
           </>
-        )}
-        {wrong && (
-          <FlagBadge
-            flag={wrongExpected != null ? `WRONG SPOT:${wrongExpected}` : 'WRONG SPOT'}
-            names={names}
-            buckets={buckets}
-          />
-        )}
-        {mo2Wrong && !wrong && (
-          <span className="badge" style={{ background: '#3a1214', color: 'var(--red)' }} title="out of order vs MO2's real install order">
-            MO2 ORDER{' '}
-          </span>
         )}
       </div>
       <div className="num">
@@ -247,9 +251,10 @@ export const OrderRow = memo(function OrderRow({
   bandName,
   hl,
   selected,
-  wrongExpected,
-  mo2Wrong,
   justChanged,
+  overwritesCount,
+  overwrittenCount,
+  conflictTint,
   disabled,
   onRowClick,
   onToggleLock,
@@ -270,20 +275,22 @@ export const OrderRow = memo(function OrderRow({
   const wasDragged = useRef(false)
   if (isDragging) wasDragged.current = true
 
-  const wrong = wrongExpected !== undefined
   const moved = hl.moved && ((mod.flags?.some((f) => f.startsWith('MOVED')) ?? false) || justChanged)
-  const rowCls = ['ordrow', wrong || mo2Wrong ? 'r-wrong' : moved ? 'r-upd' : mod.locked ? 'r-locked' : '', selected ? 'r-sel' : '']
+  const rowCls = [
+    'ordrow',
+    moved ? 'r-upd' : mod.locked ? 'r-locked' : '',
+    selected ? 'r-sel' : '',
+    // select-to-tint: a selected mod conflicts with this row (green=we overwrite
+    // it, red=it overwrites us, orange=both). Only set while something's selected.
+    !selected && conflictTint ? `r-cf-${conflictTint}` : '',
+  ]
     .filter(Boolean)
     .join(' ')
-  const hint = wrong
-    ? `now in "${buckets[String(mod.bucket)] || 'unsorted'}", but Sort/Refine expected "${buckets[String(wrongExpected)] || 'unsorted'}" — a manual move drifted it`
-    : undefined
 
   return (
     <div
       ref={setNodeRef}
       className={rowCls}
-      title={hint}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : undefined, touchAction: 'none' }}
       data-mid={mod.mod_id}
       {...attributes}
@@ -317,9 +324,8 @@ export const OrderRow = memo(function OrderRow({
         buckets={buckets}
         bandName={bandName}
         hl={hl}
-        wrong={wrong}
-        wrongExpected={wrongExpected}
-        mo2Wrong={mo2Wrong}
+        overwritesCount={overwritesCount}
+        overwrittenCount={overwrittenCount}
         disabled={disabled}
         onToggleLock={onToggleLock}
         onMoveTo={onMoveTo}

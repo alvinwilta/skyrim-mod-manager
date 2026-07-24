@@ -21,15 +21,13 @@ import { type VisibleRow } from './lib/runs'
 import { OrderRow } from './OrderRow'
 import { BandDivider } from './BandDivider'
 import { OrderToolbar } from './OrderToolbar'
-import type { OrderMod, Separator } from '../../api/types'
+import type { ConflictRelations, OrderMod, Separator } from '../../api/types'
 import { HighlightBar } from './HighlightBar'
 import { DEFAULT_HIGHLIGHTS, CLEARABLE_FLAG_KIND, flagCategory, type HighlightKey } from './lib/highlights'
 import { SelectionToolbar } from './SelectionToolbar'
 import { Subtabs } from './subtabs/Subtabs'
-import { ConflictsView, conflictKey } from './subtabs/ConflictsView'
 import { RequirementsView, requirementKey } from './subtabs/RequirementsView'
-import { DriftView, type DriftEntry } from './subtabs/DriftView'
-import { Mo2View, mo2Key } from './subtabs/Mo2View'
+import { ConflictDetail } from './subtabs/ConflictDetail'
 import { NoteText } from './ModJump'
 import { scrollToMod } from './lib/scrollToMod'
 import { DismissX, RestoreDismissed } from './Dismiss'
@@ -51,12 +49,13 @@ const SEP_ROW_H = MOD_ROW_H
 // tints); the ORDER is severity — first match wins when a mod has several flags.
 const SCROLL_MARK_COLOR: Record<HighlightKey, string> = {
   duplicate: '#d9534f',
-  drift: '#e0554f',
-  conflict: '#d6a53a',
   moved: '#c8934a',
   uncertain: '#8a93a3',
 }
-const SCROLL_MARK_ORDER: HighlightKey[] = ['duplicate', 'drift', 'conflict', 'moved', 'uncertain']
+const SCROLL_MARK_ORDER: HighlightKey[] = ['duplicate', 'moved', 'uncertain']
+
+// Scrollbar colours for the select-to-tint overlay (selection + its winners/losers).
+const TINT_MARK = { sel: '#4a90e2', green: '#57d267', red: '#ff5148', orange: '#e6a52e' } as const
 
 function NotesList({
   notes,
@@ -125,17 +124,6 @@ export function OrderTab() {
   const [confirmCommit, setConfirmCommit] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const mo2WrongIds = useMemo(
-    () =>
-      new Set(
-        jobs.mo2.out_of_order
-          .filter((e) => !jobs.dismissed.mo2.keys.has(mo2Key('out', e)))
-          .map((e) => e.mod_id)
-          .filter((x): x is number => x != null),
-      ),
-    [jobs.mo2, jobs.dismissed.mo2.keys],
-  )
-
   const toggleHl = (key: HighlightKey) => setHl((h) => ({ ...h, [key]: !h[key] }))
 
   const setMsg = jobs.setMsg
@@ -168,6 +156,18 @@ export function OrderTab() {
 
   const sepById = useMemo(() => new Map(separators.map((s) => [s.id, s])), [separators])
 
+  // MO2-style directed overwrite relations (who overwrites whom), from real file
+  // overlaps + current order. Loaded on mount and refreshed after every Sort
+  // (Sort scans archives + regenerates ranks, both of which change the answer).
+  const [relations, setRelations] = useState<ConflictRelations>({})
+  const loadRelations = useCallback(() => {
+    api
+      .conflictRelations()
+      .then((r) => setRelations(r.relations))
+      .catch(() => {})
+  }, [])
+  useEffect(loadRelations, [loadRelations])
+
   const toggleBand = (id: number) => {
     setCollapsedBands((prev) => {
       const next = new Set(prev)
@@ -180,36 +180,16 @@ export function OrderTab() {
 
   // Sort (the engine) assigns every mod its band + order; refresh the band
   // counts shown on the dividers after it runs.
-  const runSortAndRefresh = () => void jobs.runSort(false).then(loadSeparators)
+  const runSortAndRefresh = () =>
+    void jobs.runSort(false).then(() => {
+      loadSeparators()
+      loadRelations()
+    })
 
-  // Resolve the drift check's {mod_id → expected bucket} map against the
-  // order cache so the panel can list the drifted mods by name/position.
-  const driftEntries: DriftEntry[] = useMemo(
-    () =>
-      data.mods.flatMap((m, i) =>
-        jobs.wrongById.has(m.mod_id)
-          ? [
-              {
-                pos: i + 1,
-                mod_id: m.mod_id,
-                mod_name: m.mod_name,
-                bucket: m.bucket,
-                expected: jobs.wrongById.get(m.mod_id) ?? null,
-              },
-            ]
-          : [],
-      ),
-    [data.mods, jobs.wrongById],
-  )
-
-  // × on a chip: drift is session state (just reset the check result); the
-  // rest are stored mod_sort flags — strip them in the db, then reload.
+  // × on a chip: strip the stored mod_sort flags in the db, then reload.
   const clearHl = async (key: HighlightKey) => {
     const kind = CLEARABLE_FLAG_KIND[key]
-    if (!kind) {
-      jobs.clearDrift()
-      return
-    }
+    if (!kind) return
     try {
       const r = await api.orderClearFlags([kind])
       jobs.setMsg(`cleared ${kind} tags from ${r.cleared} mod(s)`)
@@ -256,7 +236,7 @@ export function OrderTab() {
   // How many rows each highlight would tag right now — shown on the chips so
   // an empty pass reads as (0) instead of a chip that does nothing.
   const hlCounts = useMemo(() => {
-    const c: Record<HighlightKey, number> = { conflict: 0, duplicate: 0, moved: 0, uncertain: 0, drift: 0 }
+    const c: Record<HighlightKey, number> = { duplicate: 0, moved: 0, uncertain: 0 }
     for (const mod of data.mods) {
       const cats = new Set<HighlightKey>()
       for (const f of mod.flags || []) {
@@ -266,9 +246,8 @@ export function OrderTab() {
       if (jobs.justChanged.has(mod.mod_id)) cats.add('moved')
       for (const k of cats) c[k]++
     }
-    c.drift = jobs.wrongById.size
     return c
-  }, [data.mods, jobs.justChanged, jobs.wrongById])
+  }, [data.mods, jobs.justChanged])
   const sel = useRowSelection(visibleAll.map((r) => r.mod.mod_id))
 
   // While a selected row is being dragged, the REST of the selection leaves
@@ -335,12 +314,57 @@ export function OrderTab() {
         const c = flagCategory(f)
         if (c && hl[c]) kinds.add(c)
       }
-      if (hl.drift && jobs.wrongById.has(mod.mod_id)) kinds.add('drift')
       const kind = SCROLL_MARK_ORDER.find((k) => kinds.has(k))
       if (kind) out.push({ frac: n > 1 ? i / (n - 1) : 0, color: SCROLL_MARK_COLOR[kind] })
     })
     return out
-  }, [combined, hl, jobs.wrongById])
+  }, [combined, hl])
+
+  // Select-to-tint: when mods are selected, tint the rows they conflict with by
+  // who WINS. green = that mod OVERWRITES the selection (winner), red = it's
+  // OVERWRITTEN BY the selection (loser), orange = both. Empty when nothing is
+  // selected (tint only on select); the selection itself keeps its own r-sel
+  // highlight.
+  const conflictTint = useMemo(() => {
+    const m = new Map<number, 'green' | 'red' | 'orange'>()
+    if (!sel.selected.size) return m
+    const green = new Set<number>() // mods that overwrite the selection (win)
+    const red = new Set<number>() // mods the selection overwrites (lose)
+    for (const sid of sel.selected) {
+      const rel = relations[String(sid)]
+      if (!rel) continue
+      for (const e of rel.overwritten_by) green.add(e.mod_id) // they win over the selection
+      for (const e of rel.overwrites) red.add(e.mod_id) // the selection wins over them
+    }
+    for (const id of green) m.set(id, red.has(id) ? 'orange' : 'green')
+    for (const id of red) if (!m.has(id)) m.set(id, 'red')
+    return m
+  }, [relations, sel.selected])
+
+  // Scrollbar marks. With nothing selected: the flag marks (conflict/duplicate/
+  // moved/uncertain/drift). While mods ARE selected: swap to ONLY the select-to-
+  // tint highlights — the selected rows (blue) and their green (overwrites the
+  // selection) / red (overwritten by it) / orange conflict rows — so the
+  // scrollbar shows just what you selected, not every flagged mod.
+  const paintMarks = useMemo(() => {
+    if (!sel.selected.size) return scrollMarks
+    const n = combined.length
+    // `w` = width MULTIPLIER over one row's proportional height (computed in
+    // paint); overlay marks are a touch thicker than the thin flag marks so the
+    // green/red/blue read clearly, but still track a single row's position.
+    const overlay: { frac: number; color: string; w: number }[] = []
+    combined.forEach((it, i) => {
+      if (it.kind !== 'mod') return
+      const id = it.row.mod.mod_id
+      const frac = n > 1 ? i / (n - 1) : 0
+      if (sel.selected.has(id)) overlay.push({ frac, color: TINT_MARK.sel, w: 1.8 })
+      else {
+        const t = conflictTint.get(id)
+        if (t) overlay.push({ frac, color: TINT_MARK[t], w: 1.8 })
+      }
+    })
+    return overlay
+  }, [scrollMarks, combined, sel.selected, conflictTint])
 
   // Build the ::-webkit-scrollbar-track background gradient from the marks and
   // stamp it on :root as --sb-marks. The list is window-scrolled, so map each
@@ -352,17 +376,21 @@ export function OrderTab() {
     const paint = () => {
       const listEl = listRef.current
       const docH = root.scrollHeight
-      if (!listEl || !docH || !scrollMarks.length) {
+      if (!listEl || !docH || !paintMarks.length) {
         root.style.removeProperty('--sb-marks')
         return
       }
       const listTop = listEl.getBoundingClientRect().top + window.scrollY
       const listH = listEl.offsetHeight || 1
+      // one row's half-height as a % of the whole document = proportional mark
+      // size, floored so a single row still shows a visible sliver on the track
+      const rowHalf = Math.max(0.1, ((MOD_ROW_H / 2) / docH) * 100)
       const seg: string[] = []
-      for (const m of scrollMarks) {
+      for (const m of paintMarks) {
         const f = Math.min(100, Math.max(0, ((listTop + m.frac * listH) / docH) * 100))
-        const a = Math.max(0, f - 0.18)
-        const b = Math.min(100, f + 0.18)
+        const hw = rowHalf * ('w' in m ? (m as { w: number }).w : 1)
+        const a = Math.max(0, f - hw)
+        const b = Math.min(100, f + hw)
         seg.push(`transparent ${a}%`, `${m.color} ${a}%`, `${m.color} ${b}%`, `transparent ${b}%`)
       }
       root.style.setProperty('--sb-marks', `linear-gradient(to bottom, ${seg.join(', ')})`)
@@ -373,7 +401,7 @@ export function OrderTab() {
       window.removeEventListener('resize', paint)
       root.style.removeProperty('--sb-marks')
     }
-  }, [scrollMarks])
+  }, [paintMarks])
 
   // Stable reference: SortableContext re-derives its internal `items` off this
   // array's identity, not its contents — an inline `.map()` here would hand it
@@ -459,7 +487,6 @@ export function OrderTab() {
     try {
       const r = await api.orderMove(ids, position, separatorId)
       jobs.setMsg(`moved ${ids.length > 1 ? ids.length + ' mods ' : ''}to #${r.position}`)
-      if (jobs.wrongById.size) await jobs.checkDrift(true) // keep drift highlights fresh
       await data.reload()
     } catch (e) {
       jobs.setMsg(errText(e))
@@ -577,7 +604,17 @@ export function OrderTab() {
         >
           {(active) => (
             <>
-              {active === 'heuristic' && <div className="dim">{jobs.heuristicLog}</div>}
+              {active === 'heuristic' && (
+                <div>
+                  <div className="dim">{jobs.heuristicLog}</div>
+                  <ConflictDetail
+                    selected={[...sel.selected]}
+                    relations={relations}
+                    names={data.names}
+                    onJump={jumpToMod}
+                  />
+                </div>
+              )}
               {active === 'bulk' && (
                 <div>
                   <div className="dim">
@@ -613,47 +650,13 @@ export function OrderTab() {
 
       <div className="toolgroup" style={{ marginTop: 10 }}>
         <div className="toolgroup-h">
-          <span className="toolgroup-label">MO2 sync</span>
+          <span className="toolgroup-label">Tools</span>
           <span className="dim" style={{ fontSize: 12 }}>
-            Import MO2's live install order + enabled/disabled state as the starting point. Auto-runs once on
-            first load; re-run after changing mods in MO2. Rewrites this list's order — MO2 is never modified.
+            Pull MO2's live order as the starting point and flag missing Nexus requirements (both read-only); hide
+            already-installed archives or commit the order to disk (both rename/move files).
           </span>
         </div>
         <div className="toolbar" style={{ margin: 0 }}>
-          <button
-            className="btn ghost"
-            disabled={jobs.pulling || frozen}
-            title="Read the active MO2 profile's modlist.txt + installed folders and set this list's order + install-state to match. Read-only for MO2."
-            onClick={() => void jobs.runPull()}
-          >
-            {jobs.pulling ? 'Pulling…' : 'Pull from MO2'}
-          </button>
-          {jobs.pullMsg && (
-            <span className="dim" style={{ fontSize: 12 }}>
-              {jobs.pullMsg}
-            </span>
-          )}
-        </div>
-      </div>
-
-
-      <div className="toolgroup" style={{ marginTop: 10 }}>
-        <div className="toolgroup-h">
-          <span className="toolgroup-label">Analysis</span>
-          <span className="dim" style={{ fontSize: 12 }}>
-            Real (not guessed) data pulled in from archives/Nexus, plus checking the order itself — all read-only,
-            never moves a mod by itself.
-          </span>
-        </div>
-        <div className="toolbar" style={{ margin: 0 }}>
-          <button
-            className="btn ghost"
-            disabled={jobs.scanning}
-            title="Lists every downloaded archive's actual file paths (via 7z) and finds real overlaps between mods — not a guess"
-            onClick={() => void jobs.runScan()}
-          >
-            Scan archives
-          </button>
           <button
             className="btn ghost"
             disabled={jobs.syncing}
@@ -664,24 +667,17 @@ export function OrderTab() {
           </button>
           <button
             className="btn ghost"
-            disabled={data.refining}
-            title="Flags mods whose current group disagrees with where the last Sort/Refine placed them — i.e. a manual drag or move drifted them out of the sorter's group. Each flag names the group the sorter expected."
-            onClick={() => void jobs.checkDrift(false)}
+            disabled={jobs.pulling || frozen}
+            title="Read the active MO2 profile's modlist.txt + installed folders and set this list's order + install-state to match. Auto-runs once on first load; re-run after changing mods in MO2. Read-only for MO2."
+            onClick={() => void jobs.runPull()}
           >
-            Check for drift
+            {jobs.pulling ? 'Pulling…' : 'Pull from MO2'}
           </button>
-          <button
-            className="btn ghost"
-            disabled={!data.committed || data.refining}
-            title={
-              data.committed
-                ? "Compares your install list against what MO2 actually has installed and enabled on disk (modlist.txt order). Flags mods out of order, installed-but-not-listed, and listed-but-not-installed."
-                : 'Commit the install order to disk first — only then does MO2 see this order to compare against.'
-            }
-            onClick={() => void jobs.checkMo2()}
-          >
-            Check vs MO2 order
-          </button>
+          {jobs.pullMsg && (
+            <span className="dim" style={{ fontSize: 12 }}>
+              {jobs.pullMsg}
+            </span>
+          )}
           <span style={{ flex: 1 }} />
           <label
             className="switch-label"
@@ -720,36 +716,14 @@ export function OrderTab() {
         <Subtabs
           tabs={[
             {
-              id: 'conflicts',
-              label: 'Conflicts',
-              count:
-                jobs.conflicts.pairs.filter((p) => !p.expected && !jobs.dismissed.conflicts.keys.has(conflictKey(p)))
-                  .length || undefined,
-            },
-            {
               id: 'requirements',
               label: 'Requirements',
               count: jobs.missing.filter((m) => !jobs.dismissed.requirements.keys.has(requirementKey(m))).length || undefined,
-            },
-            { id: 'drift', label: 'Check for drift', count: jobs.wrongById.size || undefined },
-            {
-              id: 'mo2',
-              label: 'vs MO2',
-              count:
-                jobs.mo2.out_of_order.filter((e) => !jobs.dismissed.mo2.keys.has(mo2Key('out', e))).length || undefined,
             },
           ]}
         >
           {(active) => (
             <>
-              {active === 'conflicts' && (
-                <ConflictsView
-                  msg={jobs.scanMsg}
-                  pairs={jobs.conflicts.pairs}
-                  d={jobs.dismissed.conflicts}
-                  onJump={jumpToMod}
-                />
-              )}
               {active === 'requirements' && (
                 <RequirementsView
                   msg={jobs.reqMsg}
@@ -758,10 +732,6 @@ export function OrderTab() {
                   onJump={jumpToMod}
                 />
               )}
-              {active === 'drift' && (
-                <DriftView msg={jobs.driftMsg} entries={driftEntries} buckets={data.buckets} onJump={jumpToMod} />
-              )}
-              {active === 'mo2' && <Mo2View msg={jobs.mo2Msg} mo2={jobs.mo2} d={jobs.dismissed.mo2} />}
             </>
           )}
         </Subtabs>
@@ -945,11 +915,10 @@ export function OrderTab() {
                       buckets={data.buckets}
                       hl={hl}
                       selected={sel.selected.has(r.mod.mod_id)}
-                      wrongExpected={
-                        hl.drift && jobs.wrongById.has(r.mod.mod_id) ? jobs.wrongById.get(r.mod.mod_id) : undefined
-                      }
-                      mo2Wrong={data.committed && mo2WrongIds.has(r.mod.mod_id)}
                       justChanged={jobs.justChanged.has(r.mod.mod_id)}
+                      overwritesCount={relations[String(r.mod.mod_id)]?.overwrites.length ?? 0}
+                      overwrittenCount={relations[String(r.mod.mod_id)]?.overwritten_by.length ?? 0}
+                      conflictTint={conflictTint.get(r.mod.mod_id)}
                       disabled={frozen}
                       onRowClick={rowHandlers.click}
                       onToggleLock={rowHandlers.lock}
