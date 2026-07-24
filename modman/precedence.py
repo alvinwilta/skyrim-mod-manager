@@ -5,9 +5,7 @@ exists. Deliberately last in the pipeline and deliberately minimal: only
 mods actually named in a violated rule ever get repositioned, reusing
 order_store.move() (which also means the moved mod adopts its new
 neighbor's bucket -- a side effect that's fine specifically because this
-pass runs last, not before heuristic/LLM bucket assignment; check_order()
-will surface the resulting bucket/expected_bucket drift, which is
-informational here, not a bug to auto-correct)."""
+pass runs last, not before heuristic/LLM bucket assignment)."""
 
 import logging
 import threading

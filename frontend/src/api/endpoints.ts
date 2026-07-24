@@ -30,7 +30,6 @@ export const api = {
   cancelDownload: (fileIds: number[]) => post<{ cancelled: number }>('/api/cancel', { file_ids: fileIds }),
   cancelAllDownloads: () => post<{ cancelled: number }>('/api/cancel', { all: true }),
   fetchCollection: (url: string) => post<FetchCollectionResult>('/api/fetch-collection', { url }),
-  diff: (modlist: unknown) => post<DiffResult>('/api/diff', modlist),
   download: (modlist: unknown, fileIds: number[], collectionId: number | null) =>
     post<{ started: number; batches: number }>('/api/download', { modlist, file_ids: fileIds, collection_id: collectionId }),
   collections: () => get<{ collections: Collection[] }>('/api/collections'),

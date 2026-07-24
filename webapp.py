@@ -196,19 +196,6 @@ async def events(request: Request):
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@app.post("/api/diff")
-async def diff(request: Request):
-    payload = await request.json()
-    try:
-        modfiles = engine.parse_modlist(payload)
-    except (KeyError, TypeError, ValueError):
-        return JSONResponse(
-            {"error": "not a valid modlist json (expected data.collectionRevision.modFiles)"},
-            status_code=400,
-        )
-    return await run_in_threadpool(engine.diff_modlist, modfiles)
-
-
 @app.post("/api/fetch-collection")
 async def fetch_collection(request: Request):
     body = await request.json()

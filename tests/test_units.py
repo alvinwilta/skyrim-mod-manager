@@ -5,7 +5,7 @@ Run: .venv/bin/python -m unittest discover -s tests
 
 import unittest
 
-from modman import buckets, collection_rules, commit, conflicts, engine, llm_refine, mo2_order, ordering, precedence, rules
+from modman import buckets, collection_rules, commit, conflicts, engine, llm_refine, ordering, precedence, rules
 
 
 class ParseReply(unittest.TestCase):
@@ -79,15 +79,6 @@ class NormalizePath(unittest.TestCase):
 
     def test_plugin_at_root_kept(self):
         self.assertEqual(conflicts._normalize("MyMod.esp"), "mymod.esp")
-
-
-class LcsSet(unittest.TestCase):
-    def test_identical(self):
-        self.assertEqual(mo2_order._lcs_set([1, 2, 3], [1, 2, 3]), {1, 2, 3})
-
-    def test_one_moved(self):
-        # 3 jumped to the front: everything else is still in relative order
-        self.assertEqual(mo2_order._lcs_set([1, 2, 3, 4], [3, 1, 2, 4]), {1, 2, 4})
 
 
 class Prefix(unittest.TestCase):

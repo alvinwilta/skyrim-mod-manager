@@ -592,21 +592,3 @@ def move(mod_ids, position, separator_id=None):
                 (mid, rank, bucket_of[mid], band_of[mid]),
             )
     return None
-
-
-def check_order():
-    """Mods whose current bucket disagrees with the last sorter opinion
-    (heuristic or LLM) — i.e. likely misplaced after manual moves."""
-    with db.connect() as conn:
-        rows = conn.execute(
-            "SELECT s.mod_id, s.bucket, s.expected_bucket FROM mod_sort s"
-            " WHERE s.expected_bucket IS NOT NULL AND s.locked = 0"
-            " AND s.mod_id IN (SELECT mod_id FROM mods WHERE status = 'ok')"
-        ).fetchall()
-    return {
-        "mismatches": [
-            {"mod_id": r["mod_id"], "actual": r["bucket"], "expected": r["expected_bucket"]}
-            for r in rows
-            if r["bucket"] != r["expected_bucket"]
-        ]
-    }
