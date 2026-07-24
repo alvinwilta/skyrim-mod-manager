@@ -12,7 +12,7 @@ from pathlib import Path
 # (stepmodifications.org/wiki/SkyrimSE:2.3): {bucket: [mod name, ...]} for
 # every mod the guide itself places in that bucket. Exact-name match against
 # this beats every heuristic below -- it's not a guess, it's where STEP put it.
-_STEP_GUIDE_PATH = Path(__file__).parent / "data" / "step_2.3_groups.json"
+_STEP_GUIDE_PATH = Path(__file__).parent.parent / "data" / "step_2.3_groups.json"
 with open(_STEP_GUIDE_PATH, encoding="utf-8") as _f:
     _STEP_GUIDE_GROUPS = {int(k): v for k, v in json.load(_f).items()}
 

@@ -18,7 +18,7 @@ import re
 import tomllib
 from pathlib import Path
 
-_RULES_FILE = Path(__file__).with_name("order_rules.toml")
+_RULES_FILE = Path(__file__).parent.parent / "data" / "order_rules.toml"
 
 # within-band position keywords -> the engine's POS_TOP/MID/BOTTOM ints
 _POS = {"top": 0, "mid": 1, "bottom": 2}
