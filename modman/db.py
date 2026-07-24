@@ -232,6 +232,21 @@ def list_mods(q=None):
         return [dict(r) for r in conn.execute(sql, args)]
 
 
+def mo2_states():
+    """{mod_id: mo2_state} for every mod that carries a live MO2 pull state
+    ('enabled'/'disabled'/'removed'). MO2 is the truth for install-state once
+    pulled, so both the Library and Install Order surfaces prefer this over the
+    per-download .meta sidecar (which goes stale when a mod is enabled/removed
+    in MO2, and is simply absent for MO2-only adopted mods)."""
+    with connect() as conn:
+        return {
+            r["mod_id"]: r["mo2_state"]
+            for r in conn.execute(
+                "SELECT mod_id, mo2_state FROM mod_sort WHERE mo2_state IS NOT NULL"
+            )
+        }
+
+
 def file_ids_for_mods(mod_ids):
     """All live (status='ok') file_ids belonging to the given mods — lets
     mod-level surfaces (install order) reuse the file-level delete path."""

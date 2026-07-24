@@ -34,6 +34,8 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const [hiding, setHiding] = useState(false) // hide-installed move job in flight
   const [pulling, setPulling] = useState(false) // MO2 pull job in flight
   const [pullMsg, setPullMsg] = useState('')
+  const [syncingState, setSyncingState] = useState(false) // MO2 state-only sync in flight
+  const [syncStateMsg, setSyncStateMsg] = useState('')
   const [pushing, setPushing] = useState(false) // MO2 push job in flight
   const [pushMsg, setPushMsg] = useState('')
   const [justChanged, setJustChanged] = useState<ReadonlySet<number>>(new Set())
@@ -226,6 +228,35 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     }
   }
 
+  // State-sync watcher: 1s. Refreshes MO2 install-state without reordering, then
+  // reloads (installed flags change) + highlights any newly parked mods.
+  usePoller(
+    async () => {
+      const s = await api.mo2SyncStateState()
+      setSyncStateMsg(s.phase + (s.error ? ' — ' + s.error : ''))
+      if (!s.running) {
+        setSyncingState(false)
+        await finishAction()
+        return false
+      }
+      return true
+    },
+    1000,
+    syncingState,
+  )
+
+  const runSyncState = async () => {
+    takeSnapshot()
+    setSyncStateMsg('reading MO2…')
+    try {
+      await api.mo2SyncState()
+      setSyncingState(true)
+    } catch (e) {
+      setSyncStateMsg(errText(e))
+      snapshot.current = null
+    }
+  }
+
   // Push watcher: 1s. Writes the tool's order out to MO2's modlist.txt; nothing
   // on the tool side changes, so no reload/highlight — just clear the flag.
   usePoller(
@@ -384,6 +415,9 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     pulling,
     pullMsg,
     runPull,
+    syncingState,
+    syncStateMsg,
+    runSyncState,
     pushing,
     pushMsg,
     runPush,

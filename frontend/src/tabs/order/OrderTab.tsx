@@ -657,9 +657,10 @@ export function OrderTab() {
         <div className="toolgroup-h">
           <span className="toolgroup-label">Tools</span>
           <span className="dim" style={{ fontSize: 12 }}>
-            Pull MO2's live order as the starting point or push this order back to MO2; flag missing Nexus
-            requirements (read-only); hide already-installed archives or commit the order to disk (both rename/move
-            files).
+            Sync install state keeps MO2's enabled/disabled/removed flags current without changing your order; Pull
+            adopts MO2's whole order as a seed (overwrites yours); Push writes your order back to MO2. Flag missing
+            Nexus requirements (read-only); hide already-installed archives or commit the order to disk (both
+            rename/move files).
           </span>
         </div>
         <div className="toolbar" style={{ margin: 0 }}>
@@ -673,23 +674,35 @@ export function OrderTab() {
           </button>
           <button
             className="btn ghost"
-            disabled={jobs.pulling || jobs.pushing || frozen}
-            title="Read the active MO2 profile's modlist.txt + installed folders and set this list's order + install-state to match. Auto-runs once on first load; re-run after changing mods in MO2. Read-only for MO2."
+            disabled={jobs.syncingState || jobs.pulling || jobs.pushing || frozen}
+            title="Refresh which mods MO2 has enabled/disabled/removed WITHOUT changing your install order. Adopts any brand-new MO2 mod at the very end. This is the order-safe way to keep the installed state in sync — use it instead of Pull once you've curated the order here."
+            onClick={() => void jobs.runSyncState()}
+          >
+            {jobs.syncingState ? 'Syncing…' : 'Sync install state'}
+          </button>
+          <button
+            className="btn ghost"
+            disabled={jobs.pulling || jobs.pushing || jobs.syncingState || frozen}
+            title="Read the active MO2 profile's modlist.txt + installed folders and OVERWRITE this list's order + install-state to match MO2. Replaces any ordering you've done here — use “Sync install state” instead if you only want the installed flags refreshed. Auto-runs once on first load. Read-only for MO2."
             onClick={() => setConfirmPull(true)}
           >
             {jobs.pulling ? 'Pulling…' : 'Pull from MO2'}
           </button>
           <button
             className="btn ghost"
-            disabled={jobs.pushing || jobs.pulling || frozen}
+            disabled={jobs.pushing || jobs.pulling || jobs.syncingState || frozen}
             title="Write this list's order back out to the active MO2 profile's modlist.txt. Reorders the mods MO2 has to match the tool; separators, tool outputs and DLC/CC lines stay put; a timestamped backup is taken first. Close MO2 before pushing."
             onClick={() => setConfirmPush(true)}
           >
             {jobs.pushing ? 'Pushing…' : 'Push to MO2'}
           </button>
-          {(jobs.pullMsg || jobs.pushMsg) && (
+          {(jobs.pullMsg || jobs.pushMsg || jobs.syncStateMsg) && (
             <span className="dim" style={{ fontSize: 12 }}>
-              {jobs.pushing || jobs.pushMsg ? jobs.pushMsg : jobs.pullMsg}
+              {jobs.syncingState || jobs.syncStateMsg
+                ? jobs.syncStateMsg
+                : jobs.pushing || jobs.pushMsg
+                  ? jobs.pushMsg
+                  : jobs.pullMsg}
             </span>
           )}
           <span style={{ flex: 1 }} />

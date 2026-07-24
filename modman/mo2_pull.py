@@ -39,6 +39,13 @@ state = {"phase": "idle", "running": False, "error": None,
 _lock = threading.Lock()
 jobs.register("mo2 pull", state)
 
+# state-only sync (refresh install-state WITHOUT reordering) — its own job +
+# state dict so it can be polled independently of the full pull
+state_sync = {"phase": "idle", "running": False, "error": None,
+              "matched": 0, "adopted": 0, "removed": 0, "skipped": 0}
+_sync_lock = threading.Lock()
+jobs.register("mo2 state sync", state_sync)
+
 # Regenerated MO2 tool outputs, not real mods -- never adopted as library rows
 # (Phase 2 gives them their own TOOL OUTPUTS separator). Matched by substring.
 _OUTPUT_RE = re.compile(r"\b(output|outputs)\b", re.I)
@@ -170,4 +177,66 @@ def start_pull():
         _lock, state, "a pull is already running", pull,
         init={"matched": 0, "adopted": 0, "removed": 0, "skipped": 0},
         exclusive_as="mo2 pull",
+    )
+
+
+def sync_install_state():
+    """Refresh MO2's install-state (enabled/disabled/removed) WITHOUT touching
+    the tool's install order. Use this instead of pull() once you've curated the
+    order in the tool: it re-reads MO2's modlist, restamps mo2_state on every
+    matched mod, adopts any brand-new MO2-only mod (parked at the END of the
+    order so nothing above shifts), and flags mods MO2 no longer has as
+    'removed'. Ranks of existing mods are never rewritten. Returns a summary."""
+    entries = mo2_order.read_modlist()
+    if not entries:
+        raise RuntimeError(
+            "MO2 modlist is empty or unreadable — check the profiles path in Config"
+        )
+    signals = mo2_order.folder_signals()
+
+    with db.connect() as conn:
+        idx = _db_indexes(conn)
+        ok_ids = {r["mod_id"] for r in conn.execute("SELECT mod_id FROM mods WHERE status = 'ok'")}
+
+        state_by_id, seen, newly = {}, set(), []
+        adopted = skipped = 0
+        for e in entries:  # order is irrelevant for a state-only sync
+            folder = e["folder"]
+            sig = signals.get(folder)
+            mid = _match(folder, sig, idx)
+            if mid is None:
+                if _OUTPUT_RE.search(folder) or sig is None:
+                    skipped += 1  # generated tool output / unmanaged folder
+                    continue
+                mid = _adopt(conn, folder, sig)
+                if mid is None:
+                    skipped += 1
+                    continue
+                adopted += 1
+                newly.append(mid)
+            if mid in seen:  # a mod with several folders/files: count once
+                continue
+            seen.add(mid)
+            state_by_id[mid] = "enabled" if e["enabled"] else "disabled"
+
+    removed = [i for i in ok_ids if i not in seen]  # ok in db, absent from MO2
+    order_store.persist_states(state_by_id, removed)
+    if newly:
+        order_store.park_new_at_end(newly)  # give adopted mods a rank at the end
+
+    matched = len(seen) - adopted
+    state_sync["matched"] = matched
+    state_sync["adopted"], state_sync["removed"], state_sync["skipped"] = adopted, len(removed), skipped
+    return (f"Synced install-state for {len(seen)} mod(s) · {adopted} newly adopted "
+            f"(parked at end) · {len(removed)} not in MO2 · order untouched")
+
+
+def start_state_sync():
+    """Async state-only sync. Returns an error string or None. Exclusive: it
+    writes mo2_state on many rows + parks new mods, so it shouldn't overlap a
+    sort/pull/enforce/commit."""
+    return jobs.start(
+        _sync_lock, state_sync, "an MO2 state sync is already running", sync_install_state,
+        init={"matched": 0, "adopted": 0, "removed": 0, "skipped": 0},
+        exclusive_as="mo2 state sync",
     )

@@ -101,8 +101,13 @@ export function SubstitutesView({
       <div className="dim" style={{ fontSize: 12, marginBottom: 8 }}>
         Missing Nexus dependencies. If an owned mod already covers one, assign it as a substitute — the engine treats
         it as satisfied and it leaves the Missing Requirements list. The × dismisses a mod (synced with Missing
-        Requirements). Run “Sync requirements” to refresh. <RestoreDismissed d={ridD} />
+        Requirements). Run “Sync requirements” to refresh.
       </div>
+      {ridD.count > 0 && (
+        <div className="dim" style={{ marginBottom: 8 }}>
+          <RestoreDismissed d={ridD} />
+        </div>
+      )}
       {err && <div className="err">{err}</div>}
 
       {items.length === 0 ? (

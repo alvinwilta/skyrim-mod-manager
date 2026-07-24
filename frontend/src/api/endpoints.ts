@@ -62,6 +62,11 @@ export const api = {
   mo2Pull: () => post<{ started: boolean }>('/api/mo2-pull'),
   mo2PullState: () =>
     get<JobState & { matched: number; adopted: number; removed: number; skipped: number }>('/api/mo2-pull-state'),
+  mo2SyncState: () => post<{ started: boolean }>('/api/mo2-sync-state'),
+  mo2SyncStateState: () =>
+    get<JobState & { matched: number; adopted: number; removed: number; skipped: number }>(
+      '/api/mo2-sync-state-state',
+    ),
   mo2Push: () => post<{ started: boolean }>('/api/mo2-push'),
   mo2PushState: () =>
     get<JobState & { moved: number; skipped: number; backup: string | null }>('/api/mo2-push-state'),

@@ -488,6 +488,26 @@ def rerank_by_separator():
     return len(rows)
 
 
+def persist_states(state_by_id, removed_ids):
+    """Stamp mo2_state on mods from an MO2 *state-only* sync, WITHOUT rewriting
+    any rank (unlike persist_pull). The tool's curated install order is left
+    exactly as it is — this only refreshes which mods MO2 currently has
+    enabled/disabled, and flags the ones it no longer has as 'removed'."""
+    with _rank_lock, db.connect() as conn:
+        for mid, st in state_by_id.items():
+            conn.execute(
+                "INSERT INTO mod_sort (mod_id, mo2_state) VALUES (?, ?)"
+                " ON CONFLICT(mod_id) DO UPDATE SET mo2_state = excluded.mo2_state",
+                (mid, st),
+            )
+        for mid in removed_ids:
+            conn.execute(
+                "INSERT INTO mod_sort (mod_id, mo2_state) VALUES (?, 'removed')"
+                " ON CONFLICT(mod_id) DO UPDATE SET mo2_state = 'removed'",
+                (mid,),
+            )
+
+
 def persist_pull(ordered_ids, state_by_id, removed_ids):
     """Persist an MO2 pull (modman/mo2_pull.py): rank every ok mod to
     `ordered_ids` (MO2's install order — matched mods in order, then the

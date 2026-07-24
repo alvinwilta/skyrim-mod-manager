@@ -103,8 +103,13 @@ def favicon():
 def mods(q: str = None):
     rows = db.list_mods(q)
     collections = db.collections_for_files([r["file_id"] for r in rows])
+    # MO2 is the truth for install-state once pulled — mirror load_order()'s
+    # precedence (mo2_state wins over the .meta sidecar) so the Library and
+    # Install Order tabs never disagree about what's installed.
+    states = db.mo2_states()
     for r in rows:
-        r["installed"] = mo2.is_installed(r["filename"])
+        state = states.get(r["mod_id"])
+        r["installed"] = state in ("enabled", "disabled") if state else mo2.is_installed(r["filename"])
         r["collections"] = collections.get(r["file_id"], [])
     return rows
 
@@ -397,6 +402,25 @@ def mo2_pull_start():
 @app.get("/api/mo2-pull-state")
 def mo2_pull_state():
     return mo2_pull.state
+
+
+@app.post("/api/mo2-sync-state")
+def mo2_sync_state_start():
+    """Refresh MO2's install-state (enabled/disabled/removed) + adopt new
+    MO2-only mods at the END of the order, WITHOUT rewriting existing ranks.
+    The order-preserving alternative to a full pull. Blocked while committed."""
+    frozen = _order_frozen("syncing MO2 install-state")
+    if frozen:
+        return frozen
+    err = mo2_pull.start_state_sync()
+    if err:
+        return JSONResponse({"error": err}, status_code=409)
+    return {"started": True}
+
+
+@app.get("/api/mo2-sync-state-state")
+def mo2_sync_state_state():
+    return mo2_pull.state_sync
 
 
 @app.post("/api/mo2-push")

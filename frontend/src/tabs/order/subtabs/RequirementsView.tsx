@@ -25,11 +25,13 @@ export function RequirementsView({
   )
   return (
     <div>
-      <div className="dim">
-        {msg} <RestoreDismissed d={d} />
-      </div>
+      {(msg || d.count > 0) && (
+        <div className="dim" style={{ marginBottom: 8 }}>
+          {msg} <RestoreDismissed d={d} />
+        </div>
+      )}
       {shown.length > 0 && (
-        <div className="grp">
+        <div>
           <ul className="dim dismiss-list">
             {shown.map((m, i) => (
               <li key={i}>
