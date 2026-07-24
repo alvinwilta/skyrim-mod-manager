@@ -648,3 +648,6 @@ input.switch:disabled { cursor: default; }
 .subpick-list li button:hover { background: #12151c; }
 .subpick-list li button.on { background: #16233a; }
 .subpick-empty { padding: 6px 8px; }
+
+/* per-job "last run" timestamp line in the Order tab subtabs */
+.lastrun { font-size: 11px; color: var(--dim); margin-bottom: 6px; }

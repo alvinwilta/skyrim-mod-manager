@@ -6,8 +6,7 @@ import type { MissingRequirement } from '../../../api/types'
 import { snapshotBuckets, diffChanged, type BucketSnapshot } from '../lib/changeDiff'
 import { useDismissed } from './useDismissed'
 import { errText, type useOrderData } from './useOrderData'
-
-const NOT_RUN = 'Not run yet this session.'
+import { loadLastRuns, saveLastRun, type LastRunKey } from '../lib/lastRun'
 
 /**
  * All background-job machinery for the Install Order tab: heuristic sort,
@@ -19,9 +18,10 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const { sorting } = useActivity()
   const [model, setModel] = useState('haiku')
   const [msg, setMsg] = useState('') // the shared sortmsg line
-  const [heuristicLog, setHeuristicLog] = useState(NOT_RUN)
-  const [bulkMsg, setBulkMsg] = useState(NOT_RUN)
-  const [descMsg, setDescMsg] = useState(NOT_RUN)
+  const [heuristicLog, setHeuristicLog] = useState('')
+  const [bulkMsg, setBulkMsg] = useState('')
+  const [descMsg, setDescMsg] = useState('')
+  const [lastRuns, setLastRuns] = useState(loadLastRuns)
   const [enforceMsg, setEnforceMsg] = useState('')
   const [enforceLog, setEnforceLog] = useState<string[]>([])
   const [enforcing, setEnforcing] = useState(false)
@@ -59,6 +59,13 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
   const takeSnapshot = () => {
     snapshot.current = snapshotBuckets(data.mods)
   }
+
+  // stamp a job's persisted last-run time (survives reloads/restarts)
+  const stamp = useCallback((k: LastRunKey) => {
+    const iso = new Date().toISOString()
+    saveLastRun(k, iso)
+    setLastRuns((p) => ({ ...p, [k]: iso }))
+  }, [])
 
   /** Reload the order and highlight what the finished action actually moved. */
   const finishAction = useCallback(async () => {
@@ -123,6 +130,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
       else setBulkMsg(m)
       if (!s.running) {
         data.setRefining(false)
+        stamp(s.job === 'desc' ? 'refineDesc' : 'refineBulk')
         dismissed.notes.clear() // fresh refine results — dismissed notes reset
         await finishAction()
         return false
@@ -141,6 +149,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
       setEnforceLog(s.log || [])
       if (!s.running) {
         setEnforcing(false)
+        stamp('enforce')
         dismissed.rules.clear()
         await finishAction()
         return false
@@ -158,6 +167,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
       setReqMsg(s.phase + (s.error ? ' — ' + s.error : ''))
       if (!s.running) {
         setSyncing(false)
+        stamp('requirements')
         await loadMissing()
         return false
       }
@@ -336,6 +346,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
         setHeuristicLog(
           `${r.sorted} mods sorted into bands${r.pins ? `, ${r.pins} cross-band conflict pin(s)` : ''} (last run)`,
         )
+        stamp('sort')
         await finishAction()
       }
     } catch (e) {
@@ -405,6 +416,7 @@ export function useOrderJobs(data: ReturnType<typeof useOrderData>) {
     enforceMsg,
     enforceLog,
     enforcing,
+    lastRuns,
     reqMsg,
     syncing,
     missing,

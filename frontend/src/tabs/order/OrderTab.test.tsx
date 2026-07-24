@@ -308,7 +308,7 @@ describe('OrderTab sort machinery', () => {
     const { calls } = mockApi(routes({ 'POST /api/sort': { sorted: 3, llm: false } }))
     renderTab()
     await screen.findByText('SkyUI')
-    expect(screen.getByText('Not run yet this session.')).toBeInTheDocument()
+    expect(screen.getAllByText('Never run').length).toBeGreaterThan(0)
 
     await userEvent.click(screen.getByRole('button', { name: 'Sort (heuristic)' }))
     await waitFor(() =>

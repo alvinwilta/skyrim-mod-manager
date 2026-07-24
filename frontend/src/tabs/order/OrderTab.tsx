@@ -32,6 +32,7 @@ import { SubstitutesView } from './subtabs/SubstitutesView'
 import { ConflictDetail } from './subtabs/ConflictDetail'
 import { NoteText } from './ModJump'
 import { scrollToMod } from './lib/scrollToMod'
+import { formatLastRun } from './lib/lastRun'
 import { DismissX, RestoreDismissed } from './Dismiss'
 import type { Dismissed } from './hooks/useDismissed'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
@@ -611,7 +612,8 @@ export function OrderTab() {
             <>
               {active === 'heuristic' && (
                 <div>
-                  <div className="dim">{jobs.heuristicLog}</div>
+                  <div className="lastrun">{formatLastRun(jobs.lastRuns.sort)}</div>
+                  {jobs.heuristicLog && <div className="dim">{jobs.heuristicLog}</div>}
                   <ConflictDetail
                     selected={[...sel.selected]}
                     relations={relations}
@@ -622,15 +624,22 @@ export function OrderTab() {
               )}
               {active === 'bulk' && (
                 <div>
+                  <div className="lastrun">{formatLastRun(jobs.lastRuns.refineBulk)}</div>
                   <div className="dim">
                     {jobs.bulkMsg} <RestoreDismissed d={jobs.dismissed.notes} />
                   </div>
                   <NotesList notes={data.notes} d={jobs.dismissed.notes} names={data.names} onJump={jumpToMod} />
                 </div>
               )}
-              {active === 'desc' && <div className="dim">{jobs.descMsg}</div>}
+              {active === 'desc' && (
+                <div>
+                  <div className="lastrun">{formatLastRun(jobs.lastRuns.refineDesc)}</div>
+                  {jobs.descMsg && <div className="dim">{jobs.descMsg}</div>}
+                </div>
+              )}
               {active === 'rules' && (
                 <div>
+                  <div className="lastrun">{formatLastRun(jobs.lastRuns.enforce)}</div>
                   <div className="dim">
                     {jobs.enforceMsg} <RestoreDismissed d={jobs.dismissed.rules} />
                   </div>
@@ -758,13 +767,16 @@ export function OrderTab() {
           {(active) => (
             <>
               {active === 'requirements' && (
-                <RequirementsView
-                  msg={jobs.reqMsg}
-                  missing={jobs.missing}
-                  d={jobs.dismissed.requirements}
-                  ridD={jobs.dismissed.requirementMods}
-                  onJump={jumpToMod}
-                />
+                <div>
+                  <div className="lastrun">{formatLastRun(jobs.lastRuns.requirements)}</div>
+                  <RequirementsView
+                    msg={jobs.reqMsg}
+                    missing={jobs.missing}
+                    d={jobs.dismissed.requirements}
+                    ridD={jobs.dismissed.requirementMods}
+                    onJump={jumpToMod}
+                  />
+                </div>
               )}
               {active === 'substitutes' && (
                 <SubstitutesView

@@ -116,7 +116,11 @@ def scan():
     so this is a one-time cost per download, not per run."""
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT file_id, filename FROM mods WHERE status = 'ok' AND COALESCE(files_scanned, 0) = 0"
+            # filename IS NOT NULL: MO2-adopted mods (source='mo2') have no
+            # managed archive on disk, so there's nothing to 7z-scan — skip them
+            # (joining a NULL filename into a path would crash the scan)
+            "SELECT file_id, filename FROM mods WHERE status = 'ok'"
+            " AND filename IS NOT NULL AND COALESCE(files_scanned, 0) = 0"
         ).fetchall()
     for i, r in enumerate(rows):
         state["phase"] = f"Scanning archive {i + 1}/{len(rows)}"
