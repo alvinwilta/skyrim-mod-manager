@@ -166,9 +166,9 @@ def classify(name, category):
             bucket, conf = b, c
             break
     if bucket is None:
-        # unknown category: Gameplay — General is the neutral middle of the
-        # order; defaulting to Fixes (8) used to dump every unmapped category
-        # (Combat, NPC, Armour, ...) into that bucket
+        # no keyword hit: fall back to the category map, defaulting unmapped
+        # categories to Gameplay — General (9), the neutral middle of the order
+        # rather than any opinionated bucket
         bucket, conf = CATEGORY_BUCKET.get(category or "", (9, 0.2))
     flags = []
     if conf < 0.5:

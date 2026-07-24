@@ -95,10 +95,10 @@ def init_db():
             conn.execute("ALTER TABLE mod_sort ADD COLUMN mo2_state TEXT")
         # which separator (grouping band) a mod belongs to -- separator.id, i.e.
         # the band sort key. Assigned by modman/separators.py; NULL = unassigned
-        # (shows under NEW & UNSORTED). Cosmetic in Phase 2; feeds bands in P3.
+        # (shows under NEW & UNSORTED). Drives band placement in the ordering engine.
         if "separator_id" not in cols_sort:
             conn.execute("ALTER TABLE mod_sort ADD COLUMN separator_id INTEGER")
-        # Phase 3 ordering engine (modman/ordering.py): a cross-band auto-pin.
+        # Set by the ordering engine (modman/ordering.py): a cross-band auto-pin.
         # conflict_pin = 1 when the engine forced this mod out of its band's
         # natural slot to satisfy a real file-overlap that band order alone
         # would resolve backwards; pin_reason = the human-readable "why" (the

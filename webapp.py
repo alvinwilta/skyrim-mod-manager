@@ -449,7 +449,7 @@ def assign_separators():
 
 @app.post("/api/order/generate")
 def generate_order():
-    """Regenerate the whole install order from scratch with the Phase 3 engine
+    """Regenerate the whole install order from scratch with the ordering engine
     (category -> separator band, family-clustered within, cross-band conflicts
     auto-pinned). Ignores the current rank entirely -- this is the "let the tool
     decide the order" action. Refuse while the order is committed to disk or a
@@ -553,10 +553,10 @@ async def sort_mods(request: Request):
     if running:
         return JSONResponse({"error": running}, status_code=409)
     try:
-        # Sort now runs the full Phase 3 ordering engine: category -> separator
-        # band (keyword fallback rescues blank categories, so nothing is stranded
-        # in NEW & UNSORTED), family-clustered within each band, real cross-band
-        # file conflicts auto-pinned. One button does grouping + ordering + pins.
+        # Sort runs the full ordering engine: category -> separator band (keyword
+        # fallback rescues blank categories, so nothing is stranded in NEW &
+        # UNSORTED), family-clustered within each band, real cross-band file
+        # conflicts auto-pinned. One button does grouping + ordering + pins.
         # Scan any not-yet-scanned archives FIRST (idempotent, one-time per file)
         # so the conflict pins + the MO2-style overwrite relations are built on
         # fresh file-overlap data — this replaces the old manual "Scan archives".

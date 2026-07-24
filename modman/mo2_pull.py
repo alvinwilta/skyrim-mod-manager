@@ -1,9 +1,8 @@
 """Pull MO2's live install order + state INTO the tool (read-only w.r.t. MO2).
 
-Phase 1 of the MO2-sync rework: MO2's current left-panel order is the
-*validation seed*. This reads the active profile's modlist.txt + each installed
-folder's meta.ini (via mo2_order.py), maps every managed MO2 mod back to a db
-mod, and writes:
+Treats MO2's current left-panel order as the seed for the tool's own order.
+Reads the active profile's modlist.txt + each installed folder's meta.ini (via
+mo2_order.py), maps every managed MO2 mod back to a db mod, and writes:
   - `mod_sort.rank` -- the tool's install order set to MO2's (matched mods in
     MO2 order, then any ok db mod MO2 no longer has appended at the end).
   - `mod_sort.mo2_state` -- 'enabled'/'disabled' for mods MO2 has,
@@ -17,8 +16,8 @@ Matching precedence (strongest first), all from the folder's meta.ini:
   4. folder name -> db mod_name (case-insensitive; last resort).
 
 MO2 folders that still match nothing are genuinely MO2-only (installed through
-MO2, never through the tool). Phase 1b **adopts** them as rows (source='mo2',
-no managed archive) so the tool's order is complete -- generated tool outputs
+MO2, never through the tool). Those are **adopted** as rows (source='mo2', no
+managed archive) so the tool's order is complete -- generated tool outputs
 (Bodyslide/Pandora/DynDOLOD ...) are skipped. Nothing in MO2 is modified.
 Runs as an exclusive background job (rewrites ranks)."""
 
@@ -47,7 +46,7 @@ _sync_lock = threading.Lock()
 jobs.register("mo2 state sync", state_sync)
 
 # Regenerated MO2 tool outputs, not real mods -- never adopted as library rows
-# (Phase 2 gives them their own TOOL OUTPUTS separator). Matched by substring.
+# (they belong under the TOOL OUTPUTS separator). Matched by substring.
 _OUTPUT_RE = re.compile(r"\b(output|outputs)\b", re.I)
 
 

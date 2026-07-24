@@ -7,7 +7,6 @@ import type {
   ConfigData,
   ConflictRelations,
   DeleteResult,
-  DiffResult,
   FetchCollectionResult,
   InstallOrder,
   JobState,

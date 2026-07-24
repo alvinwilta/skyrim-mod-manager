@@ -1,12 +1,12 @@
-"""Separator taxonomy: the cosmetic GROUPING layer (STEP-style numbered bands),
-separate from the functional install order (ranks/conflicts).
+"""Separator taxonomy: the GROUPING layer (STEP-style numbered bands), distinct
+from the functional install order (ranks/conflicts).
 
-The target taxonomy lives in the repo `separator/` dir (one MO2 separator folder
-per band, named `NN.M LABEL_separator`). We parse those names into a `separator`
-table whose id IS the band sort key (major*100 + minor), so ordering by id is
-ordering by band. Each ok mod is then tagged with a `separator_id` via a
-Nexus-category -> band mapping (+ a few special rules). This is Phase 2: it only
-GROUPS; it never reorders (Phase 3's engine does band-driven ordering).
+The bands are the MO2 separator folder names in `TAXONOMY` (`NN.M LABEL_separator`).
+`_parse_name()` derives each band's id (major*100 + minor) from the numeric
+prefix, so the id IS the band sort key -- ordering by id is ordering by band.
+Each ok mod is tagged with a `separator_id` via a Nexus-category -> band mapping
+(+ a few special rules). This module only GROUPS; the ordering engine
+(ordering.py) is what turns bands into actual install-order ranks.
 """
 
 import os
@@ -17,11 +17,10 @@ from .config import ROOT_DIR
 
 SEP_DIR = os.path.join(ROOT_DIR, "separator")
 
-# The separator taxonomy, hardcoded (the original `separator/` scaffold dir is
-# transient and may be deleted). These are the exact MO2 separator folder names
-# -- `_parse_name()` derives each band's id (major*100+minor) and clean label
-# from the numeric prefix, so this list IS the source of truth for the bands.
-# Keep in sync with what a Push writes back to MO2's modlist.txt (Phase 4).
+# The band taxonomy: the exact MO2 separator folder names. `_parse_name()`
+# derives each band's id (major*100+minor) and clean label from the numeric
+# prefix, so this list is the source of truth for the bands. These names are
+# what a Push writes back into MO2's modlist.txt, so keep the two in sync.
 TAXONOMY = [
     "-_______________________________________ SKYRIM DLCs & CC ________________________________________separator",
     "00. _______________________________________ ROOT FOLDER __________________________________________separator",

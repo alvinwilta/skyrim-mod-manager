@@ -52,10 +52,10 @@ export function useOrderData() {
   // reload snaps it again to the real one.
   //
   // `separatorId` (a cross-band drag) is stamped onto the moved mods HERE too,
-  // so the very next render already groups them into the destination band. Skip
-  // it and the row would splice to the new index while still carrying its old
-  // band — the exact stale-band frame that used to flash a broken/duplicate
-  // divider before the server reload corrected it.
+  // so the very next render already groups them into the destination band.
+  // Without it a row would splice to its new index while still carrying its old
+  // band, flashing a broken/duplicate divider for one frame until the server
+  // reload corrects it.
   const reorderLocal = useCallback((ids: number[], position: number, separatorId?: number | null) => {
     setMods((prev) => {
       const movingSet = new Set(ids)

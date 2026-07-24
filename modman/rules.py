@@ -1,6 +1,6 @@
 """Editable ordering rules, loaded from ``order_rules.toml``.
 
-Externalizes the four tunable tables the Phase 3 engine used to hardcode: the
+Externalizes the four tunable tables the ordering engine consults: the
 Nexus-category -> band map, the keyword-bucket fallback, the forced head-priority
 mod ids, and the keyword classification rules. Kept a dependency-free LEAF module
 (imports nothing from the rest of the package) so both ``separators`` and

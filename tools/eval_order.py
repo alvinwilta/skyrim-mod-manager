@@ -1,9 +1,10 @@
-"""§6 ordering-engine eval harness (supervised-style, tune the ALGORITHM).
+"""Ordering-engine eval harness: score the generated order against ground truth.
 
-Copies the live mods.db to a scratch db (never touches live), runs the Phase 3
-engine (modman.ordering.compute) on it, and scores the produced order against
-`conflicting_mods_file.txt` -- the hand-tuned overwrite ground truth (top->bottom
-= low->high priority).
+Copies the live mods.db to a scratch db (never touches live), runs the ordering
+engine (modman.ordering.compute) on it, and scores the produced order against a
+hand-tuned overwrite ground-truth file at repo-root `conflicting_mods_file.txt`
+(top->bottom = low->high priority). Supply that file yourself; it is not shipped
+with the repo.
 
 Metrics:
   - conflict-pair agreement %: of GT mod pairs that are ALSO real file conflicts

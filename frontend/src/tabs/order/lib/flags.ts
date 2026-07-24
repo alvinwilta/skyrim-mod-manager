@@ -34,10 +34,11 @@ export function parseFlag(
 
   const mv = flag.startsWith('MOVED:') && flag.slice(6).match(/^(\d+|None)>(\d+)$/)
   if (mv) {
-    // Group names come from whichever id space the mover used — bucket ids for
-    // the legacy sorter, band ids for the engine — so fall back to the raw id
-    // when it isn't a known bucket. Long labels are truncated in CSS (.badge-flag,
-    // ellipsis) with the full text in the tooltip, so this can stay descriptive.
+    // A MOVED flag's endpoints may be bucket ids or separator-band ids depending
+    // on which reorder produced it, so map through the bucket names and fall back
+    // to the raw id when it isn't a known bucket. Long labels are truncated in CSS
+    // (.badge-flag, ellipsis) with the full text in the tooltip, so this can stay
+    // descriptive.
     const from = buckets[mv[1]] || mv[1]
     const to = buckets[mv[2]] || mv[2]
     label = `${from} → ${to}`

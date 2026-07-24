@@ -1,8 +1,6 @@
-"""Phase 3 ordering engine: generate the MO2 install order deterministically
-from category + real file conflicts + family clustering, NOT from the input
-rank. This is the rework's core -- the old heuristic drove order *from* the
-STEP bucket (category); this drives it from the two independent axes the plan
-locks:
+"""The ordering engine: generate the MO2 install order deterministically from
+category + real file conflicts + family clustering, NOT from the input rank.
+Order is driven by two independent axes:
 
 - **Band (separator) = coarse layering.** Each mod's Nexus category maps to a
   numbered separator band (separators.CATEGORY_SEPARATOR); band id ascending =

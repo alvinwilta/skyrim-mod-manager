@@ -1,11 +1,10 @@
-"""Claude-CLI-backed install-order refine, band model (Phase 3b).
+"""Claude-CLI-backed install-order refine over the separator bands.
 
 The deterministic engine (`ordering.py`) already bands + orders every mod. This
 pass shells out to the Claude Code CLI (`claude -p`, local login, no API key) to
 fix the *ambiguous tail*: mods whose Nexus category is blank or unmapped, so the
 engine could only place them by a keyword guess. It re-assigns those to a
-separator BAND (not the retired 1-20 bucket scheme) and emits conflict/duplicate
-notes.
+separator BAND and emits conflict/duplicate notes.
 
 Two tiers, cheap-first:
   1. bulk pass  (`start_llm_refine`) -- every uncertain-tail mod, name + category
